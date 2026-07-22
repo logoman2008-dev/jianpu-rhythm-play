@@ -657,35 +657,65 @@
     inp.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
   }
 
-  // 「我的曲庫」欄位上的解鎖：用 Email 讓自己上傳的譜無限使用＋購買連結
+  // 每台瀏覽器一組固定裝置碼（限制一個 Email 最多 4 台用）
+  function deviceId() {
+    var k = "jianpu_device_id", v;
+    try { v = localStorage.getItem(k); } catch (e) {}
+    if (!v) { v = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + "-" + Math.random().toString(36).slice(2)); try { localStorage.setItem(k, v); } catch (e) {} }
+    return v;
+  }
+  // 「我的曲庫」欄位上的解鎖：用 Email（每信箱限 4 台，超過需重置）＋購買連結
   function renderLibUnlock() {
     var box = document.getElementById("libUnlock"); if (!box) return;
-    if (isPaid()) {   // 密碼或 Email 任一解鎖 → 自己上傳的譜已無限
+    if (isPaid()) {   // 已 Email 解鎖 → 自己上傳的譜已無限
       box.innerHTML = '<div class="paid-unlock unlocked">🔓 <b>已解鎖</b>：自己上傳的譜可無限使用。</div>';
       return;
     }
     box.innerHTML = '<div class="paid-unlock">' +
-      '<div class="pu-tip">🔒 自己上傳的譜每天有免費次數上限。付款開通後，用你填在訂購單的 <b>Email</b> 解鎖，即可無限使用。</div>' +
+      '<div class="pu-tip">🔒 自己上傳的譜每天有免費次數上限。付款開通後，用你填在訂購單的 <b>Email</b> 解鎖，即可無限使用（一個 Email 最多 4 台裝置）。</div>' +
       '<div class="pu-row"><input type="email" class="lu-email" placeholder="輸入你的 Email 解鎖" autocomplete="email" />' +
       '<button type="button" class="btn small lu-btn">解鎖</button></div>' +
       '<div class="lu-msg"></div>' +
+      '<button type="button" class="btn small ghost lu-reset" style="display:none;margin-top:6px">🔄 重置裝置（我要換機器）</button>' +
       '<a class="pu-buy" href="' + ORDER_FORM_URL + '" target="_blank" rel="noopener">🔓 還沒購買？點我購買解鎖（填訂購單）</a>' +
       '</div>';
-    var inp = box.querySelector(".lu-email"), btn = box.querySelector(".lu-btn"), msg = box.querySelector(".lu-msg");
+    var inp = box.querySelector(".lu-email"), btn = box.querySelector(".lu-btn"), msg = box.querySelector(".lu-msg"), resetBtn = box.querySelector(".lu-reset");
+    function setMsg(t, c) { msg.textContent = t; msg.style.color = c || "#d7c9ac"; }
+    function emailVal() { var e = (inp.value || "").trim(); return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e) ? e : null; }
+    function onOk(email) { try { localStorage.setItem("jianpu_unlock_email", email.toLowerCase()); } catch (e) {} applyEmailUnlock(); }
     function go() {
-      var email = (inp.value || "").trim();
-      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { msg.textContent = "請輸入正確的 Email。"; msg.style.color = "#ff9a9a"; return; }
+      var email = emailVal(); if (!email) { setMsg("請輸入正確的 Email。", "#ff9a9a"); return; }
       var A = window.JianpuAuth;
-      if (!A || !A.checkEmailUnlock) { msg.textContent = "後端尚未設定，暫時無法用 Email 解鎖（請洽老師 LINE：paul780516）。"; msg.style.color = "#ff9a9a"; return; }
-      msg.textContent = "查詢中…"; msg.style.color = "#d7c9ac";
-      A.checkEmailUnlock(email).then(function (ok) {
-        if (ok === true) { try { localStorage.setItem("jianpu_unlock_email", email.toLowerCase()); } catch (e) {} applyEmailUnlock(); }
-        else if (ok === false) { msg.textContent = "這個 Email 還沒開通。付款後老師會幫你開通，稍後再試 🙂"; msg.style.color = "#ffb454"; }
-        else { msg.textContent = "後端尚未設定 Email 解鎖功能（請洽老師 LINE：paul780516）。"; msg.style.color = "#ff9a9a"; }
+      if (!A || !A.registerDevice) { setMsg("後端尚未設定，暫時無法用 Email 解鎖（請洽老師 LINE：paul780516）。", "#ff9a9a"); return; }
+      setMsg("登入中…"); resetBtn.style.display = "none";
+      A.registerDevice(email, deviceId()).then(function (r) {
+        if (r === "ok") { onOk(email); }
+        else if (r === "limit") { setMsg("這個 Email 已在 4 台裝置登入，超過上限。若要換機器，請按下方「重置裝置」清空後再登入。", "#ffb454"); resetBtn.style.display = ""; }
+        else if (r === "not_entitled") { setMsg("這個 Email 還沒開通。付款後老師會幫你開通，稍後再試 🙂", "#ffb454"); }
+        else {   // r===null：後端尚未建立裝置限制 → 退回單純 Email 開通檢查(不限台數)
+          if (!A.checkEmailUnlock) { setMsg("後端尚未設定 Email 解鎖（請洽老師 LINE：paul780516）。", "#ff9a9a"); return; }
+          A.checkEmailUnlock(email).then(function (ok) {
+            if (ok === true) onOk(email);
+            else if (ok === false) setMsg("這個 Email 還沒開通。付款後老師會幫你開通 🙂", "#ffb454");
+            else setMsg("後端尚未設定 Email 解鎖（請洽老師 LINE：paul780516）。", "#ff9a9a");
+          });
+        }
+      });
+    }
+    function doReset() {
+      var email = emailVal(); if (!email) { setMsg("請先在上面輸入你的 Email。", "#ff9a9a"); return; }
+      if (!confirm("重置會清除這個 Email 目前綁定的所有裝置（包含別台），確定要重置嗎？重置後再按「解鎖」重新登入。")) return;
+      var A = window.JianpuAuth;
+      setMsg("重置中…");
+      A.resetDevices(email).then(function (n) {
+        if (typeof n === "number" && n >= 0) { setMsg("已重置（清除 " + n + " 台）。請再按「解鎖」重新登入。", "#7CFC9B"); resetBtn.style.display = "none"; }
+        else if (n === -1) { setMsg("這個 Email 還沒開通，無法重置。", "#ffb454"); }
+        else { setMsg("重置失敗，請確認網路或洽老師 LINE：paul780516。", "#ff9a9a"); }
       });
     }
     btn.addEventListener("click", go);
     inp.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
+    resetBtn.addEventListener("click", doReset);
   }
 
   // ---- 付費資料夾：每個資料夾(grp)可各自上鎖＋各自密碼（後台設定，存 Supabase paid_folders）----

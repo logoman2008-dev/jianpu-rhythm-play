@@ -103,6 +103,22 @@
       .then(function (res) { if (res.error) return null; return !!res.data; })
       .catch(function () { return null; });
   }
+  // 登記一台裝置到某 Email（後端限制每信箱最多 4 台）。回傳 'ok'|'limit'|'not_entitled'|null
+  function registerDevice(email, device) {
+    email = (email || "").trim().toLowerCase();
+    if (!sb || !email || !device) return Promise.resolve(null);
+    return sb.rpc("register_device", { p_email: email, p_device: device })
+      .then(function (res) { return res.error ? null : res.data; })
+      .catch(function () { return null; });
+  }
+  // 重置某 Email 的所有裝置（買家自行清空後重新登入）。回傳清除數(>=0)、-1未開通、null失敗
+  function resetDevices(email) {
+    email = (email || "").trim().toLowerCase();
+    if (!sb || !email) return Promise.resolve(null);
+    return sb.rpc("reset_devices", { p_email: email })
+      .then(function (res) { return res.error ? null : res.data; })
+      .catch(function () { return null; });
+  }
   // 讀取付費資料夾的上鎖設定（每個 grp 可獨立上鎖＋獨立密碼）；回傳 {grp:{locked,pw_hash}}
   function fetchFolders() {
     if (!sb) return Promise.resolve({});
@@ -164,6 +180,8 @@
     fetchConfig: fetchConfig,
     fetchFolders: fetchFolders,
     checkEmailUnlock: checkEmailUnlock,
+    registerDevice: registerDevice,
+    resetDevices: resetDevices,
     onChange: function (fn) { if (typeof fn === "function") listeners.push(fn); },
     focusLogin: focusLogin
   };
