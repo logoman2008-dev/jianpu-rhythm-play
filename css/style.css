@@ -120,8 +120,8 @@ html, body {
 .paid-unlock.unlocked { color: #7CFC9B; font-size: 13px; }
 .paid-unlock .pu-tip { font-size: 12.5px; color: #e7d6b4; line-height: 1.6; margin-bottom: 8px; }
 .paid-unlock .pu-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.paid-unlock .pu-input, .paid-unlock .lu-email { flex: 1 1 140px; min-width: 120px; padding: 7px 9px; border-radius: 7px; border: 1px solid #6a5a3a; background: #1c1a14; color: #eee; font-size: 14px; }
-.paid-unlock .pu-msg, .paid-unlock .lu-msg { font-size: 12.5px; margin-top: 6px; min-height: 16px; }
+.paid-unlock .pu-input, .paid-unlock .lu-email, .paid-unlock .fu-input { flex: 1 1 140px; min-width: 120px; padding: 7px 9px; border-radius: 7px; border: 1px solid #6a5a3a; background: #1c1a14; color: #eee; font-size: 14px; }
+.paid-unlock .pu-msg, .paid-unlock .lu-msg, .paid-unlock .fu-msg { font-size: 12.5px; margin-top: 6px; min-height: 16px; }
 .paid-unlock .pu-buy { display: inline-block; margin-top: 8px; font-size: 13px; color: #ffcf6a; font-weight: bold; text-decoration: none; }
 .paid-unlock .pu-buy:hover { text-decoration: underline; }
 .lib-song .lib-play { flex: 1 1 auto; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

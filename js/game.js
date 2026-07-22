@@ -133,6 +133,7 @@
     // 共用密碼解鎖 UI
     // 解鎖密碼控制在「嚕嚕安教材」欄位上（buildSampleList 產生）；Email 解鎖＋購買連結在「我的曲庫」欄位。
     loadUnlockConfig();
+    loadPaidFolders();          // 讀取後台的付費資料夾上鎖設定
     renderLibUnlock();
 
     els.trackSelect.addEventListener("change", rebuildTimeline);
@@ -434,15 +435,17 @@
     det.className = "sample-group" + (depth > 0 ? " sub" : "");
     if (depth === 0) det.open = true;                   // 頂層預設展開，子課程收合
     var sum = document.createElement("summary");
-    var lock = (ctx.tier === "paid" && depth === 0 && !isUnlocked()) ? "🔒 " : "";
+    var isFolder  = (ctx.tier === "paid" && depth === 0 && ctx.grp != null);   // 後台付費資料夾(各自密碼)
+    var isCurated = (ctx.tier === "paid" && depth === 0 && ctx.grp == null);   // 嚕嚕安教材(主密碼)
+    var locked = isFolder ? (folderIsLocked(ctx.grp) && !folderUnlocked(ctx.grp))
+               : isCurated ? !isUnlocked() : false;
+    var lock = locked ? "🔒 " : "";
     sum.innerHTML = lock + escapeHtml(group.title) + ' <span class="sample-count">' + countSongs(group) + '</span>';
     det.appendChild(sum);
-    // 付費教材頂層欄位：直接把「解鎖密碼」控制放在這裡（只放一次）
-    if (ctx.tier === "paid" && depth === 0 && !_paidUnlockPlaced) {
-      var puWrap = document.createElement("div");
-      puWrap.innerHTML = paidUnlockHtml();
-      det.appendChild(puWrap.firstChild);
-      _paidUnlockPlaced = true;
+    if (isFolder && locked) {                                    // 上鎖資料夾→放各自的密碼欄
+      var fw = document.createElement("div"); fw.innerHTML = folderUnlockHtml(ctx.grp); det.appendChild(fw.firstChild);
+    } else if (isCurated && !_paidUnlockPlaced) {                // 嚕嚕安教材→主密碼欄(只放一次)
+      var puWrap = document.createElement("div"); puWrap.innerHTML = paidUnlockHtml(); det.appendChild(puWrap.firstChild); _paidUnlockPlaced = true;
     }
     if (group.groups) {
       group.groups.forEach(function (sub) { det.appendChild(renderSampleGroup(sub, depth + 1, ctx)); });
@@ -484,11 +487,17 @@
     if (!A || !A.fetchCatalog || !box) return;
     A.fetchCatalog().then(function (rows) {
       if (!rows || !rows.length) return;
-      function toSong(r) { return { label: (r.grp ? r.grp + " · " : "") + r.title, path: r.path }; }
+      function toSong(r) { return { label: r.title, path: r.path }; }
       var free = rows.filter(function (r) { return r.tier === "free"; });
       var paid = rows.filter(function (r) { return r.tier !== "free"; });
       if (free.length) box.appendChild(renderSampleGroup({ title: "自訂免費曲", songs: free.map(toSong) }, 0, { tier: "free", bucket: "free-songs" }));
-      if (paid.length) { box.appendChild(renderSampleGroup({ title: "自訂教材（付費）", songs: paid.map(toSong) }, 0, { tier: "paid", bucket: "paid-songs" })); wirePaidUnlock(box); }
+      // 付費：依 grp 分成各自的資料夾，每個資料夾可獨立上鎖＋獨立密碼（後台設定）
+      var byGrp = {};
+      paid.forEach(function (r) { var g = r.grp || "自訂教材"; (byGrp[g] = byGrp[g] || []).push(r); });
+      Object.keys(byGrp).forEach(function (g) {
+        box.appendChild(renderSampleGroup({ title: g, songs: byGrp[g].map(toSong) }, 0, { tier: "paid", bucket: "paid-songs", grp: g }));
+      });
+      wirePaidUnlock(box); wireFolderUnlock(box);
     });
   }
   function encodePath(p) { return String(p).split("/").map(encodeURIComponent).join("/"); }
@@ -510,10 +519,18 @@
   function loadBucketSong(path, name, base, ctx) {
     var A = window.JianpuAuth, paid = ctx.tier === "paid";
     if (!A || !A.isReady()) { setStatus("需要連線後端才能載入這首；但服務尚未設定或無法連線。", true); return; }
-    if (paid && !isUnlocked()) {                                       // 付費教材：改用「共用解鎖密碼」把關
-      setStatus("這是付費教材 🔒 請在「嚕嚕安教材」欄位輸入解鎖密碼（購買請洽老師 LINE：paul780516）。", true);
-      focusPaidUnlock();
-      return;
+    if (paid) {
+      if (ctx.grp != null) {                                           // 後台付費資料夾 → 各自的密碼
+        if (folderIsLocked(ctx.grp) && !folderUnlocked(ctx.grp)) {
+          setStatus("這個資料夾需要密碼 🔒 請在「" + ctx.grp + "」上方輸入該資料夾的解鎖密碼。", true);
+          var fi = document.querySelector('.paid-unlock[data-grp] .fu-input'); if (fi) { try { fi.focus(); fi.scrollIntoView({ block: "center" }); } catch (e) {} }
+          return;
+        }
+      } else if (!isUnlocked()) {                                      // 嚕嚕安教材 → 主解鎖密碼
+        setStatus("這是付費教材 🔒 請在「嚕嚕安教材」欄位輸入解鎖密碼（購買請洽老師 LINE：paul780516）。", true);
+        focusPaidUnlock();
+        return;
+      }
     }
     setStatus((paid ? "載入教材：" : "載入：") + name + " …");
     A.downloadSong(ctx.bucket || "paid-songs", path)
@@ -692,6 +709,46 @@
   function focusPaidUnlock() {
     var inp = document.querySelector(".paid-unlock .pu-input");
     if (inp) { try { inp.focus(); inp.scrollIntoView({ block: "center" }); } catch (e) {} }
+  }
+
+  // ---- 付費資料夾：每個資料夾(grp)可各自上鎖＋各自密碼（後台設定，存 Supabase paid_folders）----
+  var _paidFolders = {};   // {grp:{locked,pw_hash}}
+  function loadPaidFolders() {
+    var A = window.JianpuAuth;
+    if (A && A.fetchFolders) A.fetchFolders().then(function (m) { _paidFolders = m || {}; buildSampleList(); }).catch(function () {});
+  }
+  function folderIsLocked(grp) { var f = _paidFolders[grp]; return !!(f && f.locked); }   // 沒設定=不上鎖(開放)
+  function folderUnlocked(grp) {
+    if (isUnlocked()) return true;                                                        // 主密碼=萬能鑰匙
+    try { return localStorage.getItem("jianpu_folder_" + grp) === "1"; } catch (e) { return false; }
+  }
+  function setFolderUnlocked(grp) { try { localStorage.setItem("jianpu_folder_" + grp, "1"); } catch (e) {} }
+  function verifyFolderPw(grp, pw) {
+    var f = _paidFolders[grp];
+    if (!f || !f.pw_hash) return Promise.resolve(false);
+    return sha256hex((pw || "").trim()).then(function (h) { return h === String(f.pw_hash).toLowerCase(); }).catch(function () { return false; });
+  }
+  // 每個上鎖資料夾標題下方的解鎖控制
+  function folderUnlockHtml(grp) {
+    return '<div class="paid-unlock" data-grp="' + escapeHtml(grp) + '">' +
+      '<div class="pu-tip">🔒 這個資料夾需要密碼才能玩。輸入本資料夾的解鎖密碼：</div>' +
+      '<div class="pu-row"><input type="password" class="fu-input" placeholder="輸入密碼" autocomplete="off" />' +
+      '<button type="button" class="btn small fu-btn">解鎖</button></div>' +
+      '<div class="fu-msg"></div></div>';
+  }
+  function wireFolderUnlock(root) {
+    (root || document).querySelectorAll(".paid-unlock[data-grp] .fu-btn").forEach(function (btn) {
+      var wrap = btn.closest(".paid-unlock"), grp = wrap.getAttribute("data-grp");
+      var inp = wrap.querySelector(".fu-input"), msg = wrap.querySelector(".fu-msg");
+      function go() {
+        verifyFolderPw(grp, inp.value).then(function (ok) {
+          if (ok) { setFolderUnlocked(grp); buildSampleList(); }
+          else { msg.textContent = "密碼不對，再確認一下～"; msg.style.color = "#ff9a9a"; }
+        });
+      }
+      btn.addEventListener("click", go);
+      inp.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
+    });
   }
 
   function loadFile(file) {
@@ -1233,10 +1290,12 @@
     g.addColorStop(0, "#1b1030"); g.addColorStop(0.55, "#120a1e"); g.addColorStop(1, "#0a0710");
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
     var st = (state === "playing") ? A.getSongTime() : 0;
-    var bg = bgImage;
+    // 選閃電嚕嚕安 → 綁定他的專屬照片(滿版背景，優先於上傳圖與程序舞台)
+    var lockBg = (guitaristId === "lulan" && lulanBg.complete && lulanBg.naturalWidth) ? lulanBg : null;
+    var bg = lockBg || bgImage;
     stageProcedural = !bg;                         // 無背景圖時才畫程序化舞台(升降台/觀眾)
     if (bg) {
-      var alpha = bgOpacity;
+      var alpha = lockBg ? 1.0 : bgOpacity;
       var ir = bg.width / bg.height, cr = W / H, dw, dh;
       if (ir > cr) { dh = H; dw = H * ir; } else { dw = W; dh = W / ir; }
       ctx.save(); ctx.globalAlpha = alpha; ctx.drawImage(bg, (W - dw) / 2, (H - dh) / 2, dw, dh); ctx.restore();

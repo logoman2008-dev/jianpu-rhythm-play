@@ -103,6 +103,17 @@
       .then(function (res) { if (res.error) return null; return !!res.data; })
       .catch(function () { return null; });
   }
+  // 讀取付費資料夾的上鎖設定（每個 grp 可獨立上鎖＋獨立密碼）；回傳 {grp:{locked,pw_hash}}
+  function fetchFolders() {
+    if (!sb) return Promise.resolve({});
+    return sb.from("paid_folders").select("grp,locked,pw_hash")
+      .then(function (res) {
+        var m = {};
+        (res && res.data ? res.data : []).forEach(function (r) { m[r.grp] = { locked: !!r.locked, pw_hash: r.pw_hash || "" }; });
+        return m;
+      })
+      .catch(function () { return {}; });
+  }
   // 讀取「app_config」設定表的一個 key（例：解鎖密碼 hash）；公開可讀，找不到就回 null
   function fetchConfig(key) {
     if (!sb) return Promise.resolve(null);
@@ -151,6 +162,7 @@
     downloadSong: downloadSong,
     fetchCatalog: fetchCatalog,
     fetchConfig: fetchConfig,
+    fetchFolders: fetchFolders,
     checkEmailUnlock: checkEmailUnlock,
     onChange: function (fn) { if (typeof fn === "function") listeners.push(fn); },
     focusLogin: focusLogin
