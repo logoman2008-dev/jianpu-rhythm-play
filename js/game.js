@@ -620,6 +620,8 @@
     updateOwnGateTip(); refreshGuitaristLocks();
     buildSampleList();                            // 重畫曲庫(付費鎖頭→已解鎖)
   }
+  // 購買解鎖的 Google 訂購表單（學生填完→老師收款→回傳解鎖密碼）
+  var ORDER_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScwb4iexfUwKLuf5AHumcz0NpPJfcYM6W5V7fJDw5_1sxqrXQ/viewform";
   // 「嚕嚕安教材」欄位上的解鎖控制：HTML 片段
   function paidUnlockHtml() {
     if (isUnlocked())
@@ -628,7 +630,9 @@
       '<div class="pu-tip">🔒 尚未解鎖：自己上傳的譜每天有免費次數上限，解鎖後<b>可無限使用</b>，並開放全部嚕嚕安教材與嚕嚕安角色。</div>' +
       '<div class="pu-row"><input type="password" class="pu-input" placeholder="輸入解鎖密碼" autocomplete="off" />' +
       '<button type="button" class="btn small pu-btn">解鎖</button></div>' +
-      '<div class="pu-msg"></div></div>';
+      '<div class="pu-msg"></div>' +
+      '<a class="pu-buy" href="' + ORDER_FORM_URL + '" target="_blank" rel="noopener">🔓 還沒有密碼？點我購買解鎖（填訂購單）</a>' +
+      '</div>';
   }
   // 綁定教材欄位上的解鎖輸入（buildSampleList 後呼叫）
   function wirePaidUnlock(root) {
