@@ -619,15 +619,16 @@
     var inp = document.getElementById("unlockInput"); if (!inp) return;
     var pw = inp.value;
     verifyUnlockPw(pw).then(function (ok) {
-      if (ok) { inp.value = ""; applyUnlockSuccess(); setUnlockMsg("✅ 解鎖成功！教材已開放，嚕嚕安角色已解鎖。", true); }
+      if (ok) { inp.value = ""; applyUnlockSuccess(); setUnlockMsg("✅ 解鎖成功！自己上傳的譜已可無限使用，全部教材與嚕嚕安角色也開放了。", true); }
       else setUnlockMsg("密碼不對，再確認一下～（購買解鎖請點右邊按鈕）", false);
     });
   }
   function setUnlockMsg(t, ok) { var el = document.getElementById("unlockMsg"); if (el) { el.textContent = t || ""; el.style.color = ok ? "#7CFC9B" : "#ff9a9a"; } }
   function updateUnlockUI() {
     var box = document.getElementById("unlockBox"), st = document.getElementById("unlockStatus");
-    if (st) st.innerHTML = isUnlocked() ? "🔓 <b style='color:#7CFC9B'>已解鎖</b>（教材與嚕嚕安角色已開放）"
-                                        : "🔒 教材與嚕嚕安角色未解鎖（免費曲可直接玩）";
+    if (st) st.innerHTML = isUnlocked()
+      ? "🔓 <b style='color:#7CFC9B'>已解鎖</b>：自己上傳的譜無限使用，全部教材與嚕嚕安角色已開放。"
+      : "🔒 尚未解鎖：自己上傳的譜每天有免費次數上限。解鎖後<b>可無限使用</b>，並開放全部嚕嚕安教材與嚕嚕安角色。";
     if (box) box.style.display = isUnlocked() ? "none" : "";
   }
 

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>簡譜音遊 · Jianpu Rhythm</title>
-  <link rel="stylesheet" href="css/style.css?v=20260722a" />
+  <link rel="stylesheet" href="css/style.css?v=20260722b" />
 </head>
 <body>
   <div class="app">
@@ -23,7 +23,7 @@
             <div class="dz-sub">支援 .gp / .gpx / .gp5 / .gp4 / .gp3</div>
           </div>
           <div class="gate-row" style="flex-wrap:wrap;gap:8px;align-items:center">
-            <span id="unlockStatus" class="field-tip">🔒 教材與嚕嚕安角色未解鎖（免費曲可直接玩）</span>
+            <span id="unlockStatus" class="field-tip">🔒 尚未解鎖：自己上傳的譜每天有免費次數上限。解鎖後可無限使用，並開放全部嚕嚕安教材與嚕嚕安角色。</span>
             <span id="unlockBox" style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap">
               <input type="password" id="unlockInput" placeholder="輸入解鎖密碼" autocomplete="off"
                      style="padding:6px 8px;border-radius:6px;border:1px solid #555;background:#1c1c22;color:#eee;min-width:140px" />
@@ -37,8 +37,9 @@
           <div id="buyModal" class="buy-modal hidden">
             <div class="buy-card">
               <button type="button" id="buyClose" class="buy-close" aria-label="關閉">✕</button>
-              <h3>🔓 解鎖全部嚕嚕安教材 ＋ 嚕嚕安角色</h3>
+              <h3>🔓 解鎖：自己上傳的譜無限暢玩 ＋ 全部嚕嚕安教材 ＋ 嚕嚕安角色</h3>
               <p class="buy-price"><span class="buy-old">原價 NT$1190</span> → <b class="buy-new">線上優惠價 NT$490</b></p>
+              <p class="buy-contact" style="margin:0 0 6px">解鎖後：<b>自己上傳的六線譜不再有每日免費次數上限、可無限使用</b>，並開放全部嚕嚕安教材與嚕嚕安角色。</p>
               <ol class="buy-steps">
                 <li>下載並填寫 <a id="orderLink" href="訂購單.xlsx" download>📄 訂購單 Excel</a>（姓名、電話、Email）。</li>
                 <li>依訂購單上的<b>匯款帳號</b>完成匯款 NT$490。</li>
@@ -273,15 +274,15 @@
   <script src="lib/alphaTab.min.js"></script>
   <!-- 登入 / 付費驗證（Supabase）。免費曲不需要這些也能玩；離線會自動略過。 -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/supabase-config.js?v=20260722a"></script>
-  <script src="js/auth.js?v=20260722a"></script>
+  <script src="js/supabase-config.js?v=20260722b"></script>
+  <script src="js/auth.js?v=20260722b"></script>
   <!-- 遊戲程式 -->
-  <script src="js/theory.js?v=20260722a"></script>
-  <script src="js/gp-loader.js?v=20260722a"></script>
-  <script src="js/audio.js?v=20260722a"></script>
-  <script src="js/pitch.js?v=20260722a"></script>
-  <script src="js/songs.js?v=20260722a"></script>
-  <script src="js/game.js?v=20260722a"></script>
-  <script src="js/library.js?v=20260722a"></script>
+  <script src="js/theory.js?v=20260722b"></script>
+  <script src="js/gp-loader.js?v=20260722b"></script>
+  <script src="js/audio.js?v=20260722b"></script>
+  <script src="js/pitch.js?v=20260722b"></script>
+  <script src="js/songs.js?v=20260722b"></script>
+  <script src="js/game.js?v=20260722b"></script>
+  <script src="js/library.js?v=20260722b"></script>
 </body>
 </html>
