@@ -131,13 +131,8 @@
     if (window.JianpuAuth && window.JianpuAuth.onChange) window.JianpuAuth.onChange(updateOwnGateTip);
 
     // 共用密碼解鎖 UI
-    updateUnlockUI(); loadUnlockConfig();
-    var unlockBtn = document.getElementById("unlockBtn"), unlockInput = document.getElementById("unlockInput"), buyBtn = document.getElementById("buyBtn");
-    if (unlockBtn) unlockBtn.addEventListener("click", tryUnlockFromInput);
-    if (unlockInput) unlockInput.addEventListener("keydown", function (e) { if (e.key === "Enter") tryUnlockFromInput(); });
-    if (buyBtn) buyBtn.addEventListener("click", function () { var m = document.getElementById("buyModal"); if (m) m.classList.toggle("hidden"); });
-    var buyClose = document.getElementById("buyClose");
-    if (buyClose) buyClose.addEventListener("click", function () { var m = document.getElementById("buyModal"); if (m) m.classList.add("hidden"); });
+    // 解鎖密碼控制已移到「嚕嚕安教材」欄位上（由 buildSampleList/renderSampleGroup 產生並在 wirePaidUnlock 綁定）。
+    loadUnlockConfig();
 
     els.trackSelect.addEventListener("change", rebuildTimeline);
     els.keySelect.addEventListener("change", rebuildTimeline);
@@ -441,6 +436,13 @@
     var lock = (ctx.tier === "paid" && depth === 0 && !isUnlocked()) ? "🔒 " : "";
     sum.innerHTML = lock + escapeHtml(group.title) + ' <span class="sample-count">' + countSongs(group) + '</span>';
     det.appendChild(sum);
+    // 付費教材頂層欄位：直接把「解鎖密碼」控制放在這裡（只放一次）
+    if (ctx.tier === "paid" && depth === 0 && !_paidUnlockPlaced) {
+      var puWrap = document.createElement("div");
+      puWrap.innerHTML = paidUnlockHtml();
+      det.appendChild(puWrap.firstChild);
+      _paidUnlockPlaced = true;
+    }
     if (group.groups) {
       group.groups.forEach(function (sub) { det.appendChild(renderSampleGroup(sub, depth + 1, ctx)); });
     } else if (group.songs) {
@@ -457,9 +459,11 @@
     }
     return det;
   }
+  var _paidUnlockPlaced = false;   // 每次重建曲庫時只在第一個付費頂層欄位放一次解鎖控制
   function buildSampleList() {
     var box = $("sampleList"); if (!box) return;
     box.innerHTML = "";
+    _paidUnlockPlaced = false;
     // 免費示範曲是本地檔，用 file:// 直接開會抓不到 → 提示（倉庫曲走網路不受此限）
     if (FREE_GROUPS.length && location.protocol === "file:") {
       var warn = document.createElement("div");
@@ -470,6 +474,7 @@
     }
     FREE_GROUPS.forEach(function (group)   { box.appendChild(renderSampleGroup(group, 0, { local: true, tier: "free" })); });
     SAMPLE_GROUPS.forEach(function (group) { box.appendChild(renderSampleGroup(group, 0, { tier: "paid", bucket: "paid-songs" })); });
+    wirePaidUnlock(box);
     appendDbCatalog(box);
   }
   // 從 Supabase「songs」清單表載入管理後台新增的自訂曲（免費／付費），追加到清單
@@ -482,7 +487,7 @@
       var free = rows.filter(function (r) { return r.tier === "free"; });
       var paid = rows.filter(function (r) { return r.tier !== "free"; });
       if (free.length) box.appendChild(renderSampleGroup({ title: "自訂免費曲", songs: free.map(toSong) }, 0, { tier: "free", bucket: "free-songs" }));
-      if (paid.length) box.appendChild(renderSampleGroup({ title: "自訂教材（付費）", songs: paid.map(toSong) }, 0, { tier: "paid", bucket: "paid-songs" }));
+      if (paid.length) { box.appendChild(renderSampleGroup({ title: "自訂教材（付費）", songs: paid.map(toSong) }, 0, { tier: "paid", bucket: "paid-songs" })); wirePaidUnlock(box); }
     });
   }
   function encodePath(p) { return String(p).split("/").map(encodeURIComponent).join("/"); }
@@ -505,8 +510,8 @@
     var A = window.JianpuAuth, paid = ctx.tier === "paid";
     if (!A || !A.isReady()) { setStatus("需要連線後端才能載入這首；但服務尚未設定或無法連線。", true); return; }
     if (paid && !isUnlocked()) {                                       // 付費教材：改用「共用解鎖密碼」把關
-      setStatus("這是付費教材 🔒 請先在上方輸入解鎖密碼（購買解鎖請點「🔓 購買解鎖」）。", true);
-      var inp = document.getElementById("unlockInput"); if (inp) { try { inp.focus(); inp.scrollIntoView({ block: "center" }); } catch (e) {} }
+      setStatus("這是付費教材 🔒 請在「嚕嚕安教材」欄位輸入解鎖密碼（購買請洽老師 LINE：paul780516）。", true);
+      focusPaidUnlock();
       return;
     }
     setStatus((paid ? "載入教材：" : "載入：") + name + " …");
@@ -609,27 +614,40 @@
   }
   function charName(id) { var sel = els.guitaristSelect; if (!sel) return id; var op = sel.querySelector('option[value="' + id + '"]'); return op ? (op.getAttribute("data-base") || op.textContent) : id; }
 
-  // 解鎖成功：套用狀態、刷新畫面、給提示
+  // 解鎖成功：套用狀態、刷新畫面（解鎖控制在教材欄位上，會隨 buildSampleList 重繪）
   function applyUnlockSuccess() {
     setUnlocked(true);
-    updateOwnGateTip(); updateUnlockUI(); refreshGuitaristLocks();
-    buildSampleList();                            // 重畫曲庫(拿掉付費鎖頭)
+    updateOwnGateTip(); refreshGuitaristLocks();
+    buildSampleList();                            // 重畫曲庫(付費鎖頭→已解鎖)
   }
-  function tryUnlockFromInput() {
-    var inp = document.getElementById("unlockInput"); if (!inp) return;
-    var pw = inp.value;
-    verifyUnlockPw(pw).then(function (ok) {
-      if (ok) { inp.value = ""; applyUnlockSuccess(); setUnlockMsg("✅ 解鎖成功！自己上傳的譜已可無限使用，全部教材與嚕嚕安角色也開放了。", true); }
-      else setUnlockMsg("密碼不對，再確認一下～（購買解鎖請點右邊按鈕）", false);
+  // 「嚕嚕安教材」欄位上的解鎖控制：HTML 片段
+  function paidUnlockHtml() {
+    if (isUnlocked())
+      return '<div class="paid-unlock unlocked">🔓 <b>已解鎖</b>：自己上傳的譜無限使用，全部教材與嚕嚕安角色已開放。</div>';
+    return '<div class="paid-unlock">' +
+      '<div class="pu-tip">🔒 尚未解鎖：自己上傳的譜每天有免費次數上限，解鎖後<b>可無限使用</b>，並開放全部嚕嚕安教材與嚕嚕安角色。</div>' +
+      '<div class="pu-row"><input type="password" class="pu-input" placeholder="輸入解鎖密碼" autocomplete="off" />' +
+      '<button type="button" class="btn small pu-btn">解鎖</button></div>' +
+      '<div class="pu-msg"></div></div>';
+  }
+  // 綁定教材欄位上的解鎖輸入（buildSampleList 後呼叫）
+  function wirePaidUnlock(root) {
+    (root || document).querySelectorAll(".paid-unlock .pu-btn").forEach(function (btn) {
+      var wrap = btn.closest(".paid-unlock");
+      var inp = wrap.querySelector(".pu-input"), msg = wrap.querySelector(".pu-msg");
+      function go() {
+        verifyUnlockPw(inp.value).then(function (ok) {
+          if (ok) { applyUnlockSuccess(); }   // 會重畫成「已解鎖」
+          else { msg.textContent = "密碼不對，再確認一下～（購買請洽老師 LINE：paul780516）"; msg.style.color = "#ff9a9a"; }
+        });
+      }
+      btn.addEventListener("click", go);
+      inp.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
     });
   }
-  function setUnlockMsg(t, ok) { var el = document.getElementById("unlockMsg"); if (el) { el.textContent = t || ""; el.style.color = ok ? "#7CFC9B" : "#ff9a9a"; } }
-  function updateUnlockUI() {
-    var box = document.getElementById("unlockBox"), st = document.getElementById("unlockStatus");
-    if (st) st.innerHTML = isUnlocked()
-      ? "🔓 <b style='color:#7CFC9B'>已解鎖</b>：自己上傳的譜無限使用，全部教材與嚕嚕安角色已開放。"
-      : "🔒 尚未解鎖：自己上傳的譜每天有免費次數上限。解鎖後<b>可無限使用</b>，並開放全部嚕嚕安教材與嚕嚕安角色。";
-    if (box) box.style.display = isUnlocked() ? "none" : "";
+  function focusPaidUnlock() {
+    var inp = document.querySelector(".paid-unlock .pu-input");
+    if (inp) { try { inp.focus(); inp.scrollIntoView({ block: "center" }); } catch (e) {} }
   }
 
   function loadFile(file) {
