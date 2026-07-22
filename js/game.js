@@ -470,15 +470,18 @@
       warn.innerHTML = "⚠ 你是用「檔案(file://)」直接開啟的，本地免費示範曲無法載入。<br>請改用資料夾裡的「啟動遊戲.command」（會用本機伺服器開）。<br>（「我的曲庫」自己上傳的曲子不受影響。）";
       box.appendChild(warn);
     }
+    var tok = ++_buildTok;                            // 防重複：非同步追加前先取號，過期就不追加
     FREE_GROUPS.forEach(function (group)   { box.appendChild(renderSampleGroup(group, 0, { local: true, tier: "free" })); });
     // 嚕嚕安教材已移除(只保留角色與背景)；付費內容改由後台上傳的資料夾(各自密碼)提供
-    appendDbCatalog(box);
+    appendDbCatalog(box, tok);
   }
   // 從 Supabase「songs」清單表載入管理後台新增的自訂曲（免費／付費），追加到清單
-  function appendDbCatalog(box) {
+  var _buildTok = 0;
+  function appendDbCatalog(box, tok) {
     var A = window.JianpuAuth;
     if (!A || !A.fetchCatalog || !box) return;
     A.fetchCatalog().then(function (rows) {
+      if (tok !== _buildTok) return;                  // 已被較新的重建取代→不追加(避免重複)
       if (!rows || !rows.length) return;
       function toSong(r) { return { label: r.title, path: r.path }; }
       var free = rows.filter(function (r) { return r.tier === "free"; });
