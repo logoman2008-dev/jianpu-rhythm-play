@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>簡譜音遊 · Jianpu Rhythm</title>
+  <link rel="stylesheet" href="css/style.css?v=20260722a" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="logo">簡譜音遊 <span>Jianpu Rhythm</span></div>
+      <div class="tagline">匯入 Guitar Pro 樂譜，對麥克風彈真吉他闖關</div>
+    </header>
+
+    <!-- 設定 / 選曲 -->
+    <section id="setupPanel" class="panel">
+      <div class="setup-grid">
+        <div class="dz-col">
+          <div id="dropZone" class="dropzone">
+            <input type="file" id="fileInput" accept=".gp,.gpx,.gp5,.gp4,.gp3,.gpif" hidden />
+            <div class="dz-main">拖曳或點此選擇 Guitar Pro 檔</div>
+            <div class="dz-sub">支援 .gp / .gpx / .gp5 / .gp4 / .gp3</div>
+          </div>
+          <div class="gate-row" style="flex-wrap:wrap;gap:8px;align-items:center">
+            <span id="unlockStatus" class="field-tip">🔒 教材與嚕嚕安角色未解鎖（免費曲可直接玩）</span>
+            <span id="unlockBox" style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <input type="password" id="unlockInput" placeholder="輸入解鎖密碼" autocomplete="off"
+                     style="padding:6px 8px;border-radius:6px;border:1px solid #555;background:#1c1c22;color:#eee;min-width:140px" />
+              <button type="button" id="unlockBtn" class="btn small">解鎖</button>
+              <button type="button" id="buyBtn" class="btn small ghost">🔓 購買解鎖</button>
+            </span>
+            <span id="unlockMsg" class="field-tip" style="width:100%"></span>
+          </div>
+
+          <!-- 購買解鎖說明（點「🔓 購買解鎖」開啟） -->
+          <div id="buyModal" class="buy-modal hidden">
+            <div class="buy-card">
+              <button type="button" id="buyClose" class="buy-close" aria-label="關閉">✕</button>
+              <h3>🔓 解鎖全部嚕嚕安教材 ＋ 嚕嚕安角色</h3>
+              <p class="buy-price"><span class="buy-old">原價 NT$1190</span> → <b class="buy-new">線上優惠價 NT$490</b></p>
+              <ol class="buy-steps">
+                <li>下載並填寫 <a id="orderLink" href="訂購單.xlsx" download>📄 訂購單 Excel</a>（姓名、電話、Email）。</li>
+                <li>依訂購單上的<b>匯款帳號</b>完成匯款 NT$490。</li>
+                <li>加老師 <b>LINE：paul780516</b>，把訂購單與匯款後五碼傳給老師。</li>
+                <li>老師確認後回傳<b>解鎖密碼</b>，在上方輸入即完成解鎖 🎉</li>
+              </ol>
+              <p class="buy-contact">LINE：<b>paul780516</b>　｜　IG：<b>six_strings_studio</b></p>
+            </div>
+          </div>
+          <div id="ownGateTip" class="field-tip"></div>
+          <div id="myLibraryBox" class="sample-box">
+            <div class="sample-title">我的曲庫</div>
+            <div class="lib-toolbar">
+              <button type="button" id="libAddFiles" class="btn small">＋ 加入檔案</button>
+              <button type="button" id="libAddFolder" class="btn small">＋ 加入整個資料夾</button>
+              <button type="button" id="libNewFolder" class="btn small ghost">＋ 新資料夾</button>
+              <input type="file" id="libFileInput" accept=".gp,.gpx,.gp5,.gp4,.gp3,.gpif" multiple hidden />
+              <input type="file" id="libDirInput" webkitdirectory hidden />
+            </div>
+            <div class="field-tip">💡 也可以直接把 <b>.gp 檔或整個資料夾</b> 拖進這個框裡加入。</div>
+            <div id="libTip" class="field-tip"></div>
+            <div id="myLibrary" class="sample-list"></div>
+          </div>
+          <div id="sampleBox" class="sample-box">
+            <div id="sampleList" class="sample-list"></div>
+          </div>
+        </div>
+
+        <div class="controls">
+          <label class="field">
+            <span>樂器軌道</span>
+            <select id="trackSelect"></select>
+          </label>
+          <!-- 顯示=六線譜、輸入=吉他收音，皆為唯一選項，隱藏但保留供程式讀取(鍵盤模式已移除) -->
+          <div class="field-row" style="display:none">
+            <label class="field">
+              <span>顯示方式</span>
+              <select id="displaySelect">
+                <option value="tab" selected>六線譜（橫向）</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>輸入方式</span>
+              <select id="inputSelect">
+                <option value="mic" selected>吉他收音（麥克風）</option>
+              </select>
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field">
+              <span>調性（1=Do）</span>
+              <select id="keySelect"></select>
+            </label>
+            <label class="field">
+              <span>難度</span>
+              <select id="difficultySelect">
+                <option value="easy">簡單（慢）</option>
+                <option value="normal" selected>普通</option>
+                <option value="hard">困難（快）</option>
+              </select>
+            </label>
+          </div>
+          <label class="slider-field">
+            <span>倍速<b id="speedVal">1×（正常）</b></span>
+            <input type="range" id="speedRange" min="0.5" max="2" step="0.05" value="1" />
+          </label>
+          <label class="field checkbox">
+            <input type="checkbox" id="melodyToggle" checked />
+            <span>播放旋律導引</span>
+          </label>
+          <label class="field checkbox">
+            <input type="checkbox" id="metronomeToggle" />
+            <span>節拍器</span>
+          </label>
+          <label class="field">
+            <span>曲風伴奏</span>
+            <select id="genreSelect">
+              <option value="none" selected>無</option>
+              <option value="rock">搖滾 Rock</option>
+              <option value="metal">金屬 Metal</option>
+              <option value="folk">民謠／流行 Folk-Pop</option>
+              <option value="funk">放克／拉丁 Funk-Latin</option>
+            </select>
+          </label>
+          <div class="field-row">
+            <label class="field">
+              <span>吉他手</span>
+              <select id="guitaristSelect">
+                <option value="slash" selected>Slash（高帽爆炸頭）</option>
+                <option value="hendrix">Jimi Hendrix（頭巾爆炸頭）</option>
+                <option value="angus">Angus Young（學生帽短褲）</option>
+                <option value="may">Brian May（捲毛紅琴）</option>
+                <option value="vanhalen">Van Halen（條紋琴）</option>
+                <option value="cobain">Kurt Cobain（金髮墨鏡）</option>
+                <option value="bbking">B.B. King（西裝空心琴）</option>
+                <option value="page">Jimmy Page（長髮 Les Paul）</option>
+                <option value="zakk">Zakk Wylde（長髮靶心琴）</option>
+                <option value="henson">Tim Henson · 現代（頂髻圓墨鏡·尼龍弦）</option>
+                <option value="asato">Mateus Asato · 現代（大鬍子波浪髮）</option>
+                <option value="ichika">Ichika Nito · 現代（黑直髮圓框眼鏡）</option>
+                <option value="yvette">Yvette Young · 現代（挑染長髮）</option>
+                <option value="lulan">閃電嚕嚕安（挺舉）</option>
+                <option value="none">不顯示角色</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>背景圖／個人照</span>
+              <input type="file" id="bgInput" accept="image/*" />
+            </label>
+          </div>
+          <label class="slider-field" id="bgOpacityField">
+            <span>背景照透明度<b id="bgOpacityVal">55%</b></span>
+            <input type="range" id="bgOpacityRange" min="10" max="100" step="5" value="55" />
+          </label>
+
+          <div id="micSettings" class="mic-settings hidden">
+            <div class="ms-head">收音校正</div>
+            <label class="field">
+              <span>輸入裝置</span>
+              <select id="audioInSelect"><option value="">預設輸入裝置</option></select>
+            </label>
+            <div class="ms-tip" id="audioInTip">按一次「測試麥克風」授權後，這裡才會顯示各裝置名稱。</div>
+            <label class="slider-field">
+              <span>靈敏度<b id="sensVal">中</b></span>
+              <input type="range" id="sensRange" min="0" max="100" value="65" />
+            </label>
+            <label class="slider-field">
+              <span>延遲校正<b id="latVal">50 ms</b></span>
+              <input type="range" id="latRange" min="0" max="200" step="5" value="50" />
+            </label>
+            <div class="mic-test">
+              <button type="button" id="micTestBtn" class="btn small ghost">▶ 測試麥克風</button>
+              <button type="button" id="autoCalBtn" class="btn small ghost">🎯 自動校正延遲</button>
+              <span class="mt-note">偵測：<b id="testNote">—</b></span>
+              <span class="mic-level"><i id="testLevel"></i></span>
+            </div>
+            <div class="ms-tip">彈一個音，若下方沒反應就把靈敏度調高。自動校正會播 8 拍節拍器，跟著彈即可（<b>請戴耳機</b>，避免節拍聲被收進去）。</div>
+          </div>
+
+          <button id="startBtn" class="btn primary" disabled>▶ 開始遊戲</button>
+        </div>
+      </div>
+
+      <div id="songInfo" class="song-info"></div>
+      <div id="leaderboard" class="leaderboard hidden"></div>
+      <div id="status" class="status"></div>
+
+      <div class="howto">
+        <h3>玩法</h3>
+        <ul>
+          <li><b>匯入樂譜</b>：拖入 Guitar Pro 檔或從曲庫選曲，自動轉成六線譜＋簡譜。</li>
+          <li><b>對著麥克風彈真吉他</b>：音符沿 6 條弦由右往左捲動、顯示弦與格位，到左側判定線時彈出該音；彈對音高（容許小幅走音）就算命中。需用本機伺服器 <b>http://localhost</b> 或 https 才能取用麥克風。</li>
+          <li>越準時得分越高：<b>Perfect ＞ Great ＞ Good</b>，漏接為 <b>Miss</b> 並中斷連段；連段越高，台下越嗨、樂手越站上舞台。</li>
+          <li><b>空白鍵</b>暫停／繼續，<b>Esc</b> 回到選單。</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 遊戲畫面 -->
+    <section id="gameWrap" class="game-wrap hidden">
+      <div class="hud">
+        <div class="hud-left">
+          <div id="hudTitle" class="hud-title"></div>
+          <div class="progress"><div id="progressFill" class="progress-fill"></div></div>
+          <div id="micHud" class="mic-hud hidden">
+            偵測音：<b id="micNote">—</b>
+            <span class="mic-level"><i id="micLevel"></i></span>
+          </div>
+        </div>
+        <div class="hud-right">
+          <div class="hud-stat"><label>分數</label><div id="hudScore">0</div></div>
+          <div class="hud-stat"><label>準確率</label><div id="hudAcc">100%</div></div>
+          <div class="hud-combo" id="hudCombo"></div>
+          <select id="bottomSelect" class="hud-select" title="六線譜下方顯示">
+            <option value="jianpu">下方：簡譜</option>
+            <option value="fretboard">下方：指板</option>
+          </select>
+          <select id="fretWindowSelect" class="hud-select" title="指板顯示範圍">
+            <option value="1">1 拍</option>
+            <option value="2">2 拍</option>
+            <option value="3">3 拍</option>
+            <option value="4" selected>4 拍</option>
+            <option value="bar2">2 小節</option>
+          </select>
+          <select id="fretStyleSelect" class="hud-select" title="指板樣式">
+            <option value="rosewood" selected>玫瑰木·圓點</option>
+            <option value="ebony">黑檀·圓點</option>
+            <option value="maple">楓木·黑點</option>
+            <option value="block">黑檀·方塊</option>
+            <option value="shark">黑檀·鯊魚鰭</option>
+            <option value="vine">生命樹·藤蔓</option>
+          </select>
+          <button id="pauseBtn" class="btn small">⏸ 暫停</button>
+          <button id="restartBtn" class="btn small">↻ 重來</button>
+          <button id="backBtn" class="btn small ghost">✕ 選單</button>
+        </div>
+      </div>
+      <canvas id="gameCanvas"></canvas>
+    </section>
+
+    <!-- 自動延遲校正 -->
+    <div id="calibModal" class="result hidden">
+      <div class="result-card">
+        <h2>🎯 自動延遲校正</h2>
+        <div class="calib-body">
+          <div id="calibDot" class="calib-dot"></div>
+          <div class="calib-instr">聽到「嗒」聲時，跟著在吉他上彈一下（共 8 拍）</div>
+          <div id="calibProg" class="calib-prog">準備…</div>
+          <div id="calibResult" class="calib-result"></div>
+        </div>
+        <div class="result-actions">
+          <button id="calibClose" class="btn primary hidden">套用並關閉</button>
+          <button id="calibCancel" class="btn ghost">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 結算 -->
+    <div id="result" class="result hidden">
+      <div class="result-card">
+        <h2>結算</h2>
+        <div id="resultBody"></div>
+        <div class="result-actions">
+          <button id="resultRetry" class="btn primary">↻ 再玩一次</button>
+          <button id="resultBack" class="btn ghost">回選單</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- alphaTab：解析 Guitar Pro 檔（僅用匯入器，不繪譜） -->
+  <script src="lib/alphaTab.min.js"></script>
+  <!-- 登入 / 付費驗證（Supabase）。免費曲不需要這些也能玩；離線會自動略過。 -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/supabase-config.js?v=20260722a"></script>
+  <script src="js/auth.js?v=20260722a"></script>
+  <!-- 遊戲程式 -->
+  <script src="js/theory.js?v=20260722a"></script>
+  <script src="js/gp-loader.js?v=20260722a"></script>
+  <script src="js/audio.js?v=20260722a"></script>
+  <script src="js/pitch.js?v=20260722a"></script>
+  <script src="js/songs.js?v=20260722a"></script>
+  <script src="js/game.js?v=20260722a"></script>
+  <script src="js/library.js?v=20260722a"></script>
+</body>
+</html>
