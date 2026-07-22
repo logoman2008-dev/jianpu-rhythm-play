@@ -222,7 +222,7 @@
   function onInputModeChange() {
     var mic = els.inputSelect.value === "mic";
     els.micSettings.classList.toggle("hidden", !mic);
-    if (mic) { els.melodyToggle.checked = false; refreshAudioInputs(); }
+    if (mic) { refreshAudioInputs(); }   // 不再強制關閉旋律導引（使用者可自行勾選播放）
     if (!mic && micTesting) toggleMicTest();
   }
   // 目前選的音訊輸入裝置 id（空＝預設）
@@ -527,8 +527,9 @@
 
   // ---- 自己上傳的譜：已解鎖(密碼/開通) → 無限；否則用「每天自動 +DAILY_FREE 的累加式免費額度」----
   //   額度會記憶在瀏覽器：每過一天自動加 DAILY_FREE 首(可累積到 FREE_CAP)，玩一首扣 1；沒玩不會歸零。
-  var DAILY_FREE = 3, FREE_CAP = 30, CREDIT_KEY = "jianpu_free_credits";
-  function isPaid() { return isUnlocked() || (function () { var A = window.JianpuAuth; return !!(A && A.isEntitled && A.isEntitled()); })(); }
+  var DAILY_FREE = 5, FREE_CAP = 50, CREDIT_KEY = "jianpu_free_credits";
+  // 自己上傳的譜「無限使用」條件：密碼解鎖 或 Email 解鎖 或 後端已開通（付費教材另需密碼，見 loadBucketSong）
+  function isPaid() { return isUnlocked() || isEmailUnlocked() || (function () { var A = window.JianpuAuth; return !!(A && A.isEntitled && A.isEntitled()); })(); }
   function epochDay() { var d = new Date(); return Math.floor((d.getTime() - d.getTimezoneOffset() * 60000) / 86400000); }  // 依本地時區的「天」序號
   function saveCredits(st) { try { localStorage.setItem(CREDIT_KEY, JSON.stringify(st)); } catch (e) {} }
   function readCredits() {
@@ -562,10 +563,13 @@
   //   - 其他吉他手角色 → 累積幾首歌拿到 S 級才逐一解鎖。
   // ===================================================================
   var DEFAULT_UNLOCK_PW = "lulu9453";
-  var UNLOCK_KEY = "jianpu_unlocked_v1";
+  var UNLOCK_KEY = "jianpu_unlocked_v1";          // 密碼解鎖（付費教材＋嚕嚕安角色＋自己上傳無限）
+  var EMAIL_UNLOCK_KEY = "jianpu_email_unlocked"; // Email 解鎖（只讓「自己上傳的譜」無限；不開放付費教材/角色）
   var _unlockHash = null;                       // 後台設定的密碼 SHA-256(hex)；null=用預設密碼比對
-  function isUnlocked() { try { return localStorage.getItem(UNLOCK_KEY) === "1"; } catch (e) { return false; } }
+  function isUnlocked() { try { return localStorage.getItem(UNLOCK_KEY) === "1"; } catch (e) { return false; } }     // = 密碼解鎖（付費教材用這個把關）
   function setUnlocked(v) { try { if (v) localStorage.setItem(UNLOCK_KEY, "1"); else localStorage.removeItem(UNLOCK_KEY); } catch (e) {} }
+  function isEmailUnlocked() { try { return localStorage.getItem(EMAIL_UNLOCK_KEY) === "1"; } catch (e) { return false; } }
+  function setEmailUnlocked(v) { try { if (v) localStorage.setItem(EMAIL_UNLOCK_KEY, "1"); else localStorage.removeItem(EMAIL_UNLOCK_KEY); } catch (e) {} }
   function sha256hex(str) {
     try {
       var buf = new TextEncoder().encode(str);
@@ -615,11 +619,16 @@
   }
   function charName(id) { var sel = els.guitaristSelect; if (!sel) return id; var op = sel.querySelector('option[value="' + id + '"]'); return op ? (op.getAttribute("data-base") || op.textContent) : id; }
 
-  // 解鎖成功：套用狀態、刷新畫面（解鎖控制在教材欄位上，會隨 buildSampleList 重繪）
-  function applyUnlockSuccess() {
+  // 密碼解鎖成功（完整）：付費教材＋嚕嚕安角色＋自己上傳無限
+  function applyPasswordUnlock() {
     setUnlocked(true);
     updateOwnGateTip(); refreshGuitaristLocks(); renderLibUnlock();
     buildSampleList();                            // 重畫曲庫(付費鎖頭→已解鎖)
+  }
+  // Email 解鎖成功：只讓「自己上傳的譜」無限（不開放付費教材/角色）
+  function applyEmailUnlock() {
+    setEmailUnlocked(true);
+    updateOwnGateTip(); renderLibUnlock();
   }
   // 購買解鎖的 Google 訂購表單（學生填完→老師收款→回傳解鎖密碼）
   var ORDER_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScwb4iexfUwKLuf5AHumcz0NpPJfcYM6W5V7fJDw5_1sxqrXQ/viewform";
@@ -635,15 +644,15 @@
       '</div>';
   }
 
-  // 「我的曲庫」欄位上的解鎖：用 Email（付款後老師在後台開通該 Email）＋ 購買連結
+  // 「我的曲庫」欄位上的解鎖：用 Email 讓自己上傳的譜無限（付費教材另需密碼，在教材欄位）＋購買連結
   function renderLibUnlock() {
     var box = document.getElementById("libUnlock"); if (!box) return;
-    if (isUnlocked()) {
-      box.innerHTML = '<div class="paid-unlock unlocked">🔓 <b>已解鎖</b>：自己上傳的譜無限使用，全部教材與嚕嚕安角色已開放。</div>';
+    if (isPaid()) {   // 密碼或 Email 任一解鎖 → 自己上傳的譜已無限
+      box.innerHTML = '<div class="paid-unlock unlocked">🔓 <b>已解鎖</b>：自己上傳的譜可無限使用。</div>';
       return;
     }
     box.innerHTML = '<div class="paid-unlock">' +
-      '<div class="pu-tip">🔒 自己上傳的譜每天有免費次數上限。付款開通後，用你填在訂購單的 <b>Email</b> 解鎖，即可無限使用。</div>' +
+      '<div class="pu-tip">🔒 自己上傳的譜每天有免費次數上限。付款開通後，用你填在訂購單的 <b>Email</b> 解鎖，即可無限使用（嚕嚕安付費教材另需在下方教材欄位輸入密碼）。</div>' +
       '<div class="pu-row"><input type="email" class="lu-email" placeholder="輸入你的 Email 解鎖" autocomplete="email" />' +
       '<button type="button" class="btn small lu-btn">解鎖</button></div>' +
       '<div class="lu-msg"></div>' +
@@ -657,7 +666,7 @@
       if (!A || !A.checkEmailUnlock) { msg.textContent = "後端尚未設定，暫時無法用 Email 解鎖（請洽老師 LINE：paul780516）。"; msg.style.color = "#ff9a9a"; return; }
       msg.textContent = "查詢中…"; msg.style.color = "#d7c9ac";
       A.checkEmailUnlock(email).then(function (ok) {
-        if (ok === true) { try { localStorage.setItem("jianpu_unlock_email", email.toLowerCase()); } catch (e) {} applyUnlockSuccess(); }
+        if (ok === true) { try { localStorage.setItem("jianpu_unlock_email", email.toLowerCase()); } catch (e) {} applyEmailUnlock(); }
         else if (ok === false) { msg.textContent = "這個 Email 還沒開通。付款後老師會幫你開通，稍後再試 🙂"; msg.style.color = "#ffb454"; }
         else { msg.textContent = "後端尚未設定 Email 解鎖功能（請洽老師 LINE：paul780516）。"; msg.style.color = "#ff9a9a"; }
       });
@@ -672,7 +681,7 @@
       var inp = wrap.querySelector(".pu-input"), msg = wrap.querySelector(".pu-msg");
       function go() {
         verifyUnlockPw(inp.value).then(function (ok) {
-          if (ok) { applyUnlockSuccess(); }   // 會重畫成「已解鎖」
+          if (ok) { applyPasswordUnlock(); }   // 密碼→完整解鎖(教材/角色/自己上傳)
           else { msg.textContent = "密碼不對，再確認一下～（購買請洽老師 LINE：paul780516）"; msg.style.color = "#ff9a9a"; }
         });
       }
@@ -761,6 +770,7 @@
                    vibrato: n.vibrato || 0, palmMute: n.palmMute, harmonic: n.harmonic || 0,
                    trill: !!n.trill, letRing: !!n.letRing, staccato: !!n.staccato,
                    tap: !!(n.tapLH || beat.tap), tremolo: !!beat.tremolo, slap: !!beat.slap, pop: !!beat.pop,
+                   chordNote: !!beat.chord,                                  // 屬於和弦的單音→六線譜上特別標注
                    linkRow: linkRow, linkTime: linkTime, linkFret: linkFret };
         });
         if (!notes.length) {                                         // 純死音/悶音拍：只在六線譜顯示 X，不進判定（judged 直接為 true）
@@ -777,6 +787,7 @@
         });
         return { time: beat.time * inv, dur: beat.dur * inv, notes: notes, deadNotes: deadNotes, pcs: pcs, degSet: degs,
                  lane: top.degree - 1, midi: top.midi, bend: top.bend || 0, topTech: noteHasTech(top), bar: beat.bar,
+                 chord: beat.chord || "",
                  nv: beat.nv, dots: beat.dots || 0, tuplet: beat.tuplet || null,
                  judged: false, hit: false, missed: false, tier: null };
       });
@@ -938,7 +949,7 @@
     resize();
     layoutPad();
 
-    var melodyOn = els.melodyToggle.checked && inputMode !== "mic"; // 收音時關旋律避免回授
+    var melodyOn = els.melodyToggle.checked;         // 依勾選播放旋律導引（收音時建議戴耳機避免回授）
     // 依曲速決定倒數每拍秒數；開場先顯示「準備」，再倒數 4 拍(4-3-2-1)
     var bp = (beatTimes && beatTimes.length >= 2) ? (beatTimes[1] - beatTimes[0]) : 0.5;
     countBeat = Math.min(1.1, Math.max(0.34, bp || 0.5));
@@ -1050,7 +1061,7 @@
       } else if (_lastBeep !== 0) { A.beep(true); _lastBeep = 0; }
 
       // 節拍器（依拍點排程，稍微提前排程以求準時）；選了曲風伴奏時自動內含節拍器click，與伴奏結合成一體
-      var metroOn = (els.metronomeToggle && els.metronomeToggle.checked) || genre !== "none";
+      var metroOn = true;   // 節拍器固定開啟（開關選項已移除）
       if (metroOn) {
         while (_metroIdx < beatTimes.length && beatTimes[_metroIdx] <= songTime + 0.12) {
           var bt = beatTimes[_metroIdx];
@@ -2305,6 +2316,7 @@
         if (nn.slideOut || nn.slideIn) drawSlide(x, ny, nn);   // 滑音斜線
         drawTabNote(x, ny, nn, it.tier);
       }
+      if (it.chord) drawChordLabel(x, topPad - 10, it.chord);   // GP 譜標示的和弦名(顯示在該拍上方)
       if (it.deadNotes) {                                       // 死音/悶音(X)：只顯示、不判定
         for (var dj = 0; dj < it.deadNotes.length; dj++) drawDeadNote(x, topPad + it.deadNotes[dj].row * rowGap);
       }
@@ -2676,6 +2688,20 @@
   function drawTabNote(x, y, n, tier) {
     x = Math.round(x); y = Math.round(y);          // 對齊像素，避免次像素抖動殘影
     var rad = 20, tech = noteHasTech(n);
+    return drawTabNoteBody(x, y, n, rad, tech);
+  }
+  // 和弦名標籤（金色小膠囊，畫在該拍上方）
+  function drawChordLabel(x, y, name) {
+    name = String(name); if (!name) return;
+    ctx.save();
+    ctx.font = "bold 15px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    var w = ctx.measureText(name).width + 14, h = 20;
+    ctx.fillStyle = "rgba(224,164,75,0.95)";
+    roundRect(Math.round(x - w / 2), Math.round(y - h), w, h, 6); ctx.fill();
+    ctx.fillStyle = "#20160a"; ctx.fillText(name, x, y - h / 2 + 1);
+    ctx.restore();
+  }
+  function drawTabNoteBody(x, y, n, rad, tech) {
     var col = tech ? LANE_COLORS[n.degree - 1] : NEUTRAL_NOTE;   // 單音中性色，技巧才上色
     ctx.save();
     if (n.palmMute) ctx.globalAlpha = 0.55;         // 悶音：暗化
@@ -2691,6 +2717,12 @@
     }
     ctx.restore();
     ctx.lineWidth = 1;
+    if (n.chordNote) {                              // 屬於和弦的單音：金色外環特別標注
+      ctx.save();
+      ctx.strokeStyle = "rgba(224,164,75,0.95)"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(x, y, rad + 4, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
     ctx.fillStyle = "#161616"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.font = "bold 19px system-ui, sans-serif";
     ctx.fillText(String(n.fret), x, y + 1);

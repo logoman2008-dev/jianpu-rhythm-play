@@ -277,6 +277,8 @@
                 tapLH: !!n.isLeftHandTapped        // 左手點弦
               });
             }
+            var chordName = "";                    // GP 譜上標示的和弦名(Am / G7 …)
+            try { if (beat.chord && beat.chord.name) chordName = String(beat.chord.name); } catch (e) {}
             if (ns.length || deadNs.length) {
               var t0 = tickToSec(tick);
               var t1 = tickToSec(tick + bt);
@@ -292,6 +294,7 @@
               }
               beats.push({
                 time: t0, dur: Math.max(0.08, t1 - t0), notes: ns, dead: deadNs, bar: b,
+                chord: chordName,               // 和弦名(有標示才有；空字串=無)
                 nv: beat.duration,              // 書寫音值(1全/2半/4四分/8八分/16十六分…)
                 dots: beat.dots || 0,           // 附點數
                 tuplet: tup,                    // 連音資訊或 null
