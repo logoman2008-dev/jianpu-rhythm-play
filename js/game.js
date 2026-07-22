@@ -131,8 +131,9 @@
     if (window.JianpuAuth && window.JianpuAuth.onChange) window.JianpuAuth.onChange(updateOwnGateTip);
 
     // 共用密碼解鎖 UI
-    // 解鎖密碼控制已移到「嚕嚕安教材」欄位上（由 buildSampleList/renderSampleGroup 產生並在 wirePaidUnlock 綁定）。
+    // 解鎖密碼控制在「嚕嚕安教材」欄位上（buildSampleList 產生）；Email 解鎖＋購買連結在「我的曲庫」欄位。
     loadUnlockConfig();
+    renderLibUnlock();
 
     els.trackSelect.addEventListener("change", rebuildTimeline);
     els.keySelect.addEventListener("change", rebuildTimeline);
@@ -617,7 +618,7 @@
   // 解鎖成功：套用狀態、刷新畫面（解鎖控制在教材欄位上，會隨 buildSampleList 重繪）
   function applyUnlockSuccess() {
     setUnlocked(true);
-    updateOwnGateTip(); refreshGuitaristLocks();
+    updateOwnGateTip(); refreshGuitaristLocks(); renderLibUnlock();
     buildSampleList();                            // 重畫曲庫(付費鎖頭→已解鎖)
   }
   // 購買解鎖的 Google 訂購表單（學生填完→老師收款→回傳解鎖密碼）
@@ -631,8 +632,38 @@
       '<div class="pu-row"><input type="password" class="pu-input" placeholder="輸入解鎖密碼" autocomplete="off" />' +
       '<button type="button" class="btn small pu-btn">解鎖</button></div>' +
       '<div class="pu-msg"></div>' +
-      '<a class="pu-buy" href="' + ORDER_FORM_URL + '" target="_blank" rel="noopener">🔓 還沒有密碼？點我購買解鎖（填訂購單）</a>' +
       '</div>';
+  }
+
+  // 「我的曲庫」欄位上的解鎖：用 Email（付款後老師在後台開通該 Email）＋ 購買連結
+  function renderLibUnlock() {
+    var box = document.getElementById("libUnlock"); if (!box) return;
+    if (isUnlocked()) {
+      box.innerHTML = '<div class="paid-unlock unlocked">🔓 <b>已解鎖</b>：自己上傳的譜無限使用，全部教材與嚕嚕安角色已開放。</div>';
+      return;
+    }
+    box.innerHTML = '<div class="paid-unlock">' +
+      '<div class="pu-tip">🔒 自己上傳的譜每天有免費次數上限。付款開通後，用你填在訂購單的 <b>Email</b> 解鎖，即可無限使用。</div>' +
+      '<div class="pu-row"><input type="email" class="lu-email" placeholder="輸入你的 Email 解鎖" autocomplete="email" />' +
+      '<button type="button" class="btn small lu-btn">解鎖</button></div>' +
+      '<div class="lu-msg"></div>' +
+      '<a class="pu-buy" href="' + ORDER_FORM_URL + '" target="_blank" rel="noopener">🔓 還沒購買？點我購買解鎖（填訂購單）</a>' +
+      '</div>';
+    var inp = box.querySelector(".lu-email"), btn = box.querySelector(".lu-btn"), msg = box.querySelector(".lu-msg");
+    function go() {
+      var email = (inp.value || "").trim();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { msg.textContent = "請輸入正確的 Email。"; msg.style.color = "#ff9a9a"; return; }
+      var A = window.JianpuAuth;
+      if (!A || !A.checkEmailUnlock) { msg.textContent = "後端尚未設定，暫時無法用 Email 解鎖（請洽老師 LINE：paul780516）。"; msg.style.color = "#ff9a9a"; return; }
+      msg.textContent = "查詢中…"; msg.style.color = "#d7c9ac";
+      A.checkEmailUnlock(email).then(function (ok) {
+        if (ok === true) { try { localStorage.setItem("jianpu_unlock_email", email.toLowerCase()); } catch (e) {} applyUnlockSuccess(); }
+        else if (ok === false) { msg.textContent = "這個 Email 還沒開通。付款後老師會幫你開通，稍後再試 🙂"; msg.style.color = "#ffb454"; }
+        else { msg.textContent = "後端尚未設定 Email 解鎖功能（請洽老師 LINE：paul780516）。"; msg.style.color = "#ff9a9a"; }
+      });
+    }
+    btn.addEventListener("click", go);
+    inp.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
   }
   // 綁定教材欄位上的解鎖輸入（buildSampleList 後呼叫）
   function wirePaidUnlock(root) {

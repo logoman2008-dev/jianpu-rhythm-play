@@ -94,6 +94,15 @@
       .then(function (res) { return (res && res.data) ? res.data : []; })
       .catch(function () { return []; });
   }
+  // 用 Email 查是否已開通（不需登入）：呼叫後端 RPC email_unlocked(p_email) → boolean
+  //   需在 Supabase 先建立該 function（見後端設定指南）。連不到/未建 → 回 null（前端會提示尚未設定）。
+  function checkEmailUnlock(email) {
+    email = (email || "").trim().toLowerCase();
+    if (!sb || !email) return Promise.resolve(false);
+    return sb.rpc("email_unlocked", { p_email: email })
+      .then(function (res) { if (res.error) return null; return !!res.data; })
+      .catch(function () { return null; });
+  }
   // 讀取「app_config」設定表的一個 key（例：解鎖密碼 hash）；公開可讀，找不到就回 null
   function fetchConfig(key) {
     if (!sb) return Promise.resolve(null);
@@ -142,6 +151,7 @@
     downloadSong: downloadSong,
     fetchCatalog: fetchCatalog,
     fetchConfig: fetchConfig,
+    checkEmailUnlock: checkEmailUnlock,
     onChange: function (fn) { if (typeof fn === "function") listeners.push(fn); },
     focusLogin: focusLogin
   };
