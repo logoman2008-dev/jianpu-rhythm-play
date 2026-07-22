@@ -628,7 +628,7 @@
     if (isUnlocked())
       return '<div class="paid-unlock unlocked">🔓 <b>已解鎖</b>：自己上傳的譜無限使用，全部教材與嚕嚕安角色已開放。</div>';
     return '<div class="paid-unlock">' +
-      '<div class="pu-tip">🔒 尚未解鎖：自己上傳的譜每天有免費次數上限，解鎖後<b>可無限使用</b>，並開放全部嚕嚕安教材與嚕嚕安角色。</div>' +
+      '<div class="pu-tip">🔒 尚未解鎖：解鎖後<b>可無限使用</b>，並開放全部嚕嚕安教材與嚕嚕安角色。</div>' +
       '<div class="pu-row"><input type="password" class="pu-input" placeholder="輸入解鎖密碼" autocomplete="off" />' +
       '<button type="button" class="btn small pu-btn">解鎖</button></div>' +
       '<div class="pu-msg"></div>' +
