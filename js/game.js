@@ -1116,7 +1116,13 @@
 
   // ---- 迴圈 ----
   var _lastBeep = 99;
+  var _loopErrLogged = false;
   function loop() {
+    try { loopBody(); }
+    catch (e) { if (!_loopErrLogged) { _loopErrLogged = true; try { console.error("[loop error]", e); } catch (_) {} } }   // 任何錯誤都不讓遊戲卡死
+    requestAnimationFrame(loop);
+  }
+  function loopBody() {
     if (state === "playing") {
       A.update();
       var songTime = A.getSongTime();
@@ -1173,7 +1179,6 @@
       }
     }
     render();
-    requestAnimationFrame(loop);
   }
 
   function micTick(songTime) {
