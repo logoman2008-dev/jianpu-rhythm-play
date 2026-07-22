@@ -130,11 +130,11 @@
     updateOwnGateTip();
     if (window.JianpuAuth && window.JianpuAuth.onChange) window.JianpuAuth.onChange(updateOwnGateTip);
 
-    // 共用密碼解鎖 UI
-    // 解鎖密碼控制在「嚕嚕安教材」欄位上（buildSampleList 產生）；Email 解鎖＋購買連結在「我的曲庫」欄位。
+    // 解鎖 UI：嚕嚕安「角色」密碼在吉他手選單下方；Email 解鎖＋購買連結在「我的曲庫」；付費資料夾各自密碼在清單。
     loadUnlockConfig();
     loadPaidFolders();          // 讀取後台的付費資料夾上鎖設定
     renderLibUnlock();
+    renderLulanUnlock();
 
     els.trackSelect.addEventListener("change", rebuildTimeline);
     els.keySelect.addEventListener("change", rebuildTimeline);
@@ -435,17 +435,13 @@
     det.className = "sample-group" + (depth > 0 ? " sub" : "");
     if (depth === 0) det.open = true;                   // 頂層預設展開，子課程收合
     var sum = document.createElement("summary");
-    var isFolder  = (ctx.tier === "paid" && depth === 0 && ctx.grp != null);   // 後台付費資料夾(各自密碼)
-    var isCurated = (ctx.tier === "paid" && depth === 0 && ctx.grp == null);   // 嚕嚕安教材(主密碼)
-    var locked = isFolder ? (folderIsLocked(ctx.grp) && !folderUnlocked(ctx.grp))
-               : isCurated ? !isUnlocked() : false;
+    var isFolder = (ctx.tier === "paid" && depth === 0 && ctx.grp != null);    // 後台付費資料夾(各自密碼)
+    var locked = isFolder ? (folderIsLocked(ctx.grp) && !folderUnlocked(ctx.grp)) : false;
     var lock = locked ? "🔒 " : "";
     sum.innerHTML = lock + escapeHtml(group.title) + ' <span class="sample-count">' + countSongs(group) + '</span>';
     det.appendChild(sum);
     if (isFolder && locked) {                                    // 上鎖資料夾→放各自的密碼欄
       var fw = document.createElement("div"); fw.innerHTML = folderUnlockHtml(ctx.grp); det.appendChild(fw.firstChild);
-    } else if (isCurated && !_paidUnlockPlaced) {                // 嚕嚕安教材→主密碼欄(只放一次)
-      var puWrap = document.createElement("div"); puWrap.innerHTML = paidUnlockHtml(); det.appendChild(puWrap.firstChild); _paidUnlockPlaced = true;
     }
     if (group.groups) {
       group.groups.forEach(function (sub) { det.appendChild(renderSampleGroup(sub, depth + 1, ctx)); });
@@ -463,11 +459,9 @@
     }
     return det;
   }
-  var _paidUnlockPlaced = false;   // 每次重建曲庫時只在第一個付費頂層欄位放一次解鎖控制
   function buildSampleList() {
     var box = $("sampleList"); if (!box) return;
     box.innerHTML = "";
-    _paidUnlockPlaced = false;
     // 免費示範曲是本地檔，用 file:// 直接開會抓不到 → 提示（倉庫曲走網路不受此限）
     if (FREE_GROUPS.length && location.protocol === "file:") {
       var warn = document.createElement("div");
@@ -477,8 +471,7 @@
       box.appendChild(warn);
     }
     FREE_GROUPS.forEach(function (group)   { box.appendChild(renderSampleGroup(group, 0, { local: true, tier: "free" })); });
-    SAMPLE_GROUPS.forEach(function (group) { box.appendChild(renderSampleGroup(group, 0, { tier: "paid", bucket: "paid-songs" })); });
-    wirePaidUnlock(box);
+    // 嚕嚕安教材已移除(只保留角色與背景)；付費內容改由後台上傳的資料夾(各自密碼)提供
     appendDbCatalog(box);
   }
   // 從 Supabase「songs」清單表載入管理後台新增的自訂曲（免費／付費），追加到清單
@@ -497,7 +490,7 @@
       Object.keys(byGrp).forEach(function (g) {
         box.appendChild(renderSampleGroup({ title: g, songs: byGrp[g].map(toSong) }, 0, { tier: "paid", bucket: "paid-songs", grp: g }));
       });
-      wirePaidUnlock(box); wireFolderUnlock(box);
+      wireFolderUnlock(box);
     });
   }
   function encodePath(p) { return String(p).split("/").map(encodeURIComponent).join("/"); }
@@ -519,18 +512,10 @@
   function loadBucketSong(path, name, base, ctx) {
     var A = window.JianpuAuth, paid = ctx.tier === "paid";
     if (!A || !A.isReady()) { setStatus("需要連線後端才能載入這首；但服務尚未設定或無法連線。", true); return; }
-    if (paid) {
-      if (ctx.grp != null) {                                           // 後台付費資料夾 → 各自的密碼
-        if (folderIsLocked(ctx.grp) && !folderUnlocked(ctx.grp)) {
-          setStatus("這個資料夾需要密碼 🔒 請在「" + ctx.grp + "」上方輸入該資料夾的解鎖密碼。", true);
-          var fi = document.querySelector('.paid-unlock[data-grp] .fu-input'); if (fi) { try { fi.focus(); fi.scrollIntoView({ block: "center" }); } catch (e) {} }
-          return;
-        }
-      } else if (!isUnlocked()) {                                      // 嚕嚕安教材 → 主解鎖密碼
-        setStatus("這是付費教材 🔒 請在「嚕嚕安教材」欄位輸入解鎖密碼（購買請洽老師 LINE：paul780516）。", true);
-        focusPaidUnlock();
-        return;
-      }
+    if (paid && ctx.grp != null && folderIsLocked(ctx.grp) && !folderUnlocked(ctx.grp)) {   // 後台付費資料夾→各自的密碼
+      setStatus("這個資料夾需要密碼 🔒 請在「" + ctx.grp + "」上方輸入該資料夾的解鎖密碼。", true);
+      var fi = document.querySelector('.paid-unlock[data-grp] .fu-input'); if (fi) { try { fi.focus(); fi.scrollIntoView({ block: "center" }); } catch (e) {} }
+      return;
     }
     setStatus((paid ? "載入教材：" : "載入：") + name + " …");
     A.downloadSong(ctx.bucket || "paid-songs", path)
@@ -545,8 +530,8 @@
   // ---- 自己上傳的譜：已解鎖(密碼/開通) → 無限；否則用「每天自動 +DAILY_FREE 的累加式免費額度」----
   //   額度會記憶在瀏覽器：每過一天自動加 DAILY_FREE 首(可累積到 FREE_CAP)，玩一首扣 1；沒玩不會歸零。
   var DAILY_FREE = 5, FREE_CAP = 50, CREDIT_KEY = "jianpu_free_credits";
-  // 自己上傳的譜「無限使用」條件：密碼解鎖 或 Email 解鎖 或 後端已開通（付費教材另需密碼，見 loadBucketSong）
-  function isPaid() { return isUnlocked() || isEmailUnlocked() || (function () { var A = window.JianpuAuth; return !!(A && A.isEntitled && A.isEntitled()); })(); }
+  // 自己上傳的譜「無限使用」條件：Email 解鎖 或 後端已開通。（嚕嚕安角色密碼只解角色、不影響這裡）
+  function isPaid() { return isEmailUnlocked() || (function () { var A = window.JianpuAuth; return !!(A && A.isEntitled && A.isEntitled()); })(); }
   function epochDay() { var d = new Date(); return Math.floor((d.getTime() - d.getTimezoneOffset() * 60000) / 86400000); }  // 依本地時區的「天」序號
   function saveCredits(st) { try { localStorage.setItem(CREDIT_KEY, JSON.stringify(st)); } catch (e) {} }
   function readCredits() {
@@ -636,11 +621,11 @@
   }
   function charName(id) { var sel = els.guitaristSelect; if (!sel) return id; var op = sel.querySelector('option[value="' + id + '"]'); return op ? (op.getAttribute("data-base") || op.textContent) : id; }
 
-  // 密碼解鎖成功（完整）：付費教材＋嚕嚕安角色＋自己上傳無限
+  // 嚕嚕安角色密碼解鎖成功：只開放「嚕嚕安角色」，不影響其他功能
   function applyPasswordUnlock() {
     setUnlocked(true);
-    updateOwnGateTip(); refreshGuitaristLocks(); renderLibUnlock();
-    buildSampleList();                            // 重畫曲庫(付費鎖頭→已解鎖)
+    refreshGuitaristLocks(); renderLulanUnlock();
+    if (els.guitaristSelect) { els.guitaristSelect.value = "lulan"; guitaristId = "lulan"; try { localStorage.setItem(GUITARIST_KEY, "lulan"); } catch (e) {} }   // 自動選上嚕嚕安
   }
   // Email 解鎖成功：只讓「自己上傳的譜」無限（不開放付費教材/角色）
   function applyEmailUnlock() {
@@ -649,19 +634,27 @@
   }
   // 購買解鎖的 Google 訂購表單（學生填完→老師收款→回傳解鎖密碼）
   var ORDER_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScwb4iexfUwKLuf5AHumcz0NpPJfcYM6W5V7fJDw5_1sxqrXQ/viewform";
-  // 「嚕嚕安教材」欄位上的解鎖控制：HTML 片段
-  function paidUnlockHtml() {
-    if (isUnlocked())
-      return '<div class="paid-unlock unlocked">🔓 <b>已解鎖</b>：自己上傳的譜無限使用，全部教材與嚕嚕安角色已開放。</div>';
-    return '<div class="paid-unlock">' +
-      '<div class="pu-tip">🔒 尚未解鎖：解鎖後<b>可無限使用</b>，並開放全部嚕嚕安教材與嚕嚕安角色。</div>' +
-      '<div class="pu-row"><input type="password" class="pu-input" placeholder="輸入解鎖密碼" autocomplete="off" />' +
-      '<button type="button" class="btn small pu-btn">解鎖</button></div>' +
-      '<div class="pu-msg"></div>' +
-      '</div>';
+  // 嚕嚕安角色解鎖控制（在吉他手選單下方）：密碼只解鎖「這個角色」，不影響其他功能
+  function renderLulanUnlock() {
+    var box = document.getElementById("lulanUnlock"); if (!box) return;
+    if (isUnlocked()) { box.innerHTML = '<div class="paid-unlock unlocked">🔓 <b>閃電嚕嚕安角色已解鎖</b>（在上方「吉他手」選單即可選用）。</div>'; return; }
+    box.innerHTML = '<div class="paid-unlock">' +
+      '<div class="pu-tip">🔒 「閃電嚕嚕安」角色需要密碼解鎖（此密碼<b>只開放這個角色</b>）。</div>' +
+      '<div class="pu-row"><input type="password" class="lulanpw-input" placeholder="輸入嚕嚕安角色密碼" autocomplete="off" />' +
+      '<button type="button" class="btn small lulanpw-btn">解鎖角色</button></div>' +
+      '<div class="lulanpw-msg"></div></div>';
+    var inp = box.querySelector(".lulanpw-input"), btn = box.querySelector(".lulanpw-btn"), msg = box.querySelector(".lulanpw-msg");
+    function go() {
+      verifyUnlockPw(inp.value).then(function (ok) {
+        if (ok) applyPasswordUnlock();
+        else { msg.textContent = "密碼不對，再確認一下～"; msg.style.color = "#ff9a9a"; }
+      });
+    }
+    btn.addEventListener("click", go);
+    inp.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
   }
 
-  // 「我的曲庫」欄位上的解鎖：用 Email 讓自己上傳的譜無限（付費教材另需密碼，在教材欄位）＋購買連結
+  // 「我的曲庫」欄位上的解鎖：用 Email 讓自己上傳的譜無限使用＋購買連結
   function renderLibUnlock() {
     var box = document.getElementById("libUnlock"); if (!box) return;
     if (isPaid()) {   // 密碼或 Email 任一解鎖 → 自己上傳的譜已無限
@@ -669,7 +662,7 @@
       return;
     }
     box.innerHTML = '<div class="paid-unlock">' +
-      '<div class="pu-tip">🔒 自己上傳的譜每天有免費次數上限。付款開通後，用你填在訂購單的 <b>Email</b> 解鎖，即可無限使用（嚕嚕安付費教材另需在下方教材欄位輸入密碼）。</div>' +
+      '<div class="pu-tip">🔒 自己上傳的譜每天有免費次數上限。付款開通後，用你填在訂購單的 <b>Email</b> 解鎖，即可無限使用。</div>' +
       '<div class="pu-row"><input type="email" class="lu-email" placeholder="輸入你的 Email 解鎖" autocomplete="email" />' +
       '<button type="button" class="btn small lu-btn">解鎖</button></div>' +
       '<div class="lu-msg"></div>' +
@@ -691,25 +684,6 @@
     btn.addEventListener("click", go);
     inp.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
   }
-  // 綁定教材欄位上的解鎖輸入（buildSampleList 後呼叫）
-  function wirePaidUnlock(root) {
-    (root || document).querySelectorAll(".paid-unlock .pu-btn").forEach(function (btn) {
-      var wrap = btn.closest(".paid-unlock");
-      var inp = wrap.querySelector(".pu-input"), msg = wrap.querySelector(".pu-msg");
-      function go() {
-        verifyUnlockPw(inp.value).then(function (ok) {
-          if (ok) { applyPasswordUnlock(); }   // 密碼→完整解鎖(教材/角色/自己上傳)
-          else { msg.textContent = "密碼不對，再確認一下～（購買請洽老師 LINE：paul780516）"; msg.style.color = "#ff9a9a"; }
-        });
-      }
-      btn.addEventListener("click", go);
-      inp.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
-    });
-  }
-  function focusPaidUnlock() {
-    var inp = document.querySelector(".paid-unlock .pu-input");
-    if (inp) { try { inp.focus(); inp.scrollIntoView({ block: "center" }); } catch (e) {} }
-  }
 
   // ---- 付費資料夾：每個資料夾(grp)可各自上鎖＋各自密碼（後台設定，存 Supabase paid_folders）----
   var _paidFolders = {};   // {grp:{locked,pw_hash}}
@@ -718,8 +692,7 @@
     if (A && A.fetchFolders) A.fetchFolders().then(function (m) { _paidFolders = m || {}; buildSampleList(); }).catch(function () {});
   }
   function folderIsLocked(grp) { var f = _paidFolders[grp]; return !!(f && f.locked); }   // 沒設定=不上鎖(開放)
-  function folderUnlocked(grp) {
-    if (isUnlocked()) return true;                                                        // 主密碼=萬能鑰匙
+  function folderUnlocked(grp) {                                                          // 只認該資料夾自己的密碼
     try { return localStorage.getItem("jianpu_folder_" + grp) === "1"; } catch (e) { return false; }
   }
   function setFolderUnlocked(grp) { try { localStorage.setItem("jianpu_folder_" + grp, "1"); } catch (e) {} }
@@ -844,7 +817,7 @@
         });
         return { time: beat.time * inv, dur: beat.dur * inv, notes: notes, deadNotes: deadNotes, pcs: pcs, degSet: degs,
                  lane: top.degree - 1, midi: top.midi, bend: top.bend || 0, topTech: noteHasTech(top), bar: beat.bar,
-                 chord: beat.chord || "",
+                 chord: beat.chord || "", chordFrets: beat.chordFrets || null, chordFirst: beat.chordFirst || 0,
                  nv: beat.nv, dots: beat.dots || 0, tuplet: beat.tuplet || null,
                  judged: false, hit: false, missed: false, tier: null };
       });
@@ -854,6 +827,16 @@
         if (it.deadOnly) return;                                     // 純死音拍無音高，跳過簡譜級數計算
         var d = T.midiToDegree(it.midi, tonicPc);
         it.jianpu = { degree: d.degree, alter: d.alter, symbol: T.accSymbol(d.alter), octaveOffset: octFn2(it.midi), tech: it.topTech };
+      });
+      // 和弦上色(每個不同和弦一個顏色，頻繁換和弦時互相區分) + 「同上」重複註記
+      var _chordCol = {}, _pal = ["#e0a44b", "#5ec26a", "#5b8def", "#c06cff", "#ff7aa2", "#3fc7bb", "#ffd23d", "#ff9a3c"], _ci = 0, _lastChord = null;
+      items.forEach(function (it) {
+        if (!it.chord) return;
+        if (!_chordCol[it.chord]) { _chordCol[it.chord] = _pal[_ci % _pal.length]; _ci++; }
+        it.chordColor = _chordCol[it.chord];
+        it.chordRepeat = (it.chord === _lastChord);                  // 與前一個和弦相同→畫「同上」記號
+        _lastChord = it.chord;
+        if (it.notes) it.notes.forEach(function (nn) { nn.chordColor = it.chordColor; });   // 和弦音外環用同色
       });
     } else {
       var midis = timeline.notes.map(function (n) { return n.midi; });
@@ -1396,8 +1379,8 @@
   // 台下觀眾剪影：每人約樂手 1/4 高，前後多排交錯排列(後排較小較暗較高做景深)，隨熱度加排/舉手
   function drawCrowd(hy, st, ghgt) {
     if (hy <= 0.001) return;
-    var unit = (ghgt || 320) / 3;                   // 觀眾約樂手身高的 1/3
-    var rows = 2 + Math.round(hy * 3);              // 2..5 排(前後)
+    var unit = (ghgt || 320) / 2.3;                 // 觀眾放大(約樂手身高的 0.43)
+    var rows = 1 + Math.round(hy * 5);              // 由少變多：1..6 排(連段越高排數越多)
     ctx.save(); ctx.lineCap = "round";
     for (var r = rows - 1; r >= 0; r--) {           // 後排先畫
       var depth = rows > 1 ? r / (rows - 1) : 0;    // 0=前排 .. 1=最後排
@@ -1493,6 +1476,16 @@
     cg.addColorStop(0, "rgba(255,180,90," + (0.35 * glow) + ")"); cg.addColorStop(1, "rgba(255,120,40,0)");
     ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.fillStyle = cg;
     ctx.beginPath(); ctx.arc(x, coneY, coneR * 1.6, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    // 喇叭在播放：從錐盆往前擴散的聲波環(隨時間外擴、熱度越高越明顯)
+    ctx.save(); ctx.globalCompositeOperation = "lighter";
+    for (var wv = 0; wv < 3; wv++) {
+      var phase = (st * 1.6 + wv / 3) % 1;                                  // 0→1 循環外擴
+      var wr = coneR * (1.1 + phase * 2.2);
+      ctx.strokeStyle = "rgba(255,170,80," + ((0.28 + hy * 0.4) * (1 - phase)) + ")";
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x, coneY, wr, -Math.PI * 0.62, Math.PI * 0.62); ctx.stroke();   // 朝前(下)的弧
+    }
+    ctx.restore();
     ctx.fillStyle = s.accent; roundRect(x - w * 0.19, top + h * 0.45, w * 0.38, h * 0.1, 3); ctx.fill(); // logo 板
     // 電源指示燈(常亮，熱度高更亮)
     ctx.save(); ctx.globalCompositeOperation = "lighter";
@@ -2375,7 +2368,14 @@
         if (nn.slideOut || nn.slideIn) drawSlide(x, ny, nn);   // 滑音斜線
         drawTabNote(x, ny, nn, it.tier);
       }
-      if (it.chord) drawChordLabel(x, topPad - 10, it.chord);   // GP 譜標示的和弦名(顯示在該拍上方)
+      if (it.chord) {                                          // GP 譜標示的和弦(顯示在該拍上方)
+        var chCol = it.chordColor || "rgba(224,164,75,0.95)";
+        if (it.chordRepeat) drawChordRepeat(x, topPad - 12, chCol);            // 與前一個相同→「同上」記號
+        else {
+          if (it.chordFrets) drawChordDiagram(x, topPad - 46, it.chordFrets, it.chordFirst || 0, chCol);  // 和弦表圖案
+          drawChordLabel(x, topPad - 12, it.chord, chCol);                     // 和弦名(彩色膠囊)
+        }
+      }
       if (it.deadNotes) {                                       // 死音/悶音(X)：只顯示、不判定
         for (var dj = 0; dj < it.deadNotes.length; dj++) drawDeadNote(x, topPad + it.deadNotes[dj].row * rowGap);
       }
@@ -2749,15 +2749,55 @@
     var rad = 20, tech = noteHasTech(n);
     return drawTabNoteBody(x, y, n, rad, tech);
   }
-  // 和弦名標籤（金色小膠囊，畫在該拍上方）
-  function drawChordLabel(x, y, name) {
+  // 和弦名標籤（彩色小膠囊，畫在該拍上方）
+  function drawChordLabel(x, y, name, color) {
     name = String(name); if (!name) return;
+    color = color || "rgba(224,164,75,0.95)";
     ctx.save();
     ctx.font = "bold 15px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     var w = ctx.measureText(name).width + 14, h = 20;
-    ctx.fillStyle = "rgba(224,164,75,0.95)";
+    ctx.fillStyle = color;
     roundRect(Math.round(x - w / 2), Math.round(y - h), w, h, 6); ctx.fill();
-    ctx.fillStyle = "#20160a"; ctx.fillText(name, x, y - h / 2 + 1);
+    ctx.fillStyle = "#1a1206"; ctx.fillText(name, x, y - h / 2 + 1);
+    ctx.restore();
+  }
+  // 和弦「同上」重複記號（與前一個和弦相同時，不重畫和弦表，只畫一個彩色 ⁄ 斜線記號）
+  function drawChordRepeat(x, y, color) {
+    ctx.save();
+    ctx.strokeStyle = color || "#e0a44b"; ctx.lineWidth = 3; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(x - 7, y - 3); ctx.lineTo(x + 7, y - 15); ctx.stroke();      // 斜線
+    ctx.fillStyle = color || "#e0a44b";
+    ctx.beginPath(); ctx.arc(x - 9, y - 14, 1.8, 0, Math.PI * 2); ctx.fill();                 // 上下兩點(制音記號感)
+    ctx.beginPath(); ctx.arc(x + 9, y - 4, 1.8, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+  // 迷你和弦表：6 弦 × 幾格；frets=各弦格位(-1不彈/0空弦)，firstFret=起始格
+  function drawChordDiagram(x, y, frets, firstFret, color) {
+    if (!frets || !frets.length) return;
+    var n = frets.length;                                        // 弦數(通常 6)
+    var cw = 30, rows = 4, cellH = 8, colW = cw / (n - 1 > 0 ? n - 1 : 1);
+    var left = Math.round(x - cw / 2), top = Math.round(y - rows * cellH);
+    ctx.save();
+    color = color || "#e0a44b";
+    // 底板
+    ctx.fillStyle = "rgba(20,16,10,0.85)"; roundRect(left - 4, top - 8, cw + 8, rows * cellH + 12, 4); ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 1;
+    for (var r = 0; r <= rows; r++) { ctx.beginPath(); ctx.moveTo(left, top + r * cellH); ctx.lineTo(left + cw, top + r * cellH); ctx.stroke(); }
+    if ((firstFret || 0) <= 1) { ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(left, top); ctx.lineTo(left + cw, top); ctx.stroke(); }  // 上弦枕
+    ctx.strokeStyle = "rgba(255,255,255,0.5)"; ctx.lineWidth = 1;
+    for (var s = 0; s < n; s++) { var sx = left + s * colW; ctx.beginPath(); ctx.moveTo(sx, top); ctx.lineTo(sx, top + rows * cellH); ctx.stroke(); }
+    // 各弦標記：中文吉他和弦表最低音弦在左；alphaTab strings[0] 多為第 1 弦(高音)→反轉讓低音在左
+    for (var i = 0; i < n; i++) {
+      var f = frets[i], sx2 = left + (n - 1 - i) * colW;
+      if (f < 0) { ctx.fillStyle = "rgba(255,255,255,0.7)"; ctx.font = "9px system-ui"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("✕", sx2, top - 4); }
+      else if (f === 0) { ctx.strokeStyle = "rgba(255,255,255,0.7)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(sx2, top - 4, 2.4, 0, Math.PI * 2); ctx.stroke(); }
+      else {
+        var fr = f - (firstFret > 1 ? firstFret - 1 : 0);       // 相對起始格
+        if (fr < 1) fr = 1; if (fr > rows) fr = rows;
+        ctx.fillStyle = color; ctx.beginPath(); ctx.arc(sx2, top + (fr - 0.5) * cellH, 3, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    if (firstFret > 1) { ctx.fillStyle = "rgba(255,255,255,0.8)"; ctx.font = "8px system-ui"; ctx.textAlign = "right"; ctx.textBaseline = "middle"; ctx.fillText(firstFret + "fr", left - 5, top + cellH * 0.5); }
     ctx.restore();
   }
   function drawTabNoteBody(x, y, n, rad, tech) {
@@ -2776,9 +2816,9 @@
     }
     ctx.restore();
     ctx.lineWidth = 1;
-    if (n.chordNote) {                              // 屬於和弦的單音：金色外環特別標注
+    if (n.chordNote) {                              // 屬於和弦的單音：彩色外環特別標注(同和弦同色)
       ctx.save();
-      ctx.strokeStyle = "rgba(224,164,75,0.95)"; ctx.lineWidth = 3;
+      ctx.strokeStyle = n.chordColor || "rgba(224,164,75,0.95)"; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.arc(x, y, rad + 4, 0, Math.PI * 2); ctx.stroke();
       ctx.restore();
     }
