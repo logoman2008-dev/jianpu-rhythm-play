@@ -18,18 +18,22 @@
 
 * { box-sizing: border-box; }
 
+/* 底色放 html；body 透明 → 讓 z-index:-1 的 #menuBg(選單海報)能顯示在 body 內容之下、html 底色之上 */
+html {
+  background: var(--bg);
+  background-image: var(--bg-glow);
+  background-attachment: fixed;
+}
 html, body {
   margin: 0;
   height: 100%;
   overflow-x: hidden;   /* 防止任何橫向溢出捲動 */
-  background: var(--bg);
-  background-image: var(--bg-glow);
-  background-attachment: fixed;
   color: var(--text);
   font-family: system-ui, -apple-system, "PingFang TC", "Microsoft JhengHei", "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
+body { background: transparent; }
 
 .app {
   max-width: 1440px;
@@ -58,9 +62,24 @@ html, body {
 .logo span { font-size: 13px; font-weight: 500; color: var(--muted); letter-spacing: 1.5px; text-transform: uppercase; }
 .tagline { color: var(--muted); font-size: 13.5px; }
 
-/* Panel / setup */
-.panel { background: linear-gradient(180deg, var(--panel2), var(--panel)); border: 1px solid var(--line);
-  border-radius: 18px; padding: 22px; box-shadow: var(--shadow); position: relative; }
+/* 選單背景海報：只在設定頁(選單)顯示，蓋一層暗幕維持可讀性 */
+#menuBg { position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: 0; transition: opacity .5s ease;
+  background: url(../assets/menu-bg.jpg) center top / cover no-repeat; }
+#menuBg::after { content: ""; position: absolute; inset: 0;
+  background: linear-gradient(180deg, rgba(11,12,16,0.30) 0%, rgba(11,12,16,0.42) 45%, rgba(11,12,16,0.72) 100%); }
+body:has(#setupPanel:not(.hidden)) #menuBg { opacity: 1; }
+
+/* BGM 開關鈕（topbar 右側） */
+.bgm-btn { margin-left: auto; align-self: center; border: 1px solid var(--line2); background: rgba(20,22,29,0.6);
+  color: var(--text); font-size: 18px; line-height: 1; width: 40px; height: 40px; border-radius: 10px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; transition: background .2s, border-color .2s; }
+.bgm-btn:hover { background: rgba(224,164,75,0.18); border-color: var(--accent); }
+.bgm-btn.off { opacity: 0.55; }
+
+/* Panel / setup（半透明：選單頁看得到背景海報；毛玻璃維持文字可讀） */
+.panel { background: linear-gradient(180deg, rgba(26,29,38,0.80), rgba(18,20,27,0.84)); border: 1px solid var(--line2);
+  border-radius: 18px; padding: 22px; box-shadow: var(--shadow); position: relative;
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
 .panel::before { content: ""; position: absolute; inset: 0 0 auto; height: 1px; border-radius: 18px 18px 0 0;
   background: linear-gradient(90deg, transparent, rgba(255,255,255,0.14), transparent); }
 /* minmax(0,…) 防止 grid track 被子項 min-content 撐爆造成手機版被截掉 */

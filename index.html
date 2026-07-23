@@ -4,13 +4,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>簡譜音遊 · Jianpu Rhythm</title>
-  <link rel="stylesheet" href="css/style.css?v=20260723n" />
+  <link rel="stylesheet" href="css/style.css?v=20260723o" />
 </head>
 <body>
+  <div id="menuBg"></div>
+  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260723o" loop preload="auto"></audio>
   <div class="app">
     <header class="topbar">
       <div class="logo">簡譜音遊 <span>Jianpu Rhythm</span></div>
       <div class="tagline">匯入 Guitar Pro 樂譜，對麥克風彈真吉他闖關</div>
+      <button type="button" id="bgmToggle" class="bgm-btn" title="背景音樂 開/關" aria-label="背景音樂開關">🎵</button>
     </header>
 
     <!-- 設定 / 選曲 -->
@@ -188,6 +191,7 @@
           <div class="hud-combo" id="hudCombo"></div>
           <select id="bottomSelect" class="hud-select" title="六線譜下方顯示">
             <option value="jianpu">下方：簡譜</option>
+            <option value="staff">下方：五線譜</option>
             <option value="fretboard">下方：指板</option>
           </select>
           <select id="fretWindowSelect" class="hud-select" title="指板顯示範圍">
@@ -247,15 +251,15 @@
   <script src="lib/alphaTab.min.js"></script>
   <!-- 登入 / 付費驗證（Supabase）。免費曲不需要這些也能玩；離線會自動略過。 -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/supabase-config.js?v=20260723n"></script>
-  <script src="js/auth.js?v=20260723n"></script>
+  <script src="js/supabase-config.js?v=20260723o"></script>
+  <script src="js/auth.js?v=20260723o"></script>
   <!-- 遊戲程式 -->
-  <script src="js/theory.js?v=20260723n"></script>
-  <script src="js/gp-loader.js?v=20260723n"></script>
-  <script src="js/audio.js?v=20260723n"></script>
-  <script src="js/pitch.js?v=20260723n"></script>
-  <script src="js/songs.js?v=20260723n"></script>
-  <script src="js/game.js?v=20260723n"></script>
-  <script src="js/library.js?v=20260723n"></script>
+  <script src="js/theory.js?v=20260723o"></script>
+  <script src="js/gp-loader.js?v=20260723o"></script>
+  <script src="js/audio.js?v=20260723o"></script>
+  <script src="js/pitch.js?v=20260723o"></script>
+  <script src="js/songs.js?v=20260723o"></script>
+  <script src="js/game.js?v=20260723o"></script>
+  <script src="js/library.js?v=20260723o"></script>
 </body>
 </html>
