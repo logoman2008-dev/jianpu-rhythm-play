@@ -1958,14 +1958,15 @@
         ctx.fillStyle = HAIR;
         ctx.beginPath(); ctx.arc(0, hy - 6, 50, Math.PI, 0); ctx.fill();                          // 頭頂後髮
         roundRect(-58, hy + 8, 17, 76, 9); ctx.fill(); roundRect(41, hy + 8, 17, 76, 9); ctx.fill();  // 雙低馬尾
-        ctx.beginPath(); ctx.moveTo(-50, hy - 6); ctx.lineTo(-50, hy + 10);                        // 瀏海(中分微弧)
-        ctx.quadraticCurveTo(-22, hy + 22, 0, hy + 7); ctx.quadraticCurveTo(22, hy + 22, 50, hy + 10);
-        ctx.lineTo(50, hy - 6); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = "#e0555f"; ctx.beginPath(); ctx.arc(-49, hy + 12, 5, 0, Math.PI * 2); ctx.arc(49, hy + 12, 5, 0, Math.PI * 2); ctx.fill();  // 紅髮圈
-        ctx.fillStyle = "#2a1e16"; ctx.beginPath(); ctx.arc(-15, hy + 9, 4.2, 0, Math.PI * 2); ctx.arc(15, hy + 9, 4.2, 0, Math.PI * 2); ctx.fill();  // 眼
-        ctx.fillStyle = "rgba(240,140,150,0.5)"; ctx.beginPath(); ctx.arc(-27, hy + 19, 7, 0, Math.PI * 2); ctx.arc(27, hy + 19, 7, 0, Math.PI * 2); ctx.fill();  // 腮紅
+        ctx.beginPath(); ctx.moveTo(-50, hy - 8); ctx.lineTo(-50, hy - 1);                        // 瀏海(上提，露出眼睛)
+        ctx.quadraticCurveTo(-25, hy + 4, 0, hy + 1); ctx.quadraticCurveTo(25, hy + 4, 50, hy - 1);
+        ctx.lineTo(50, hy - 8); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = "#e0555f"; ctx.beginPath(); ctx.arc(-49, hy + 14, 5, 0, Math.PI * 2); ctx.arc(49, hy + 14, 5, 0, Math.PI * 2); ctx.fill();  // 紅髮圈
+        ctx.fillStyle = "#2a1e16"; ctx.beginPath(); ctx.arc(-15, hy + 12, 5, 0, Math.PI * 2); ctx.arc(15, hy + 12, 5, 0, Math.PI * 2); ctx.fill();  // 眼(露出瀏海下)
+        ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(-13.5, hy + 10.5, 1.6, 0, Math.PI * 2); ctx.arc(16.5, hy + 10.5, 1.6, 0, Math.PI * 2); ctx.fill();  // 眼神光
+        ctx.fillStyle = "rgba(240,140,150,0.5)"; ctx.beginPath(); ctx.arc(-27, hy + 22, 7, 0, Math.PI * 2); ctx.arc(27, hy + 22, 7, 0, Math.PI * 2); ctx.fill();  // 腮紅
         ctx.strokeStyle = "#c86a6a"; ctx.lineWidth = 2.5; ctx.lineCap = "round";
-        ctx.beginPath(); ctx.arc(0, hy + 20, 7, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();     // 微笑
+        ctx.beginPath(); ctx.arc(0, hy + 24, 7, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();     // 微笑
       }
     },
     lemon: {   // 🍋：粉色唐裝(立領盤扣)、齊瀏海＋雙馬尾、右側檸檬髮飾
@@ -1976,15 +1977,17 @@
         ctx.fillStyle = HAIR;
         ctx.beginPath(); ctx.arc(0, hy - 6, 50, Math.PI, 0); ctx.fill();                          // 頭頂後髮
         roundRect(-57, hy + 10, 16, 66, 8); ctx.fill(); roundRect(41, hy + 10, 16, 66, 8); ctx.fill();  // 雙馬尾
-        ctx.beginPath(); ctx.moveTo(-50, hy - 6); ctx.lineTo(-50, hy + 9);                         // 齊瀏海
-        ctx.quadraticCurveTo(0, hy + 20, 50, hy + 9); ctx.lineTo(50, hy - 6); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = "#ec9bb4"; roundRect(-19, hy + 45, 38, 10, 4); ctx.fill();                 // 粉色立領
-        ctx.fillStyle = "#f4d03f"; ctx.beginPath(); ctx.ellipse(51, hy - 1, 9, 6, 0.4, 0, Math.PI * 2); ctx.fill();  // 檸檬🍋髮飾
-        ctx.fillStyle = "#3c8a3c"; ctx.beginPath(); ctx.arc(45, hy - 6, 2, 0, Math.PI * 2); ctx.fill();               // 蒂
-        ctx.fillStyle = "#2a1e16"; ctx.beginPath(); ctx.arc(-15, hy + 9, 4.2, 0, Math.PI * 2); ctx.arc(15, hy + 9, 4.2, 0, Math.PI * 2); ctx.fill();  // 眼
-        ctx.fillStyle = "rgba(240,140,150,0.5)"; ctx.beginPath(); ctx.arc(-27, hy + 19, 7, 0, Math.PI * 2); ctx.arc(27, hy + 19, 7, 0, Math.PI * 2); ctx.fill();  // 腮紅
+        ctx.beginPath(); ctx.moveTo(-50, hy - 8); ctx.lineTo(-50, hy - 1);                         // 齊瀏海(上提，露出眼睛)
+        ctx.quadraticCurveTo(-25, hy + 4, 0, hy + 1); ctx.quadraticCurveTo(25, hy + 4, 50, hy - 1);
+        ctx.lineTo(50, hy - 8); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = "#ec9bb4"; roundRect(-19, hy + 46, 38, 10, 4); ctx.fill();                 // 粉色立領
+        ctx.fillStyle = "#f4d03f"; ctx.beginPath(); ctx.ellipse(51, hy - 3, 9, 6, 0.4, 0, Math.PI * 2); ctx.fill();  // 檸檬🍋髮飾
+        ctx.fillStyle = "#3c8a3c"; ctx.beginPath(); ctx.arc(45, hy - 8, 2, 0, Math.PI * 2); ctx.fill();               // 蒂
+        ctx.fillStyle = "#2a1e16"; ctx.beginPath(); ctx.arc(-15, hy + 12, 5, 0, Math.PI * 2); ctx.arc(15, hy + 12, 5, 0, Math.PI * 2); ctx.fill();  // 眼(露出瀏海下)
+        ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(-13.5, hy + 10.5, 1.6, 0, Math.PI * 2); ctx.arc(16.5, hy + 10.5, 1.6, 0, Math.PI * 2); ctx.fill();  // 眼神光
+        ctx.fillStyle = "rgba(240,140,150,0.5)"; ctx.beginPath(); ctx.arc(-27, hy + 22, 7, 0, Math.PI * 2); ctx.arc(27, hy + 22, 7, 0, Math.PI * 2); ctx.fill();  // 腮紅
         ctx.strokeStyle = "#c86a6a"; ctx.lineWidth = 2.5; ctx.lineCap = "round";
-        ctx.beginPath(); ctx.arc(0, hy + 20, 7, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();     // 微笑
+        ctx.beginPath(); ctx.arc(0, hy + 24, 7, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();     // 微笑
       }
     }
   };
@@ -2093,6 +2096,7 @@
       drawAmpBackline(cx, groundY, hgt, hypeShown, songTime);              // 知名音箱 backline(角色左後方)＋音箱特效
     }
     if (guitaristId === "lulan") drawSmithMachine(cx, groundY, hgt * 1.06);  // 閃電嚕嚕安→身後擺一台史密斯機(框住人物)
+    if (guitaristId === "sisters") { drawSisters(cx, groundY, hgt, songTime); return; }  // 曾玹＆🍋＝同一角色、左右各站一邊(各自 emoji 特效)
     var bob = Math.sin(songTime * 6.3) * 4, sway = Math.sin(songTime * 3.1) * 0.04;
     var s = hgt / 320 * (char.scale || 1) * (1 + charPulse * 0.07);
     ctx.save();
@@ -2126,6 +2130,24 @@
     // 專屬：閃電嚕嚕安＝舉啞鈴重訓（非吉他姿勢）
     if (char.lift) { drawLifter(char, songTime); ctx.restore(); return; }
 
+    paintGuitaristBody(char, songTime);   // 身體＋腿/裙＋吉他＋手臂＋頭(已在角色本地座標)
+    ctx.restore();
+
+    // 聚光燈打在身上的暖色高光(疊在角色上，讓人明顯被光照亮)
+    if (stageProcedural) {
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      var lit = 0.05 + hypeShown * 0.13, cyMid = groundY - hgt * 0.5;
+      var hg = ctx.createRadialGradient(cx - hgt * 0.06, cyMid - hgt * 0.08, 8, cx, cyMid, hgt * 0.5);
+      hg.addColorStop(0, "rgba(255,246,214," + lit + ")"); hg.addColorStop(1, "rgba(255,246,214,0)");
+      ctx.fillStyle = hg; ctx.beginPath(); ctx.ellipse(cx, cyMid, hgt * 0.34, hgt * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // 畫一個角色的「身體＋腿/裙＋吉他＋手臂＋頭」——假設 ctx 已平移/縮放到該角色腳底、本地座標。
+  // 單人(drawGuitarist)與雙人(drawSisters)共用。
+  function paintGuitaristBody(char, songTime) {
     // 身體
     ctx.fillStyle = char.torso; roundRect(-46, -150, 92, char.shorts ? 118 : (char.dress ? 70 : 150), 20); ctx.fill();
     // 腿 / 短褲 / 洋裝裙擺
@@ -2159,10 +2181,8 @@
       ctx.beginPath(); ctx.moveTo(-5, -146); ctx.lineTo(5, -146); ctx.lineTo(3, -118); ctx.lineTo(-3, -118); ctx.closePath(); ctx.fill();
       ctx.beginPath(); ctx.moveTo(-7, -118); ctx.lineTo(7, -118); ctx.lineTo(0, -104); ctx.closePath(); ctx.fill();
     }
-
     // 吉他（角色專屬）
     drawGuitar(char.guitar);
-
     // ---- 手臂（上臂＋前臂＋手，會擺動）----
     var sw = Math.sin(songTime * 9);                              // 刷弦擺動相位
     drawLimb([34, -140], [50, -100 + sw * 4], [14 + sw * 3, -56 + sw * 22], char.sleeve, char.skin, 15, 12);  // 刷弦臂
@@ -2171,24 +2191,57 @@
     ctx.restore();
     var vib = Math.sin(songTime * 11) * 2;                        // 按弦臂（輕微揉弦）
     drawLimb([-34, -140], [-52, -108], [-54 + vib, -150 - vib], char.sleeve, char.skin, 15, 12);
-
     // 頭
     var hy = -206;
     ctx.fillStyle = char.skin; ctx.beginPath(); ctx.arc(0, hy, 50, 0, Math.PI * 2); ctx.fill();
     char.head(hy);
+  }
 
-    ctx.restore();
-
-    // 聚光燈打在身上的暖色高光(疊在角色上，讓人明顯被光照亮)
-    if (stageProcedural) {
-      ctx.save();
-      ctx.globalCompositeOperation = "lighter";
-      var lit = 0.05 + hypeShown * 0.13, cyMid = groundY - hgt * 0.5;
-      var hg = ctx.createRadialGradient(cx - hgt * 0.06, cyMid - hgt * 0.08, 8, cx, cyMid, hgt * 0.5);
-      hg.addColorStop(0, "rgba(255,246,214," + lit + ")"); hg.addColorStop(1, "rgba(255,246,214,0)");
-      ctx.fillStyle = hg; ctx.beginPath(); ctx.ellipse(cx, cyMid, hgt * 0.34, hgt * 0.5, 0, 0, Math.PI * 2); ctx.fill();
+  // 曾玹 ＆ 🍋：同一個「角色」＝兩人左右各站一邊，各自噴自己的 emoji 特效(👍 / 🍋)
+  var sisFx = { thumbs: [], lemons: [], acc: 0 };
+  function spawnFxEmoji(arr, x, y) {
+    arr.push({ x: x + (Math.random() * 46 - 23), y: y + (Math.random() * 20 - 10),
+               vy: -(46 + Math.random() * 40), vx: (Math.random() * 24 - 12),
+               t: 0, life: 1.5 + Math.random() * 0.9, rot: (Math.random() * 0.7 - 0.35), spin: (Math.random() * 1.4 - 0.7), s: 0.72 + Math.random() * 0.7 });
+  }
+  function drawFxEmoji(arr, glyph, dt) {
+    for (var i = arr.length - 1; i >= 0; i--) {
+      var p = arr[i]; p.t += dt; p.y += p.vy * dt; p.x += p.vx * dt; p.rot += p.spin * dt; p.vy += 26 * dt;   // 微重力減速
+      if (p.t >= p.life) { arr.splice(i, 1); continue; }
+      var a = p.t < 0.25 ? (p.t / 0.25) : (p.t > p.life - 0.5 ? (p.life - p.t) / 0.5 : 1);
+      var pop = p.t < 0.25 ? (0.6 + 0.4 * (p.t / 0.25)) : 1;
+      ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, a));
+      ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.scale(p.s * pop, p.s * pop);
+      ctx.font = "30px system-ui, 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(glyph, 0, 0);
       ctx.restore();
     }
+  }
+  function drawSisters(cx, groundY, hgt, songTime) {
+    var dx = hgt * 0.30;                                          // 兩人左右間距
+    var sBase = hgt / 320 * 0.82 * (1 + charPulse * 0.07);        // 各自略小，兩人並排才擺得下
+    function paintAt(char, x, phase) {
+      var t = songTime + phase;
+      var bob = Math.sin(t * 6.3) * 4, sway = Math.sin(t * 3.1) * 0.04;
+      ctx.save();
+      ctx.translate(x, groundY - bob - charPulse * 10);
+      ctx.scale(sBase, sBase); ctx.rotate(sway);
+      ctx.globalAlpha = 0.97;
+      paintGuitaristBody(char, t);
+      ctx.restore();
+    }
+    paintAt(GUITARISTS.zengxuan, cx - dx, 0);                     // 左：曾玹
+    paintAt(GUITARISTS.lemon,    cx + dx, 1.4);                   // 右：🍋(錯開相位，動作不同步)
+    // emoji 特效(螢幕座標、前景)：曾玹=👍、🍋=🍋，持續噴一大串；越嗨越密
+    var dt = 1 / 60, interval = 0.09 - hypeShown * 0.05, headY = groundY - hgt * 0.66;
+    sisFx.acc += dt;
+    while (sisFx.acc >= interval) {
+      sisFx.acc -= interval;
+      if (sisFx.thumbs.length < 60) spawnFxEmoji(sisFx.thumbs, cx - dx, headY);
+      if (sisFx.lemons.length < 60) spawnFxEmoji(sisFx.lemons, cx + dx, headY);
+    }
+    drawFxEmoji(sisFx.thumbs, "👍", dt);
+    drawFxEmoji(sisFx.lemons, "🍋", dt);
   }
 
   // 右側大字評分動畫
