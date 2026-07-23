@@ -1430,7 +1430,7 @@
       var baseB = (H - 4) - depth * (unit * 0.55);  // 此排底線(後排往上=較遠)
       var headY0 = baseB - pH * 0.5;                // 頭中心 Y
       var offset = (r % 2) * sp * 0.5;              // 前後交錯：奇數排水平位移半格
-      var n = Math.ceil((W + sp * 2) / sp);
+      var n = Math.min(60, Math.ceil((W + sp * 2) / sp));   // 安全上限，避免極端情況畫太多人拖慢
       for (var i = 0; i < n; i++) {
         var x = i * sp - sp + offset;
         var bounce = (Math.sin(st * 4.0 + i * 1.3 + r * 0.9) * 0.5 + 0.5) * (hr * 0.5) * (0.4 + hy);
