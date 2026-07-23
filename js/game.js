@@ -88,7 +88,7 @@
   var els = {};
   // 收音 onset 狀態
   var micCand = -1, micStable = 0, micLastPc = -1, micWasSilent = true, micDisp = { midi: null, rms: 0, t: 0 };
-  var micPeak = 0, micArmed = true, micLastHit = -9;   // 峰值追隨器＋重新起音武裝＋不反應期：讓「同一個音再撥」「搥勾/連奏後」也能再次判定，不會被 Miss
+  var micSmooth = 0, micPrevSmooth = 0, micOnsetT = -9, micLastHit = -9;   // 起音瞬態偵測：輕平滑後偵測「幀間能量突增(positive flux)」= 新一次撥弦 → 同音連撥/搥勾/連奏都能再判定，不會被 Miss
   // 收音校正（可調 + 存 localStorage）
   var micGate = 0.012, micLatencyMs = 50, micTesting = false;
 
@@ -1009,7 +1009,7 @@
     laneFlash = new Array(LANES).fill(0);
     padFlash = new Array(LANES).fill(0);
     micCand = -1; micStable = 0; micLastPc = -1; micWasSilent = true; micDisp = { midi: null, rms: 0, t: 0 };
-    micPeak = 0; micArmed = true; micLastHit = -9;
+    micSmooth = 0; micPrevSmooth = 0; micOnsetT = -9; micLastHit = -9;
     _metroIdx = 0; _grooveIdx = 0;
 
     els.setupPanel.classList.add("hidden");
@@ -1184,22 +1184,26 @@
     micDisp = { midi: p.midi, rms: p.rms, t: 0 };
     updateMicHud(p);
     var rms = p.rms || 0;
-    micPeak = Math.max(rms, micPeak * 0.92);                        // 峰值追隨器(快升慢降)：偵測「重新撥弦」造成的能量起伏
+    // 輕平滑去毛刺 → 偵測「幀間能量突增(positive flux)」：撥弦的起音是一次陡升，用「這一幀明顯
+    // 大於前一幀」判斷新一次撥弦。不受同音連撥把移動平均頂高的影響，是抓「同音連撥」最可靠的訊號。
+    micSmooth = (micSmooth <= 0) ? rms : (micSmooth * 0.35 + rms * 0.65);
+    var ONSET_RATIO = 1.25;                                          // 幀間放大 ≥25% 視為起音(撥弦攻擊>50%；抖音/漸強/雜訊<20% 不觸發)
+    if (rms > micGate && micSmooth > micPrevSmooth * ONSET_RATIO && (songTime - micOnsetT) > 0.05) micOnsetT = songTime;
+    micPrevSmooth = micSmooth;
     if (p.midi != null && rms > micGate) {
       if (p.pc === micCand) micStable++; else { micCand = p.pc; micStable = 1; }
       var pitchChanged = (p.pc !== micLastPc);
-      // 觸發新命中：音高穩定 ≥2 幀，且(換了音高 或 剛從靜音/能量低谷重新起音)，並過了 70ms 不反應期(避免一次撥弦被拆成兩下)
-      if (micStable >= 2 && (pitchChanged || micArmed) && (songTime - micLastHit) > 0.07) {
-        micLastPc = p.pc; micWasSilent = false; micArmed = false; micLastHit = songTime;
+      var freshOnset = (songTime - micOnsetT) < 0.08;              // 80ms 內剛偵測到起音(留給音高 2~3 幀穩定的時間)
+      // 觸發新命中：音高穩定 ≥2 幀，且(換了音高 或 剛偵測到起音)，並過了 60ms 不反應期(避免一次撥弦被拆成兩下)
+      if (micStable >= 2 && (pitchChanged || freshOnset) && (songTime - micLastHit) > 0.06) {
+        micLastPc = p.pc; micWasSilent = false; micLastHit = songTime; micOnsetT = -9;   // 消耗掉這次起音
         var detectedPc = p.pc;
         attemptHit(function (it) {                                  // 容許音準 ±MIC_PITCH_TOL 半音偏移(circular)
           return it.pcs.some(function (pc) { var dd = Math.abs(pc - detectedPc); return Math.min(dd, 12 - dd) <= MIC_PITCH_TOL; });
         }, T.midiToDegree(p.midi, tonicPc).degree - 1);
       }
-      // 能量相對峰值明顯回落 → 重新武裝：同一個音再撥一次、或搥勾/連奏後的音，才不會漏判被 Miss
-      if (rms < micPeak * 0.6) micArmed = true;
     } else {
-      micCand = -1; micStable = 0; micWasSilent = true; micArmed = true; micLastPc = -1; micPeak *= 0.5;
+      micCand = -1; micStable = 0; micWasSilent = true; micLastPc = -1;
     }
   }
 
