@@ -1493,43 +1493,21 @@
     var s = AMP_STYLE[brand] || AMP_STYLE.marshall, top = baseY - h;
     hy = hy || 0; st = st || 0;
     var puls = 0.5 + 0.5 * Math.sin(st * 9 + x * 0.05);            // 低頻脈動(像喇叭在推空氣)
-    var glow = (0.25 + hy * 0.75) * (0.6 + 0.4 * puls);           // 熱度越高越亮
     ctx.save();
-    // 熱狂時箱體外圍暖光(音箱特效)
-    if (hy > 0.05) {
-      var rg = ctx.createRadialGradient(x, top + h * 0.55, w * 0.15, x, top + h * 0.55, w * 0.95);
-      rg.addColorStop(0, "rgba(255,150,60," + (0.10 + hy * 0.28) + ")"); rg.addColorStop(1, "rgba(255,150,60,0)");
-      ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.fillStyle = rg;
-      ctx.fillRect(x - w, top - h * 0.1, w * 2, h * 1.3); ctx.restore();
-    }
-    ctx.fillStyle = s.body; roundRect(x - w / 2, top, w, h, 7); ctx.fill();                 // 箱體
+    ctx.fillStyle = s.body; roundRect(x - w / 2, top, w, h, 7); ctx.fill();                 // 箱體(深色剪影)
     ctx.fillStyle = "rgba(255,255,255,0.05)"; roundRect(x - w / 2, top, w, 6, 4); ctx.fill(); // 上緣高光
     ctx.fillStyle = s.panel; ctx.fillRect(x - w / 2 + 7, top + 8, w - 14, Math.max(4, h * 0.08)); // 控制面板
     ctx.fillStyle = s.grille; roundRect(x - w / 2 + 7, top + h * 0.22, w - 14, h * 0.7, 5); ctx.fill(); // 喇叭網
     ctx.strokeStyle = "rgba(255,255,255,0.05)"; ctx.lineWidth = 1;                          // 網布紋
     for (var gy = top + h * 0.3; gy < top + h * 0.88; gy += 6) { ctx.beginPath(); ctx.moveTo(x - w / 2 + 9, gy); ctx.lineTo(x + w / 2 - 9, gy); ctx.stroke(); }
-    // 喇叭錐盆發光＋隨脈動抖動(音箱在轟鳴的特效)
-    var coneY = top + h * 0.58, coneR = w * (0.2 + 0.02 * puls);
-    var cg = ctx.createRadialGradient(x, coneY, 1, x, coneY, coneR * 1.6);
-    cg.addColorStop(0, "rgba(255,180,90," + (0.35 * glow) + ")"); cg.addColorStop(1, "rgba(255,120,40,0)");
-    ctx.save(); ctx.globalCompositeOperation = "lighter"; ctx.fillStyle = cg;
-    ctx.beginPath(); ctx.arc(x, coneY, coneR * 1.6, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-    // 喇叭在播放：從錐盆往前擴散的聲波環(隨時間外擴、熱度越高越明顯)
-    ctx.save(); ctx.globalCompositeOperation = "lighter";
-    for (var wv = 0; wv < 3; wv++) {
-      var phase = (st * 1.6 + wv / 3) % 1;                                  // 0→1 循環外擴
-      var wr = coneR * (1.1 + phase * 2.2);
-      ctx.strokeStyle = "rgba(255,170,80," + ((0.28 + hy * 0.4) * (1 - phase)) + ")";
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(x, coneY, wr, -Math.PI * 0.62, Math.PI * 0.62); ctx.stroke();   // 朝前(下)的弧
-    }
-    ctx.restore();
     ctx.fillStyle = s.accent; roundRect(x - w * 0.19, top + h * 0.45, w * 0.38, h * 0.1, 3); ctx.fill(); // logo 板
-    // 電源指示燈(常亮，熱度高更亮)
-    ctx.save(); ctx.globalCompositeOperation = "lighter";
-    ctx.fillStyle = "rgba(255,70,60," + (0.55 + glow * 0.45) + ")";
-    ctx.beginPath(); ctx.arc(x + w / 2 - 12, top + 8 + Math.max(4, h * 0.08) / 2, 2.6 + hy * 1.4, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
+    // 「喇叭在播放」的低調特效：錐盆隨脈動微微亮一點(不外溢、不蓋到音符)
+    var coneY = top + h * 0.58, coneR = w * 0.2;
+    ctx.fillStyle = "rgba(255,180,90," + (0.06 + 0.08 * puls) + ")";
+    ctx.beginPath(); ctx.arc(x, coneY, coneR, 0, Math.PI * 2); ctx.fill();
+    // 電源指示燈(紅點，隨脈動微亮)
+    ctx.fillStyle = "rgba(255,70,60," + (0.5 + 0.4 * puls) + ")";
+    ctx.beginPath(); ctx.arc(x + w / 2 - 12, top + 8 + Math.max(4, h * 0.08) / 2, 2.4, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
   }
   // 音箱 backline：舞台後方一整排知名音箱(在樂手左後方)，數量隨熱度變多
@@ -2016,23 +1994,23 @@
     // 站上台：熱度高時打聚光暈(升降台改在螢幕座標另畫，見 drawStageRiser)
     if (hypeShown > 0.02) {
       var hl = hypeShown;
-      var halo = ctx.createRadialGradient(0, -150, 20, 0, -150, 270);
-      halo.addColorStop(0, "rgba(255,240,180," + (0.08 + hl * 0.22) + ")");
+      var halo = ctx.createRadialGradient(0, -150, 20, 0, -150, 150);
+      halo.addColorStop(0, "rgba(255,240,180," + (0.05 + hl * 0.10) + ")");   // 光暈縮小、變淡，避免蓋到音符
       halo.addColorStop(1, "rgba(255,240,180,0)");
-      ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(0, -150, 270, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(0, -150, 150, 0, Math.PI * 2); ctx.fill();
     }
     // 連段段位慶祝爆發：角色身後放射光芒＋擴張光環(在角色之下先畫)
     if (comboBurst.t < 0.7) {
       var p = comboBurst.t / 0.7, fade = 1 - p;
       ctx.save();
       ctx.translate(0, -150); ctx.rotate(songTime * 1.2);
-      ctx.strokeStyle = "rgba(255,224,130," + (0.55 * fade) + ")"; ctx.lineWidth = 6;
+      ctx.strokeStyle = "rgba(255,224,130," + (0.3 * fade) + ")"; ctx.lineWidth = 4;   // 光芒縮短、變淡
       for (var rb = 0; rb < 12; rb++) {
-        var ang = rb / 12 * Math.PI * 2, r0 = 60 + p * 60, r1 = 150 + p * 240;
+        var ang = rb / 12 * Math.PI * 2, r0 = 50 + p * 40, r1 = 100 + p * 110;
         ctx.beginPath(); ctx.moveTo(Math.cos(ang) * r0, Math.sin(ang) * r0); ctx.lineTo(Math.cos(ang) * r1, Math.sin(ang) * r1); ctx.stroke();
       }
-      ctx.strokeStyle = "rgba(255,240,190," + (0.7 * fade) + ")"; ctx.lineWidth = 8;
-      ctx.beginPath(); ctx.arc(0, 0, 90 + p * 260, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = "rgba(255,240,190," + (0.4 * fade) + ")"; ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.arc(0, 0, 70 + p * 150, 0, Math.PI * 2); ctx.stroke();
       ctx.restore();
     }
 
@@ -2138,6 +2116,7 @@
       var songTime = A.getSongTime();
       drawGuitarist(songTime);                                          // 角色＋舞台(在音符之下)
       if (stageProcedural) drawCrowd(hypeShown, songTime, guitaristHeight());   // 台下觀眾(前景，約樂手1/4高、前後交錯)
+      if (stageProcedural) { ctx.fillStyle = "rgba(10,8,16,0.30)"; ctx.fillRect(0, 0, W, H); }   // 暗幕：讓舞台沉到背景、音符更清楚
       if (displayMode === "rocksmith") renderRocksmith(songTime);
       else if (displayMode === "tab") renderTab(songTime);
       else renderJianpu(songTime);
