@@ -119,6 +119,22 @@
       .then(function (res) { return res.error ? null : res.data; })
       .catch(function () { return null; });
   }
+  // 依 Email 讀回「已解鎖角色」狀態(跨裝置記住)。回傳 jsonb 物件或 null(未建/連不到)。
+  function getCharUnlocks(email) {
+    email = (email || "").trim().toLowerCase();
+    if (!sb || !email) return Promise.resolve(null);
+    return sb.rpc("get_char_unlocks", { p_email: email })
+      .then(function (res) { return res.error ? null : (res.data || null); })
+      .catch(function () { return null; });
+  }
+  // 把「已解鎖角色」狀態存到某 Email(跨裝置記住)。回傳 true/false。
+  function saveCharUnlocks(email, data) {
+    email = (email || "").trim().toLowerCase();
+    if (!sb || !email) return Promise.resolve(false);
+    return sb.rpc("save_char_unlocks", { p_email: email, p_data: data || {} })
+      .then(function (res) { return !res.error; })
+      .catch(function () { return false; });
+  }
   // 讀取付費資料夾的上鎖設定（每個 grp 可獨立上鎖＋獨立密碼）；回傳 {grp:{locked,pw_hash}}
   function fetchFolders() {
     if (!sb) return Promise.resolve({});
@@ -182,6 +198,8 @@
     checkEmailUnlock: checkEmailUnlock,
     registerDevice: registerDevice,
     resetDevices: resetDevices,
+    getCharUnlocks: getCharUnlocks,
+    saveCharUnlocks: saveCharUnlocks,
     onChange: function (fn) { if (typeof fn === "function") listeners.push(fn); },
     focusLogin: focusLogin
   };

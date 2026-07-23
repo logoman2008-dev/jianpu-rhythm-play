@@ -135,6 +135,11 @@
     loadPaidFolders();          // 讀取後台的付費資料夾上鎖設定
     renderLibUnlock();
     renderLulanUnlock();
+    // 已用 Email 解鎖過 → 頁面載入時也從帳號同步一次已解鎖角色(拉別台裝置新解的)；後端未就緒就 onChange 再試一次
+    if (isEmailUnlocked() && currentUnlockEmail()) {
+      pullCharUnlocks();
+      if (window.JianpuAuth && window.JianpuAuth.onChange) { var _p = false; window.JianpuAuth.onChange(function () { if (!_p) { _p = true; pullCharUnlocks(); } }); }
+    }
 
     els.trackSelect.addEventListener("change", rebuildTimeline);
     els.keySelect.addEventListener("change", rebuildTimeline);
@@ -599,7 +604,7 @@
   var SCLEAR_KEY = "jianpu_s_songs";
   function sClears() { try { var a = JSON.parse(localStorage.getItem(SCLEAR_KEY) || "[]"); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
   function sClearCount() { return sClears().length; }
-  function addSClear(key) { var a = sClears(); if (a.indexOf(key) < 0) { a.push(key); try { localStorage.setItem(SCLEAR_KEY, JSON.stringify(a)); } catch (e) {} } return a.length; }
+  function addSClear(key) { var a = sClears(); if (a.indexOf(key) < 0) { a.push(key); try { localStorage.setItem(SCLEAR_KEY, JSON.stringify(a)); } catch (e) {} pushCharUnlocks(); } return a.length; }
   function charNeed(id) { var i = LOCKED_CHARS.indexOf(id); return i < 0 ? 0 : (i + 1); }
   function charUnlocked(id) {
     if (id === "none" || id === "slash") return true;
@@ -625,6 +630,7 @@
   // 嚕嚕安角色密碼解鎖成功：只開放「嚕嚕安角色」，不影響其他功能
   function applyPasswordUnlock() {
     setUnlocked(true);
+    pushCharUnlocks();                    // 嚕嚕安解鎖 → 也記到 Email 帳號(若已用 Email 解鎖)
     refreshGuitaristLocks(); renderLulanUnlock();
     if (els.guitaristSelect) { els.guitaristSelect.value = "lulan"; guitaristId = "lulan"; try { localStorage.setItem(GUITARIST_KEY, "lulan"); } catch (e) {} }   // 自動選上嚕嚕安
   }
@@ -632,6 +638,34 @@
   function applyEmailUnlock() {
     setEmailUnlocked(true);
     updateOwnGateTip(); renderLibUnlock();
+  }
+
+  // ---- 角色解鎖「跟著 Email 帳號跨裝置記住」----
+  //   本機解鎖狀態＝哪些歌拿過 S(jianpu_s_songs)＋嚕嚕安密碼(jianpu_unlocked_v1)。
+  //   Email 登入時：從帳號拉回雲端解鎖 → 與本機「聯集」→ 更新 UI → 回推聯集(讓雲端也含本機新解的)。
+  //   之後每次多解一個角色，就自動推上帳號。後端未建 RPC 時全部靜默略過(照舊只存本機)。
+  function currentUnlockEmail() { try { return localStorage.getItem("jianpu_unlock_email") || ""; } catch (e) { return ""; } }
+  function pushCharUnlocks() {
+    if (!isEmailUnlocked()) return;                       // 沒用 Email 解鎖就不上傳
+    var email = currentUnlockEmail(); if (!email) return;
+    var A = window.JianpuAuth; if (!A || !A.saveCharUnlocks) return;
+    A.saveCharUnlocks(email, { s: sClears(), lulan: isUnlocked() });
+  }
+  function pullCharUnlocks(email) {
+    email = (email || currentUnlockEmail()).trim().toLowerCase(); if (!email) return;
+    var A = window.JianpuAuth; if (!A || !A.getCharUnlocks) return;
+    A.getCharUnlocks(email).then(function (remote) {
+      if (!remote) { pushCharUnlocks(); return; }          // 雲端還沒有 → 直接把本機推上去
+      var changed = false, set = {};
+      sClears().forEach(function (k) { set[k] = 1; });
+      var before = Object.keys(set).length;
+      (remote.s || []).forEach(function (k) { if (k) set[k] = 1; });   // 聯集「拿過 S 的歌」
+      var merged = Object.keys(set);
+      if (merged.length !== before) { try { localStorage.setItem(SCLEAR_KEY, JSON.stringify(merged)); } catch (e) {} changed = true; }
+      if (remote.lulan && !isUnlocked()) { setUnlocked(true); changed = true; }   // 雲端有嚕嚕安 → 本機也開
+      if (changed) { refreshGuitaristLocks(); renderLulanUnlock(); }
+      pushCharUnlocks();                                   // 回推聯集(雲端補上本機獨有的)
+    });
   }
   // 購買解鎖的 Google 訂購表單（學生填完→老師收款→回傳解鎖密碼）
   var ORDER_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScwb4iexfUwKLuf5AHumcz0NpPJfcYM6W5V7fJDw5_1sxqrXQ/viewform";
@@ -669,7 +703,8 @@
       var savedEmail = ""; try { savedEmail = localStorage.getItem("jianpu_unlock_email") || ""; } catch (e) {}
       box.innerHTML = '<div class="paid-unlock unlocked">🔓 <b>已解鎖</b>：自己上傳的譜可無限使用。' +
         '<span class="lu-acct" style="color:#9fb0c8;font-size:12px;margin-left:4px"></span>' +
-        '<button type="button" class="btn small ghost lu-logout" style="margin-left:8px">登出帳號</button></div>';
+        '<button type="button" class="btn small ghost lu-logout" style="margin-left:8px">登出帳號</button>' +
+        '<div class="pu-tip" style="margin-top:4px">💡 此帳號會<b>記住你解鎖的角色</b>：換裝置用同一 Email 解鎖，已解鎖的角色會一起帶過去。</div></div>';
       var acct = box.querySelector(".lu-acct"); if (acct && savedEmail) acct.textContent = "（帳號：" + savedEmail + "）";
       var lo = box.querySelector(".lu-logout");
       if (lo) lo.addEventListener("click", function () {
@@ -693,7 +728,7 @@
     var inp = box.querySelector(".lu-email"), btn = box.querySelector(".lu-btn"), msg = box.querySelector(".lu-msg"), resetBtn = box.querySelector(".lu-reset");
     function setMsg(t, c) { msg.textContent = t; msg.style.color = c || "#d7c9ac"; }
     function emailVal() { var e = (inp.value || "").trim(); return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e) ? e : null; }
-    function onOk(email) { try { localStorage.setItem("jianpu_unlock_email", email.toLowerCase()); } catch (e) {} applyEmailUnlock(); }
+    function onOk(email) { try { localStorage.setItem("jianpu_unlock_email", email.toLowerCase()); } catch (e) {} applyEmailUnlock(); pullCharUnlocks(email); }   // 登入成功→從帳號還原已解鎖角色
     function go() {
       var email = emailVal(); if (!email) { setMsg("請輸入正確的 Email。", "#ff9a9a"); return; }
       var A = window.JianpuAuth;
