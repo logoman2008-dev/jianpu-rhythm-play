@@ -417,9 +417,7 @@
   // ---- 載入與解析 ----
   // 曲庫清單（來自 js/songs.js）：
   //   window.FREE_GROUPS   — 免費示範曲：檔案放在網站本地 songs/ 底下，任何人可玩。
-  //   window.SAMPLE_GROUPS — 付費教材（嚕嚕安）：檔案放後端 Supabase 私密 bucket，
-  //                          需「登入 + 已開通」才下載得到。清單標題可公開（等於課程大綱）。
-  var SAMPLE_GROUPS = window.SAMPLE_GROUPS || [];
+  //   （嚕嚕安教材已下架，只保留角色與背景；付費內容改由後台上傳的資料夾提供。）
   var FREE_GROUPS   = window.FREE_GROUPS   || [];
   function countSongs(group) {
     if (group.songs) return group.songs.length;
@@ -1633,10 +1631,15 @@
   function drawGuitar(type) {
     ctx.save();
     ctx.translate(2, -70); ctx.rotate(-0.62);
-    var maple = (type === "strat" || type === "striped");
+    var maple = (type === "strat" || type === "striped" || type === "headless");
     var neckCol = maple ? "#c99a5a" : "#2a1a0c";
     ctx.fillStyle = neckCol; ctx.fillRect(-9, -150, 18, 120);              // 琴頸
-    ctx.fillStyle = maple ? "#b8894a" : "#0d0d0d"; roundRect(-13, -170, 26, 24, 3); ctx.fill();  // 琴頭
+    if (type === "headless") {                                             // Yvette · Strandberg 無頭琴：頸尾只有小弦鈕、無琴頭
+      ctx.fillStyle = "#b8894a"; roundRect(-11, -156, 22, 12, 2); ctx.fill();
+      ctx.fillStyle = "#c8ccd2"; for (var hh = -8; hh <= 8; hh += 8) { ctx.beginPath(); ctx.arc(hh, -150, 2.4, 0, Math.PI * 2); ctx.fill(); }
+    } else {
+      ctx.fillStyle = maple ? "#b8894a" : "#0d0d0d"; roundRect(-13, -170, 26, 24, 3); ctx.fill();  // 琴頭
+    }
     if (type === "strat") {
       ctx.fillStyle = "#f4f4f4"; ctx.beginPath(); ctx.ellipse(0, 6, 40, 50, 0, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = "#dcdcdc"; ctx.beginPath(); ctx.ellipse(5, 12, 25, 33, 0, 0, Math.PI * 2); ctx.fill();  // 護板
@@ -1686,6 +1689,17 @@
       ctx.fillStyle = "#4a2f14"; ctx.beginPath(); ctx.arc(0, 10, 12, 0, Math.PI * 2); ctx.fill();                 // 音孔
       ctx.strokeStyle = "#2e1c0c"; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(0, 10, 15, 0, Math.PI * 2); ctx.stroke();  // 玫瑰花飾
       ctx.strokeStyle = "#6a4a24"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(-14, -18); ctx.lineTo(14, -18); ctx.stroke();  // 琴橋線
+    } else if (type === "headless") {                                       // Yvette Young · Strandberg 無頭琴：人體工學小琴身＋手繪彩渦
+      ctx.save();
+      ctx.beginPath(); ctx.ellipse(-2, 8, 34, 42, 0.14, 0, Math.PI * 2); ctx.clip();                              // 較小的偏移琴身
+      var yg = ctx.createLinearGradient(-34, -34, 34, 50);
+      yg.addColorStop(0, "#4ec9c0"); yg.addColorStop(0.5, "#e86a9a"); yg.addColorStop(1, "#6a5acd"); // 青→粉→紫 彩繪
+      ctx.fillStyle = yg; ctx.fillRect(-40, -44, 80, 96);
+      ctx.strokeStyle = "rgba(255,255,255,0.5)"; ctx.lineWidth = 3; ctx.lineCap = "round";                        // 手繪白色渦紋
+      ctx.beginPath(); ctx.arc(-6, 6, 20, 0.3, 4.2); ctx.moveTo(16, 2); ctx.arc(6, 12, 12, -0.4, 2.8); ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle = "#111"; ctx.fillRect(-8, 4, 20, 5);                                                        // 拾音器
+      ctx.fillStyle = "#c8ccd2"; roundRect(-12, 40, 24, 8, 2); ctx.fill();                                       // 無頭琴橋(弦鎖)
     } else {                                                                // lespaul（sunburst）
       var lg = ctx.createRadialGradient(0, 6, 4, 0, 6, 46);
       lg.addColorStop(0, "#f2b64e"); lg.addColorStop(0.6, "#c6761c"); lg.addColorStop(1, "#37200a");
@@ -1800,14 +1814,15 @@
         ctx.fillStyle = "#0a0a0a"; ctx.beginPath(); ctx.ellipse(-13, hy - 2, 12, 9, 0, 0, Math.PI * 2); ctx.ellipse(13, hy - 2, 12, 9, 0, 0, Math.PI * 2); ctx.fill();  // 墨鏡
       }
     },
-    henson: {   // Tim Henson (Polyphia)：頂髻(man bun)＋削邊、圓框墨鏡、鬍渣、黑街頭衣、原木尼龍弦
+    henson: {   // Tim Henson (Polyphia)：mullet(前短後長)、圓框墨鏡、鬍渣、黑街頭衣、原木尼龍弦
       skin: "#e2b58f", legs: "#17171c", torso: "#17171c", sleeve: "#17171c", chest: "#2a2a30", guitar: "nylon",
       head: function (hy) {
         ctx.fillStyle = "#100e0c";
-        ctx.beginPath(); ctx.arc(0, hy - 46, 15, 0, Math.PI * 2); ctx.fill();                        // 髮髻(man bun)
-        ctx.fillRect(-3, hy - 44, 6, 10);
-        ctx.beginPath(); ctx.arc(0, hy - 14, 47, Math.PI * 1.1, Math.PI * 1.9); ctx.fill();          // 頭頂髮(往後梳)
-        ctx.fillRect(-47, hy - 18, 11, 30); ctx.fillRect(36, hy - 18, 11, 30);                        // 兩側削短
+        ctx.fillRect(-52, hy + 2, 13, 82); ctx.fillRect(39, hy + 2, 13, 82);                          // mullet 後髮：耳後垂到肩
+        ctx.beginPath(); ctx.moveTo(-52, hy + 82); ctx.lineTo(-39, hy + 82); ctx.lineTo(-46, hy + 100); ctx.closePath(); ctx.fill();  // 髮尾
+        ctx.beginPath(); ctx.moveTo(39, hy + 82); ctx.lineTo(52, hy + 82); ctx.lineTo(46, hy + 100); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.arc(0, hy - 12, 48, Math.PI * 1.02, Math.PI * 1.98); ctx.fill();          // 頭頂短髮(蓬、往後梳)
+        ctx.fillRect(-48, hy - 16, 12, 20); ctx.fillRect(36, hy - 16, 12, 20);                         // 兩側稍短
         ctx.fillStyle = "rgba(20,16,12,0.32)";                                                        // 鬍渣
         ctx.beginPath(); ctx.arc(0, hy + 20, 33, 0.22, Math.PI - 0.22); ctx.fill();
         ctx.fillStyle = "#0c0c10";                                                                    // 圓框墨鏡
@@ -1821,6 +1836,12 @@
       head: function (hy) {
         curlCluster([[-34,hy-22,22],[0,hy-34,24],[34,hy-22,22],[-46,hy+2,20],[46,hy+2,20],[-40,hy+34,17],[40,hy+34,17]], "#171310");  // 波浪髮
         ctx.fillStyle = "#171310"; ctx.beginPath(); ctx.arc(0, hy - 10, 46, Math.PI, 0); ctx.fill();
+        ctx.fillStyle = "#2b2f38";                                                                    // 深色毛帽(針織)：蓋住頭頂
+        ctx.beginPath(); ctx.arc(0, hy - 14, 44, Math.PI * 1.04, Math.PI * 1.96); ctx.fill();
+        ctx.fillRect(-44, hy - 20, 88, 8);
+        ctx.fillStyle = "#363b45"; ctx.fillRect(-45, hy - 14, 90, 11);                                 // 反摺帽緣
+        ctx.strokeStyle = "#20242c"; ctx.lineWidth = 1.5;                                              // 針織直紋
+        for (var an = -36; an <= 36; an += 12) { ctx.beginPath(); ctx.moveTo(an, hy - 50); ctx.lineTo(an, hy - 16); ctx.stroke(); }
         ctx.fillStyle = "#1a150f";                                                                    // 大鬍子
         ctx.beginPath(); ctx.moveTo(-40, hy + 2); ctx.quadraticCurveTo(-34, hy + 54, 0, hy + 60);
         ctx.quadraticCurveTo(34, hy + 54, 40, hy + 2); ctx.quadraticCurveTo(0, hy + 30, -40, hy + 2); ctx.closePath(); ctx.fill();
@@ -1844,8 +1865,8 @@
         ctx.fillStyle = "#241a12"; ctx.beginPath(); ctx.arc(-16, hy + 10, 3, 0, Math.PI * 2); ctx.arc(16, hy + 10, 3, 0, Math.PI * 2); ctx.fill();
       }
     },
-    yvette: {   // Yvette Young (Covet)：黑長髮＋青色挑染、瀏海、開朗
-      skin: "#f0d2b6", legs: "#2a2440", torso: "#e86a9a", sleeve: "#e86a9a", chest: "#f7c9dd", guitar: "strat",
+    yvette: {   // Yvette Young (Covet)：黑長髮＋青色挑染、瀏海、開朗；Strandberg 無頭手繪琴
+      skin: "#f0d2b6", legs: "#2a2440", torso: "#e86a9a", sleeve: "#e86a9a", chest: "#f7c9dd", guitar: "headless",
       head: function (hy) {
         ctx.fillStyle = "#1a1518";
         ctx.beginPath(); ctx.arc(0, hy - 10, 50, Math.PI, 0); ctx.fill();
