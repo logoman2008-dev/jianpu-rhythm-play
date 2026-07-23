@@ -1409,6 +1409,52 @@
     ctx.restore();
   }
 
+  // 史密斯機(閃電嚕嚕安專屬)：黑鋼外框＋雙 chrome 導軌＋槓鈴＋側邊掛片樁，
+  // 畫在角色「後方」框住人物(不論真人照或程序舞台都會疊上)。cx=角色中心、baseY=腳底、h=總高。
+  function drawSmithMachine(cx, baseY, h) {
+    var w = h * 0.62, x0 = cx - w / 2, x1 = cx + w / 2, topY = baseY - h, pw = w * 0.075;
+    ctx.save();
+    ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.globalAlpha = 0.93;
+    var steel = "#12141c", edge = "rgba(150,172,220,0.55)", chrome = "rgba(222,230,242,0.92)";
+    function slab(x, y, ww, hh, r) {
+      ctx.fillStyle = steel; roundRect(x, y, ww, hh, r || 3); ctx.fill();
+      ctx.strokeStyle = edge; ctx.lineWidth = 1.5; roundRect(x, y, ww, hh, r || 3); ctx.stroke();
+      ctx.fillStyle = "rgba(255,255,255,0.05)"; ctx.fillRect(x + 1.5, y + 1.5, Math.max(2, ww * 0.22), Math.max(2, hh - 3));  // 內側高光
+    }
+    // 前撐斜腳 + 平腳橫桿(底座)
+    ctx.strokeStyle = steel; ctx.lineWidth = Math.max(6, pw * 0.95);
+    ctx.beginPath(); ctx.moveTo(x0 + pw * 0.5, topY + h * 0.14); ctx.lineTo(x0 - w * 0.11, baseY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x1 - pw * 0.5, topY + h * 0.14); ctx.lineTo(x1 + w * 0.11, baseY); ctx.stroke();
+    slab(x0 - w * 0.17, baseY - h * 0.035, w * 0.36, h * 0.045, 4);
+    slab(x1 - w * 0.19, baseY - h * 0.035, w * 0.36, h * 0.045, 4);
+    // 主雙立柱
+    slab(x0, topY, pw, h, 3); slab(x1 - pw, topY, pw, h, 3);
+    // 頂橫樑 + 頂部兩吊耳(對應照片最上方黑色小片)
+    slab(x0 - 2, topY - h * 0.02, w + 4, h * 0.05, 3);
+    slab(cx - w * 0.17, topY - h * 0.055, w * 0.075, h * 0.035, 2);
+    slab(cx + w * 0.095, topY - h * 0.055, w * 0.075, h * 0.035, 2);
+    // 內側雙導軌(chrome 亮線)
+    var gL = cx - w * 0.13, gR = cx + w * 0.13, gTop = topY + h * 0.05, gBot = baseY - h * 0.05;
+    ctx.strokeStyle = chrome; ctx.lineWidth = Math.max(2, w * 0.013);
+    ctx.beginPath(); ctx.moveTo(gL, gTop); ctx.lineTo(gL, gBot); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(gR, gTop); ctx.lineTo(gR, gBot); ctx.stroke();
+    // 槓鈴(橫桿)＋兩端槓片，落在角色胸口高度
+    var by = topY + h * 0.44;
+    ctx.strokeStyle = chrome; ctx.lineWidth = Math.max(3, w * 0.021);
+    ctx.beginPath(); ctx.moveTo(x0 + pw * 0.4, by); ctx.lineTo(x1 - pw * 0.4, by); ctx.stroke();
+    function barPlate(px, ph, pww) { ctx.fillStyle = steel; roundRect(px - pww / 2, by - ph / 2, pww, ph, 3); ctx.fill(); ctx.strokeStyle = edge; ctx.lineWidth = 1.4; roundRect(px - pww / 2, by - ph / 2, pww, ph, 3); ctx.stroke(); }
+    barPlate(gL - w * 0.02, h * 0.21, w * 0.055); barPlate(gL - w * 0.08, h * 0.16, w * 0.04);
+    barPlate(gR + w * 0.02, h * 0.21, w * 0.055); barPlate(gR + w * 0.08, h * 0.16, w * 0.04);
+    // 右側掛片樁(weight horns)：3 根水平樁＋掛著的槓片
+    for (var i = 0; i < 3; i++) {
+      var hy2 = topY + h * (0.30 + i * 0.17);
+      slab(x1 + pw * 0.2, hy2, w * 0.15, h * 0.02, 2);
+      ctx.fillStyle = steel; ctx.beginPath(); ctx.ellipse(x1 + w * 0.14, hy2 + h * 0.01, w * 0.032, h * 0.058, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = edge; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.ellipse(x1 + w * 0.14, hy2 + h * 0.01, w * 0.032, h * 0.058, 0, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   // 樂手身高(觀眾尺寸依此換算)
   function guitaristHeight() { return Math.min(H * 0.72, W * 0.82, 470); }
 
@@ -2005,6 +2051,7 @@
       drawStageDeck(groundY, floorY, hypeShown, songTime);                 // 大舞台台面(右側寬台)
       drawAmpBackline(cx, groundY, hgt, hypeShown, songTime);              // 知名音箱 backline(角色左後方)＋音箱特效
     }
+    if (guitaristId === "lulan") drawSmithMachine(cx, groundY, hgt * 1.06);  // 閃電嚕嚕安→身後擺一台史密斯機(框住人物)
     var bob = Math.sin(songTime * 6.3) * 4, sway = Math.sin(songTime * 3.1) * 0.04;
     var s = hgt / 320 * (char.scale || 1) * (1 + charPulse * 0.07);
     ctx.save();
