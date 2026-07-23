@@ -665,8 +665,21 @@
   // 「我的曲庫」欄位上的解鎖：用 Email（每信箱限 4 台，超過需重置）＋購買連結
   function renderLibUnlock() {
     var box = document.getElementById("libUnlock"); if (!box) return;
-    if (isPaid()) {   // 已 Email 解鎖 → 自己上傳的譜已無限
-      box.innerHTML = '<div class="paid-unlock unlocked">🔓 <b>已解鎖</b>：自己上傳的譜可無限使用。</div>';
+    if (isPaid()) {   // 已 Email 解鎖 → 自己上傳的譜已無限；提供「登出帳號」
+      var savedEmail = ""; try { savedEmail = localStorage.getItem("jianpu_unlock_email") || ""; } catch (e) {}
+      box.innerHTML = '<div class="paid-unlock unlocked">🔓 <b>已解鎖</b>：自己上傳的譜可無限使用。' +
+        '<span class="lu-acct" style="color:#9fb0c8;font-size:12px;margin-left:4px"></span>' +
+        '<button type="button" class="btn small ghost lu-logout" style="margin-left:8px">登出帳號</button></div>';
+      var acct = box.querySelector(".lu-acct"); if (acct && savedEmail) acct.textContent = "（帳號：" + savedEmail + "）";
+      var lo = box.querySelector(".lu-logout");
+      if (lo) lo.addEventListener("click", function () {
+        if (!confirm("登出後這台裝置會回到「每日免費額度」，需要時再用 Email 重新解鎖即可。\n（不會釋放後端裝置名額；若要把這台從 4 台上限移除，請用登入欄的「重置裝置」。）\n\n確定要登出嗎？")) return;
+        setEmailUnlocked(false);
+        try { localStorage.removeItem("jianpu_unlock_email"); } catch (e) {}
+        var A = window.JianpuAuth; if (A && A.signOut) { try { A.signOut(); } catch (e) {} }
+        updateOwnGateTip(); renderLibUnlock();
+        setStatus("已登出帳號。", false);
+      });
       return;
     }
     box.innerHTML = '<div class="paid-unlock">' +
