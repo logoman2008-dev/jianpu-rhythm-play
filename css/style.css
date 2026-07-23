@@ -63,8 +63,9 @@ html, body {
   border-radius: 18px; padding: 22px; box-shadow: var(--shadow); position: relative; }
 .panel::before { content: ""; position: absolute; inset: 0 0 auto; height: 1px; border-radius: 18px 18px 0 0;
   background: linear-gradient(90deg, transparent, rgba(255,255,255,0.14), transparent); }
-.setup-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 20px; }
-@media (max-width: 760px) { .setup-grid { grid-template-columns: 1fr; } }
+/* minmax(0,…) 防止 grid track 被子項 min-content 撐爆造成手機版被截掉 */
+.setup-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; }
+@media (max-width: 760px) { .setup-grid { grid-template-columns: minmax(0, 1fr); } }
 
 .dropzone {
   border: 2px dashed rgba(255,255,255,.22);

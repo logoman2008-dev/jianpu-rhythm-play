@@ -1949,6 +1949,43 @@
         ctx.fillStyle = "#2a2018"; ctx.fillRect(-9, hy + 24, 18, 3);                      // 髭
         ctx.strokeStyle = "#7a4a38"; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(-8, hy + 31); ctx.lineTo(8, hy + 31); ctx.stroke();  // 咬牙
       }
+    },
+    zengxuan: {   // 曾玹：藍色漢服(襦裙)、瀏海＋雙低馬尾＋紅髮圈、腰前藍蝴蝶結
+      skin: "#f2d6bd", legs: "#bcd8ee", torso: "#cfe3f2", sleeve: "#eef4fb", chest: "#dfeaf5",
+      skirt: "#bcd8ee", sash: "#8fc0e6", shoe: "#6fa8d6", guitar: "strat", dress: true, bow: true, scale: 0.9,
+      head: function (hy) {
+        var HAIR = "#3b2a1d";
+        ctx.fillStyle = HAIR;
+        ctx.beginPath(); ctx.arc(0, hy - 6, 50, Math.PI, 0); ctx.fill();                          // 頭頂後髮
+        roundRect(-58, hy + 8, 17, 76, 9); ctx.fill(); roundRect(41, hy + 8, 17, 76, 9); ctx.fill();  // 雙低馬尾
+        ctx.beginPath(); ctx.moveTo(-50, hy - 6); ctx.lineTo(-50, hy + 10);                        // 瀏海(中分微弧)
+        ctx.quadraticCurveTo(-22, hy + 22, 0, hy + 7); ctx.quadraticCurveTo(22, hy + 22, 50, hy + 10);
+        ctx.lineTo(50, hy - 6); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = "#e0555f"; ctx.beginPath(); ctx.arc(-49, hy + 12, 5, 0, Math.PI * 2); ctx.arc(49, hy + 12, 5, 0, Math.PI * 2); ctx.fill();  // 紅髮圈
+        ctx.fillStyle = "#2a1e16"; ctx.beginPath(); ctx.arc(-15, hy + 9, 4.2, 0, Math.PI * 2); ctx.arc(15, hy + 9, 4.2, 0, Math.PI * 2); ctx.fill();  // 眼
+        ctx.fillStyle = "rgba(240,140,150,0.5)"; ctx.beginPath(); ctx.arc(-27, hy + 19, 7, 0, Math.PI * 2); ctx.arc(27, hy + 19, 7, 0, Math.PI * 2); ctx.fill();  // 腮紅
+        ctx.strokeStyle = "#c86a6a"; ctx.lineWidth = 2.5; ctx.lineCap = "round";
+        ctx.beginPath(); ctx.arc(0, hy + 20, 7, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();     // 微笑
+      }
+    },
+    lemon: {   // 🍋：粉色唐裝(立領盤扣)、齊瀏海＋雙馬尾、右側檸檬髮飾
+      skin: "#f2d6bd", legs: "#f6c9d6", torso: "#f7d3dd", sleeve: "#fdeef3", chest: "#f7d3dd",
+      skirt: "#f6c9d6", sash: "#ec9bb4", shoe: "#e58aa6", guitar: "nylon", dress: true, scale: 0.9,
+      head: function (hy) {
+        var HAIR = "#191512";
+        ctx.fillStyle = HAIR;
+        ctx.beginPath(); ctx.arc(0, hy - 6, 50, Math.PI, 0); ctx.fill();                          // 頭頂後髮
+        roundRect(-57, hy + 10, 16, 66, 8); ctx.fill(); roundRect(41, hy + 10, 16, 66, 8); ctx.fill();  // 雙馬尾
+        ctx.beginPath(); ctx.moveTo(-50, hy - 6); ctx.lineTo(-50, hy + 9);                         // 齊瀏海
+        ctx.quadraticCurveTo(0, hy + 20, 50, hy + 9); ctx.lineTo(50, hy - 6); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = "#ec9bb4"; roundRect(-19, hy + 45, 38, 10, 4); ctx.fill();                 // 粉色立領
+        ctx.fillStyle = "#f4d03f"; ctx.beginPath(); ctx.ellipse(51, hy - 1, 9, 6, 0.4, 0, Math.PI * 2); ctx.fill();  // 檸檬🍋髮飾
+        ctx.fillStyle = "#3c8a3c"; ctx.beginPath(); ctx.arc(45, hy - 6, 2, 0, Math.PI * 2); ctx.fill();               // 蒂
+        ctx.fillStyle = "#2a1e16"; ctx.beginPath(); ctx.arc(-15, hy + 9, 4.2, 0, Math.PI * 2); ctx.arc(15, hy + 9, 4.2, 0, Math.PI * 2); ctx.fill();  // 眼
+        ctx.fillStyle = "rgba(240,140,150,0.5)"; ctx.beginPath(); ctx.arc(-27, hy + 19, 7, 0, Math.PI * 2); ctx.arc(27, hy + 19, 7, 0, Math.PI * 2); ctx.fill();  // 腮紅
+        ctx.strokeStyle = "#c86a6a"; ctx.lineWidth = 2.5; ctx.lineCap = "round";
+        ctx.beginPath(); ctx.arc(0, hy + 20, 7, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();     // 微笑
+      }
     }
   };
 
@@ -2090,9 +2127,25 @@
     if (char.lift) { drawLifter(char, songTime); ctx.restore(); return; }
 
     // 身體
-    ctx.fillStyle = char.torso; roundRect(-46, -150, 92, char.shorts ? 118 : 150, 20); ctx.fill();
-    // 腿
-    if (char.shorts) {
+    ctx.fillStyle = char.torso; roundRect(-46, -150, 92, char.shorts ? 118 : (char.dress ? 70 : 150), 20); ctx.fill();
+    // 腿 / 短褲 / 洋裝裙擺
+    if (char.dress) {
+      // 漢服/唐裝：合身上衣＋外擴裙擺(蓋住腿)＋半透明紗裙外層＋小腿鞋＋腰帶/蝴蝶結
+      ctx.fillStyle = char.skirt || char.legs;                                     // 裙身(外擴梯形)
+      ctx.beginPath(); ctx.moveTo(-44, -86); ctx.lineTo(44, -86); ctx.lineTo(78, 6); ctx.quadraticCurveTo(0, 22, -78, 6); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,0.26)";                                     // 紗裙(半透明外層，飄逸感)
+      ctx.beginPath(); ctx.moveTo(-40, -78); ctx.lineTo(40, -78); ctx.lineTo(90, 14); ctx.quadraticCurveTo(0, 32, -90, 14); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = char.skin; roundRect(-24, 6, 15, 16, 5); ctx.fill(); roundRect(9, 6, 15, 16, 5); ctx.fill();      // 小腿
+      ctx.fillStyle = char.shoe || "#e8748f"; roundRect(-27, 18, 20, 8, 4); ctx.fill(); roundRect(7, 18, 20, 8, 4); ctx.fill();   // 鞋
+      if (char.sash) { ctx.fillStyle = char.sash; roundRect(-45, -90, 90, 11, 4); ctx.fill(); }                        // 腰帶(高腰)
+      if (char.bow) {                                                              // 腰前蝴蝶結(曾玹)
+        ctx.fillStyle = char.sash || "#8fc0e6";
+        ctx.beginPath(); ctx.moveTo(0, -84); ctx.lineTo(-22, -95); ctx.lineTo(-22, -73); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(0, -84); ctx.lineTo(22, -95); ctx.lineTo(22, -73); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.arc(0, -84, 6, 0, Math.PI * 2); ctx.fill();
+        ctx.fillRect(-4, -82, 8, 42);                                              // 垂帶
+      }
+    } else if (char.shorts) {
       ctx.fillStyle = char.torso; roundRect(-40, -40, 34, 22, 7); ctx.fill(); roundRect(6, -40, 34, 22, 7); ctx.fill();   // 短褲
       ctx.fillStyle = char.legs;  roundRect(-36, -20, 26, 20, 6); ctx.fill(); roundRect(10, -20, 26, 20, 6); ctx.fill();  // 裸腿
       ctx.fillStyle = "#f2f2f2";  ctx.fillRect(-36, -6, 26, 6); ctx.fillRect(10, -6, 26, 6);                              // 白襪
