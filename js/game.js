@@ -906,7 +906,7 @@
       items.forEach(function (it) {
         if (it.deadOnly) return;                                     // 純死音拍無音高，跳過簡譜級數計算
         var d = T.midiToDegree(it.midi, tonicPc);
-        it.jianpu = { degree: d.degree, alter: d.alter, symbol: T.accSymbol(d.alter), octaveOffset: octFn2(it.midi), tech: it.topTech };
+        it.jianpu = { degree: d.degree, alter: d.alter, symbol: T.accSymbol(d.alter), octaveOffset: octFn2(it.midi) + 1, tech: it.topTech };   // +1：吉他慣例，記譜比發聲高八度
       });
       // 和弦上色(每個不同和弦一個顏色，頻繁換和弦時互相區分) + 「同上」重複註記
       var _chordCol = {}, _pal = ["#e0a44b", "#5ec26a", "#5b8def", "#c06cff", "#ff7aa2", "#3fc7bb", "#ffd23d", "#ff9a3c"], _ci = 0, _lastChord = null;
@@ -924,7 +924,7 @@
       items = timeline.notes.map(function (n) {
         var d = T.midiToDegree(n.midi, tonicPc);
         return { time: n.time * inv, dur: n.dur * inv, midi: n.midi, degree: d.degree, alter: d.alter,
-                 octaveOffset: octFn(n.midi), lane: d.degree - 1, symbol: T.accSymbol(d.alter),
+                 octaveOffset: octFn(n.midi) + 1, lane: d.degree - 1, symbol: T.accSymbol(d.alter),
                  pc: pc(n.midi), pcs: [pc(n.midi)], degSet: [d.degree], bend: n.bend || 0,
                  judged: false, hit: false, missed: false, tier: null };
       });
@@ -2979,7 +2979,7 @@
       if (n.cur) { ctx.fillStyle = "rgba(255,214,61,0.16)"; roundRect(x - hw - 3, jY - staffHalf - 12, hw * 2 + 6, staffHalf * 2 + 24, 7); ctx.fill(); }
       var col = n.cur ? "#ffd93d" : "rgba(240,244,252,0.97)";
       for (var m = 0; m < n.midis.length; m++) {
-        var midi = n.midis[m], pcc = ((midi % 12) + 12) % 12;
+        var midi = n.midis[m] + 12, pcc = ((midi % 12) + 12) % 12;   // +12：吉他慣例，記譜比發聲高八度(音符落在譜表更集中)
         var step = (Math.floor(midi / 12) - 1) * 7 + STAFF_STEP_OF_PC[pcc], y = yOf(step);
         ctx.strokeStyle = "rgba(232,236,244,0.7)"; ctx.lineWidth = 1.6;   // 加線(超出 5 線時)
         var s2;
