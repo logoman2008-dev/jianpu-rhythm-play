@@ -2552,7 +2552,7 @@
     pad = null;   // 六線譜模式沒有觸控鍵盤
     var view = (els.bottomSelect && els.bottomSelect.value) || "jianpu";
     var labelW = 54, topPad = 40;
-    var bandH = (view === "fretboard") ? Math.min(200, Math.round(H * 0.4)) : (view === "staff" ? 118 : 92);   // 指板圖加大、五線譜/簡譜列
+    var bandH = (view === "fretboard") ? Math.min(200, Math.round(H * 0.4)) : (view === "staff" ? Math.min(215, Math.round(H * 0.40)) : 92);   // 指板圖/五線譜加大、簡譜列
     var bandTop = H - bandH - 8;
     var jY = bandTop + bandH / 2;       // 簡譜列中心
     var sBot = bandTop - 12;            // 弦線底部
@@ -2590,22 +2590,25 @@
       ctx.textAlign = "right"; ctx.textBaseline = "middle";
       ctx.fillText("簡譜", labelW - 8, jY);
     }
-    // 下方：五線譜列（高音譜號、5 條線、隨譜捲動的小節線）
+    // 下方：五線譜列（高音譜號、5 條線、隨譜捲動的小節線）— 加大＋鋪深色底(音符不被背景干擾)
+    var staffGap = Math.round(bandH * 0.15);          // 線距(依 band 高度縮放，約 30px)
+    var staffHalf = staffGap * 2;                     // 中線到最上/下線
     if (view === "staff") {
-      ctx.fillStyle = "rgba(255,255,255,0.05)"; ctx.fillRect(labelW, jY - 46, W - labelW, 92);
-      ctx.strokeStyle = "rgba(232,236,244,0.5)"; ctx.lineWidth = 1;
-      for (var ln = 0; ln < 5; ln++) { var ly = jY - 24 + ln * 12; ctx.beginPath(); ctx.moveTo(labelW, ly); ctx.lineTo(W, ly); ctx.stroke(); }
+      ctx.fillStyle = "rgba(8,10,16,0.95)"; ctx.fillRect(labelW, bandTop + 2, W - labelW, bandH - 4);   // 近乎不透明深色底條(音符不被舞台/角色干擾)
+      ctx.strokeStyle = "rgba(255,255,255,0.10)"; ctx.lineWidth = 1; ctx.strokeRect(labelW, bandTop + 2, W - labelW, bandH - 4);   // 細邊框
+      ctx.strokeStyle = "rgba(232,236,244,0.55)"; ctx.lineWidth = 1.2;
+      for (var ln = 0; ln < 5; ln++) { var ly = jY - staffHalf + ln * staffGap; ctx.beginPath(); ctx.moveTo(labelW, ly); ctx.lineTo(W, ly); ctx.stroke(); }
       for (var sbi = 0; sbi < barStartsScaled.length; sbi++) {   // 小節線(隨譜捲動)
         var sbx = hitX + (barStartsScaled[sbi] - songTime) * pxPerSec;
         if (sbx < labelW - 2 || sbx > W + 2) continue;
-        ctx.strokeStyle = (sbi % 4 === 0) ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.2)"; ctx.lineWidth = (sbi % 4 === 0) ? 2 : 1;
-        ctx.beginPath(); ctx.moveTo(sbx, jY - 24); ctx.lineTo(sbx, jY + 24); ctx.stroke();
+        ctx.strokeStyle = (sbi % 4 === 0) ? "rgba(255,255,255,0.42)" : "rgba(255,255,255,0.22)"; ctx.lineWidth = (sbi % 4 === 0) ? 2 : 1;
+        ctx.beginPath(); ctx.moveTo(sbx, jY - staffHalf); ctx.lineTo(sbx, jY + staffHalf); ctx.stroke();
       }
       ctx.lineWidth = 1;
-      ctx.fillStyle = "rgba(255,255,255,0.85)"; ctx.font = "44px system-ui, 'Apple Symbols', sans-serif";
-      ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.fillText("𝄞", labelW + 4, jY - 2);   // 𝄞 高音譜號
-      ctx.fillStyle = "rgba(255,255,255,0.4)"; ctx.font = "11px system-ui, sans-serif";
-      ctx.textAlign = "right"; ctx.textBaseline = "middle"; ctx.fillText("五線譜", labelW - 8, jY);
+      ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.font = Math.round(staffGap * 3.6) + "px system-ui, 'Apple Symbols', sans-serif";
+      ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.fillText("𝄞", labelW + 6, jY - staffGap * 0.15);   // 𝄞 高音譜號
+      ctx.fillStyle = "rgba(255,255,255,0.45)"; ctx.font = "12px system-ui, sans-serif";
+      ctx.textAlign = "right"; ctx.textBaseline = "top"; ctx.fillText("五線譜", labelW - 8, bandTop + 6);
     }
     // KTV：找最接近判定線的音（當前音）供高亮
     var curJ = -1, curBest = 1e9;
@@ -2614,7 +2617,7 @@
     }
 
     // 判定線
-    var topY = topPad - 16, botY = (view === "jianpu") ? (jY + 26) : (view === "staff" ? (jY + 34) : (sBot + 10));
+    var topY = topPad - 16, botY = (view === "jianpu") ? (jY + 26) : (view === "staff" ? (jY + staffHalf + 10) : (sBot + 10));
     ctx.fillStyle = "rgba(91,141,239,0.12)"; ctx.fillRect(hitX - 22, topY, 44, botY - topY);
     ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(hitX, topY); ctx.lineTo(hitX, botY); ctx.stroke(); ctx.lineWidth = 1;
@@ -2666,7 +2669,7 @@
       }
     }
     if (view === "jianpu") drawJianpuStrip(strip, jY, sTop, sH, hitX);
-    if (view === "staff") drawStaffStrip(staffStrip, jY, hitX, labelW);
+    if (view === "staff") drawStaffStrip(staffStrip, jY, hitX, labelW, staffGap);
     drawPopupsHorizontal(hitX, topPad);
 
     // 下方：指板圖（顯示本小節要按到的格子）
@@ -2965,30 +2968,34 @@
   var STAFF_STEP_OF_PC  = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6];   // C C# D D# E F F# G G# A A# B → 字母階
   var STAFF_SHARP_OF_PC = [0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0];   // 黑鍵→要畫升記號
   // 底部五線譜列：符頭(依音高落在線/間) + 符桿 + 加線 + 升記號 + 目前音高亮 + 播放位置線
-  function drawStaffStrip(notes, jY, hitX, labelW) {
-    function yOf(step) { return jY - (step - 34) * 6; }            // 每階 6px（線距 12px）
+  //   lineGap=線距(依 band 高度縮放)；每階(半格)= lineGap/2
+  function drawStaffStrip(notes, jY, hitX, labelW, lineGap) {
+    lineGap = lineGap || 24;
+    var half = lineGap / 2, staffHalf = lineGap * 2;
+    var hw = lineGap * 0.62, rx = lineGap * 0.42, ry = lineGap * 0.32, stem = lineGap * 1.5;
+    function yOf(step) { return jY - (step - 34) * half; }
     for (var i = 0; i < notes.length; i++) {
       var n = notes[i], x = Math.round(n.x);
-      if (n.cur) { ctx.fillStyle = "rgba(255,214,61,0.16)"; roundRect(x - 12, jY - 42, 24, 84, 6); ctx.fill(); }
-      var col = n.cur ? "#ffd93d" : "rgba(240,244,252,0.96)";
+      if (n.cur) { ctx.fillStyle = "rgba(255,214,61,0.16)"; roundRect(x - hw - 3, jY - staffHalf - 12, hw * 2 + 6, staffHalf * 2 + 24, 7); ctx.fill(); }
+      var col = n.cur ? "#ffd93d" : "rgba(240,244,252,0.97)";
       for (var m = 0; m < n.midis.length; m++) {
         var midi = n.midis[m], pcc = ((midi % 12) + 12) % 12;
         var step = (Math.floor(midi / 12) - 1) * 7 + STAFF_STEP_OF_PC[pcc], y = yOf(step);
-        ctx.strokeStyle = "rgba(232,236,244,0.7)"; ctx.lineWidth = 1.4;   // 加線(超出 5 線時)
+        ctx.strokeStyle = "rgba(232,236,244,0.7)"; ctx.lineWidth = 1.6;   // 加線(超出 5 線時)
         var s2;
-        if (step > 38) { for (s2 = 40; s2 <= step; s2 += 2) { ctx.beginPath(); ctx.moveTo(x - 9, yOf(s2)); ctx.lineTo(x + 9, yOf(s2)); ctx.stroke(); } }
-        else if (step < 30) { for (s2 = 28; s2 >= step; s2 -= 2) { ctx.beginPath(); ctx.moveTo(x - 9, yOf(s2)); ctx.lineTo(x + 9, yOf(s2)); ctx.stroke(); } }
+        if (step > 38) { for (s2 = 40; s2 <= step; s2 += 2) { ctx.beginPath(); ctx.moveTo(x - hw, yOf(s2)); ctx.lineTo(x + hw, yOf(s2)); ctx.stroke(); } }
+        else if (step < 30) { for (s2 = 28; s2 >= step; s2 -= 2) { ctx.beginPath(); ctx.moveTo(x - hw, yOf(s2)); ctx.lineTo(x + hw, yOf(s2)); ctx.stroke(); } }
         var stemUp = step < 34;                                          // 符桿方向
-        ctx.strokeStyle = col; ctx.lineWidth = 1.8; ctx.beginPath();
-        if (stemUp) { ctx.moveTo(x + 6, y); ctx.lineTo(x + 6, y - 22); } else { ctx.moveTo(x - 6, y); ctx.lineTo(x - 6, y + 22); }
+        ctx.strokeStyle = col; ctx.lineWidth = 2.2; ctx.beginPath();
+        if (stemUp) { ctx.moveTo(x + rx, y); ctx.lineTo(x + rx, y - stem); } else { ctx.moveTo(x - rx, y); ctx.lineTo(x - rx, y + stem); }
         ctx.stroke();
         ctx.save(); ctx.translate(x, y); ctx.rotate(-0.32);             // 符頭(實心橢圓、微斜)
-        ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(0, 0, 6.2, 4.6, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-        if (STAFF_SHARP_OF_PC[pcc]) { ctx.fillStyle = col; ctx.font = "15px system-ui, 'Apple Symbols', sans-serif"; ctx.textAlign = "right"; ctx.textBaseline = "middle"; ctx.fillText("♯", x - 8, y); }
+        ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+        if (STAFF_SHARP_OF_PC[pcc]) { ctx.fillStyle = col; ctx.font = Math.round(lineGap * 0.95) + "px system-ui, 'Apple Symbols', sans-serif"; ctx.textAlign = "right"; ctx.textBaseline = "middle"; ctx.fillText("♯", x - hw + 2, y); }
       }
     }
     ctx.strokeStyle = "#ffd93d"; ctx.lineWidth = 2;                     // 播放位置線
-    ctx.beginPath(); ctx.moveTo(hitX, jY - 42); ctx.lineTo(hitX, jY + 42); ctx.stroke(); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(hitX, jY - staffHalf - 10); ctx.lineTo(hitX, jY + staffHalf + 10); ctx.stroke(); ctx.lineWidth = 1;
   }
 
   // 底部觸控鍵盤 = 吉他指板外觀（1–7 為琴格按鍵）；直向 / 橫向共用；記錄 pad 供觸控命中
