@@ -1024,6 +1024,7 @@
           var drow = Math.max(0, Math.min(tabTL.stringCount - 1, tabTL.stringCount - dn.string));
           return { string: dn.string, fret: dn.fret, row: drow };
         });
+        var isGraceBeat = !!beat.grace;                              // 裝飾音(GP 上的小字音符)
         var notes = beat.notes.map(function (n) {
           var d = T.midiToDegree(n.midi, tonicPc);
           var row = tabTL.tuning.indexOf(n.midi - n.fret);
@@ -1042,6 +1043,7 @@
                    trill: !!n.trill, letRing: !!n.letRing, staccato: !!n.staccato,
                    tap: !!(n.tapLH || beat.tap), tremolo: !!beat.tremolo, slap: !!beat.slap, pop: !!beat.pop,
                    chordNote: !!beat.chord,                                  // 屬於和弦的單音→六線譜上特別標注
+                   grace: isGraceBeat,                                       // 裝飾音→畫成小顆音符
                    linkRow: linkRow, linkTime: linkTime, linkFret: linkFret };
         });
         if (!notes.length) {                                         // 純死音/悶音拍：只在六線譜顯示 X，不進判定（judged 直接為 true）
@@ -1056,11 +1058,13 @@
           if (degs.indexOf(n.degree) < 0) degs.push(n.degree);
           if (n.midi > top.midi) top = n;
         });
+        // 裝飾音(小字)：顯示＋發聲，但不列入判定與計分（judged 直接為 true，同死音拍的作法）。
+        //   原因是裝飾音與主音只差幾十毫秒，遠小於判定窗與收音不反應期，若要求分開命中會變成必定 Miss。
         return { time: beat.time * inv, dur: beat.dur * inv, notes: notes, deadNotes: deadNotes, pcs: pcs, degSet: degs,
                  lane: top.degree - 1, midi: top.midi, bend: top.bend || 0, topTech: noteHasTech(top), bar: beat.bar,
                  chord: beat.chord || "", chordFrets: beat.chordFrets || null, chordFirst: beat.chordFirst || 0,
-                 nv: beat.nv, dots: beat.dots || 0, tuplet: beat.tuplet || null,
-                 judged: false, hit: false, missed: false, tier: null };
+                 nv: beat.nv, dots: beat.dots || 0, tuplet: beat.tuplet || null, grace: isGraceBeat,
+                 judged: isGraceBeat, hit: false, missed: false, tier: null };
       });
       var topMidis = items.filter(function (it) { return !it.deadOnly; }).map(function (it) { return it.midi; });
       var octFn2 = T.makeOctaveOffsetFn(topMidis, tonicPc);
@@ -1160,7 +1164,8 @@
   function updateSpeedLabel() { els.speedVal.textContent = (speed === 1) ? "1×（正常）" : fmtSpeed(speed); }
   function updateSongInfo() {
     var keyName = keyDisplay(tonicPc);
-    var countLabel = usesTabData() ? (items.length + " 拍（" + dispName() + "）") : (items.length + " 音（簡譜）");
+    var playable = items.filter(function (it) { return !it.grace; }).length;   // 裝飾音只顯示不判定，不計入拍數
+    var countLabel = usesTabData() ? (playable + " 拍（" + dispName() + "）") : (playable + " 音（簡譜）");
     var speedTxt = (speed === 1) ? "" : ('　｜　倍速：' + fmtSpeed(speed) + '（實際 ' + fmtTime(songDuration) + '）');
     els.songInfo.innerHTML =
       '<div class="si-title">' + escapeHtml(timeline.title) +
@@ -1210,7 +1215,7 @@
   function beginGame() {
     items.forEach(function (n) {
       n.hit = false; n.missed = false; n.tier = null;
-      n.judged = !!n.deadOnly;                       // 純死音拍永遠 judged(只顯示不判定)，其餘重置為未判定
+      n.judged = !!(n.deadOnly || n.grace);          // 純死音拍與裝飾音永遠 judged(只顯示不判定)，其餘重置為未判定
     });
     score = 0; current = { combo: 0, maxCombo: 0 };
     comboBurst = { t: 999, level: 0 }; hypeShown = 0;
@@ -2871,7 +2876,7 @@
       if (it.deadNotes) {                                       // 死音/悶音(X)：只顯示、不判定
         for (var dj = 0; dj < it.deadNotes.length; dj++) drawDeadNote(x, topPad + it.deadNotes[dj].row * rowGap);
       }
-      if (view === "jianpu" && it.jianpu) strip.push({ x: x, jp: it.jianpu, dur: it.dur, nv: it.nv, dots: it.dots, tuplet: it.tuplet, t: it.time, cur: i === curJ });
+      if (view === "jianpu" && it.jianpu) strip.push({ x: x, jp: it.jianpu, dur: it.dur, nv: it.nv, dots: it.dots, tuplet: it.tuplet, t: it.time, cur: i === curJ, grace: !!it.grace });
       if (view === "staff" && !it.deadOnly) {
         var mids = (it.notes && it.notes.length) ? it.notes.map(function (n) { return n.midi; }) : (it.midi != null ? [it.midi] : []);
         if (mids.length) staffStrip.push({ x: x, midis: mids, nv: it.nv, dots: it.dots, cur: i === curJ });
@@ -3134,7 +3139,7 @@
       var col = jp.tech ? LANE_COLORS[jp.degree - 1] : NEUTRAL_NOTE;
       if (n.cur) { ctx.fillStyle = "rgba(255,214,61,0.92)"; roundRect(x - 20, y - 24, 40, 54, 9); ctx.fill(); col = "#161616"; }
       ctx.fillStyle = col; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.font = (n.cur ? "bold 34px" : "bold 30px") + " system-ui, sans-serif";
+      ctx.font = (n.grace ? "bold 19px" : (n.cur ? "bold 34px" : "bold 30px")) + " system-ui, sans-serif";  // 裝飾音＝小字
       ctx.fillText(jp.symbol + String(jp.degree), x, y);
       if (n.dot) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x + hw + 6, y, 3, 0, Math.PI * 2); ctx.fill(); }
       for (var dd = 0; dd < n.d; dd++) { ctx.strokeStyle = col; ctx.lineWidth = 3; var rx = x + hw + 10 + dd * 18; ctx.beginPath(); ctx.moveTo(rx, y); ctx.lineTo(rx + 14, y); ctx.stroke(); }
@@ -3277,8 +3282,12 @@
 
   function drawTabNote(x, y, n, tier) {
     x = Math.round(x); y = Math.round(y);          // 對齊像素，避免次像素抖動殘影
-    var rad = 20, tech = noteHasTech(n);
-    return drawTabNoteBody(x, y, n, rad, tech);
+    var rad = n.grace ? 12 : 20, tech = noteHasTech(n);   // 裝飾音＝GP 譜上的小字音符，畫小顆
+    if (!n.grace) return drawTabNoteBody(x, y, n, rad, tech);
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    drawTabNoteBody(x, y, n, rad, tech);
+    ctx.restore();
   }
   // 和弦名標籤（彩色小膠囊，畫在該拍上方）
   function drawChordLabel(x, y, name, color) {
@@ -3354,7 +3363,7 @@
       ctx.restore();
     }
     ctx.fillStyle = "#161616"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.font = "bold 19px system-ui, sans-serif";
+    ctx.font = "bold " + (rad >= 18 ? 19 : Math.max(10, Math.round(rad * 1.05))) + "px system-ui, sans-serif";  // 小顆(裝飾音)字級跟著縮
     ctx.fillText(String(n.fret), x, y + 1);
     // 技巧標記
     if (n.bend > 0) {                               // 推弦向下箭頭

@@ -61,9 +61,31 @@
   }
 
   function isGrace(beat) {
-    // graceType: 0 = None
-    return beat.graceType && beat.graceType !== 0;
+    // graceType: 0=None / 1=OnBeat / 2=BeforeBeat / 3=BendGrace（GP 譜上畫成小字音符＝裝飾音）
+    return !!beat.graceType && beat.graceType !== 0;
   }
+
+  // 取一個 beat 的「絕對 tick 位置與長度」
+  //   alphaTab 匯入完成後，已在每個 beat 上算好 playbackStart / playbackDuration（小節內的相對 tick），
+  //   而且**已經處理過裝飾音的借時規則**：BeforeBeat 從前一拍的尾巴借時間、OnBeat 從本拍開頭借，
+  //   裝飾音本身不會把小節撐長。
+  //   ⚠️ 千萬不要自行累加 beat.duration —— 那樣會把裝飾音的時值也算進小節，
+  //      造成該小節裝飾音之後的所有音符整批往後位移（拍子跑掉）。
+  //   舊格式（gp3/4/5）若沒有這兩個欄位，退回自行累加，但裝飾音一樣不計入小節長度。
+  function beatPos(beat, barStart, fallbackTick) {
+    var ps = beat.playbackStart, pd = beat.playbackDuration;
+    if (typeof ps === "number" && typeof pd === "number" && pd > 0) {
+      return { start: barStart + ps, ticks: pd };
+    }
+    var bt = beatTicks(beat);
+    if (isGrace(beat)) {                       // 保險做法：把裝飾音貼在下一拍之前
+      var len = Math.min(bt, WHOLE / 16);
+      return { start: Math.max(barStart, fallbackTick - len), ticks: len };
+    }
+    return { start: fallbackTick, ticks: bt };
+  }
+  // 推進「小節內的書寫位置」用的 tick（裝飾音不占小節時值）
+  function advance(beat, tick) { return isGrace(beat) ? tick : tick + beatTicks(beat); }
 
   function tempoAutomationValue(beat) {
     var autos = beat.automations;
@@ -119,8 +141,8 @@
         for (var k = 0; k < voice.beats.length; k++) {
           var beat = voice.beats[k];
           var bpm = tempoAutomationValue(beat);
-          if (bpm != null) events.push({ tick: tick, bpm: bpm });
-          tick += beatTicks(beat);
+          if (bpm != null) events.push({ tick: beatPos(beat, barStart, tick).start, bpm: bpm });
+          tick = advance(beat, tick);
         }
       }
       barStart += barTicks(mb);
@@ -180,16 +202,17 @@
       if (voice) {
         for (var k = 0; k < voice.beats.length; k++) {
           var beat = voice.beats[k];
-          var bt = beatTicks(beat);
-          if (!beat.isRest && !isGrace(beat)) {
+          var pos = beatPos(beat, barStart, tick);
+          if (!beat.isRest) {                              // 裝飾音(小字)也要發聲，不再跳過
             var top = topNoteInfo(beat);
             if (top != null) {
-              var t0 = tickToSec(tick);
-              var t1 = tickToSec(tick + bt);
-              notes.push({ time: t0, dur: Math.max(0.08, t1 - t0), midi: top.midi, bend: top.bend });
+              var gr = isGrace(beat);
+              var t0 = tickToSec(pos.start);
+              var t1 = tickToSec(pos.start + pos.ticks);
+              notes.push({ time: t0, dur: Math.max(gr ? 0.05 : 0.08, t1 - t0), midi: top.midi, bend: top.bend, grace: gr });
             }
           }
-          tick += bt;
+          tick = advance(beat, tick);
         }
       }
       barStart += barTicks(mb);
@@ -239,8 +262,8 @@
       if (voice) {
         for (var k = 0; k < voice.beats.length; k++) {
           var beat = voice.beats[k];
-          var bt = beatTicks(beat);
-          if (!beat.isRest && !isGrace(beat) && beat.notes && beat.notes.length) {
+          var pos = beatPos(beat, barStart, tick);
+          if (!beat.isRest && beat.notes && beat.notes.length) {     // 裝飾音(小字)也要顯示，不再跳過
             var ns = [], deadNs = [];
             for (var i = 0; i < beat.notes.length; i++) {
               var n = beat.notes[i];
@@ -287,8 +310,8 @@
               }
             } catch (e) {}
             if (ns.length || deadNs.length) {
-              var t0 = tickToSec(tick);
-              var t1 = tickToSec(tick + bt);
+              var t0 = tickToSec(pos.start);
+              var t1 = tickToSec(pos.start + pos.ticks);
               // 連音(tuplet)：以 tupletGroup 物件參照分組，畫括線用
               var tup = null, tn = beat.tupletNumerator, td = beat.tupletDenominator;
               if (tn && td && tn > 0 && td > 0 && tn !== td) {
@@ -300,7 +323,8 @@
                 tup = { n: tn, d: td, gid: gid };
               }
               beats.push({
-                time: t0, dur: Math.max(0.08, t1 - t0), notes: ns, dead: deadNs, bar: b,
+                time: t0, dur: Math.max(isGrace(beat) ? 0.05 : 0.08, t1 - t0), notes: ns, dead: deadNs, bar: b,
+                grace: isGrace(beat),           // 裝飾音(小字)：畫小顆、只顯示與發聲，不列入判定
                 chord: chordName,               // 和弦名(有標示才有；空字串=無)
                 chordFrets: chordFrets,         // 各弦格位陣列(畫和弦表用)或 null
                 chordFirst: chordFirst,         // 起始格(和弦表左側基準)
@@ -314,7 +338,7 @@
               });
             }
           }
-          tick += bt;
+          tick = advance(beat, tick);
         }
       }
       barStart += barTicks(mb);
