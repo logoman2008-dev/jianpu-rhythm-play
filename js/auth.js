@@ -154,13 +154,6 @@
       })
       .catch(function () { return {}; });
   }
-  // 讀取「app_config」設定表的一個 key（例：解鎖密碼 hash）；公開可讀，找不到就回 null
-  function fetchConfig(key) {
-    if (!sb) return Promise.resolve(null);
-    return sb.from("app_config").select("value").eq("key", key).maybeSingle()
-      .then(function (res) { return (res && res.data) ? res.data.value : null; })
-      .catch(function () { return null; });
-  }
 
   // ---------- 帳號列 UI ----------
   var el = {};
@@ -201,7 +194,6 @@
     downloadPaidSong: downloadPaidSong,
     downloadSong: downloadSong,
     fetchCatalog: fetchCatalog,
-    fetchConfig: fetchConfig,
     fetchFolders: fetchFolders,
     checkEmailUnlock: checkEmailUnlock,
     registerDevice: registerDevice,
