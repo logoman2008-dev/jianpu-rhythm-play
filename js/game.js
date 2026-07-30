@@ -85,6 +85,9 @@
   var comboBurst = { t: 999, level: 0 };   // 每達新連段段位(每10連段)的慶祝爆發動畫
   var countBeat = 0.5;                      // 開場倒數每一拍的秒數(依曲速；4 拍倒數用)
   var stageProcedural = false;             // 這幀是否在畫程序化舞台(無背景圖時才畫升降台/觀眾)
+  var stageOn = false;                     // 這幀是否要畫舞台道具(台面/追蹤燈/音箱牆/觀眾)。
+                                           //   專屬角色雖然背景鎖成照片，舞台照樣要有(跟其他角色一樣)；
+                                           //   只有玩家自己上傳的背景圖才整個不畫，免得蓋掉他的照片。
   var laneFlash, padFlash, pad = null, popups, dpr = 1;
   var flashByString = [0, 0, 0, 0, 0, 0];   // Rocksmith 公路：命中時各弦色標閃動
   var canvas, ctx, W = 0, H = 0, judgeY = 0;
@@ -1912,7 +1915,8 @@
     var cbg = charBg[guitaristId];
     var lockBg = (cbg && cbg.complete && cbg.naturalWidth) ? cbg : null;
     var bg = lockBg || bgImage;
-    stageProcedural = !bg;                         // 無背景圖時才畫程序化舞台(升降台/觀眾)
+    stageProcedural = !bg;                         // 無背景圖時才畫程序化舞台(升降台/背景聚光燈)
+    stageOn = !bg || !!lockBg;                     // 專屬角色(照片背景)也要有舞台
     if (bg) {
       var alpha = lockBg ? 1.0 : bgOpacity;
       var ir = bg.width / bg.height, cr = W / H, dw, dh;
@@ -2735,7 +2739,7 @@
     var hgt = guitaristHeight();                                    // 人物加大(上限 470)
     var rise = 30 + hypeShown * (H * 0.16);                         // 舞台更高
     var cx = (stageLeftX() + W) / 2, floorY = H * 0.88, groundY = floorY - rise, headY = groundY - hgt * 0.86;   // 樂手站在舞台(右側寬台)正中央
-    if (stageProcedural) {
+    if (stageOn) {
       drawFollowSpot(cx, headY, groundY, hypeShown, songTime, hgt);        // 追蹤聚光燈打在樂手身上
       drawStageDeck(groundY, floorY, hypeShown, songTime);                 // 大舞台台面(右側寬台)
       drawAmpBackline(cx, groundY, hgt, hypeShown, songTime);              // 知名音箱 backline(角色左後方)＋音箱特效
@@ -2780,7 +2784,7 @@
     ctx.restore();
 
     // 聚光燈打在身上的暖色高光(疊在角色上，讓人明顯被光照亮)
-    if (stageProcedural) {
+    if (stageOn) {
       ctx.save();
       ctx.globalCompositeOperation = "lighter";
       var lit = 0.05 + hypeShown * 0.13, cyMid = groundY - hgt * 0.5;
@@ -3047,7 +3051,7 @@
     if (state === "playing" || state === "paused") {
       var songTime = A.getSongTime();
       drawGuitarist(songTime);                                          // 角色＋舞台(在音符之下)
-      if (stageProcedural) drawCrowd(hypeShown, songTime, guitaristHeight());   // 台下觀眾(前景，約樂手1/4高、前後交錯)
+      if (stageOn) drawCrowd(hypeShown, songTime, guitaristHeight());   // 台下觀眾(前景，約樂手1/4高、前後交錯)
       if (stageProcedural) { ctx.fillStyle = "rgba(10,8,16,0.30)"; ctx.fillRect(0, 0, W, H); }   // 暗幕：讓舞台沉到背景、音符更清楚
       if (displayMode === "rocksmith") renderRocksmith(songTime);
       else if (displayMode === "tab") renderTab(songTime);

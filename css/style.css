@@ -96,7 +96,16 @@ body:has(#setupPanel:not(.hidden)) #menuBg { opacity: 1; }
   background: linear-gradient(90deg, transparent, rgba(255,255,255,0.14), transparent); }
 /* minmax(0,…) 防止 grid track 被子項 min-content 撐爆造成手機版被截掉 */
 .setup-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; }
-@media (max-width: 760px) { .setup-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 760px) {
+  .setup-grid { grid-template-columns: minmax(0, 1fr); }
+  /* 單欄時「我的曲庫」很高(含優惠/登入)，會把「免費範例」推到 1200px 以下＝手機上等於不見了 →
+     把免費範例排到我的曲庫前面，一進站就看得到可以直接玩的曲子 */
+  .dz-col > #dropZone   { order: 0; }
+  .dz-col > .legal-note { order: 1; }
+  .dz-col > #ownGateTip { order: 2; }
+  .dz-col > #sampleBox  { order: 3; }
+  .dz-col > #myLibraryBox { order: 4; }
+}
 
 .dropzone {
   border: 2px dashed rgba(255,255,255,.22);
