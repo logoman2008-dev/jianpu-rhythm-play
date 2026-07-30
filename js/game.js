@@ -1130,17 +1130,17 @@
   function scheduleGroove(idx) {
     var bt = beatTimes[idx], bd = beatDurs[idx] || 0.5, b = beatInBar[idx] || 0;
     var fn = GROOVES[genre]; if (!fn) return;
-    var hits = fn(b), rootMidi = 36 + tonicPc;                              // 低音根音(約 C2)
+    // ★「曲風」只出鼓組音色 —— 不加貝斯、不加和弦鋪底。
+    //   （原本會在每個 kick 疊 A.bassNote、在小節首疊 A.chordPad；
+    //     那些是有音高的持續音，聽起來像汽笛，而且本來就不屬於鼓組。
+    //     audio.js 的 bassNote/chordPad 保留但不再被呼叫，日後要加回來只需在這裡呼叫。）
+    var hits = fn(b);
     for (var i = 0; i < hits.length; i++) {
       var hh = hits[i], at = A.songTimeToCtx(bt + hh.f * bd), g = hh.g || 1;
-      if (hh.v === "kick") { A.kick(at, g); A.bassNote(rootMidi, at, bd * 0.9, 1); }   // bass 跟大鼓
+      if (hh.v === "kick") A.kick(at, g);
       else if (hh.v === "snare") A.snare(at, g);
       else if (hh.v === "hat") A.hat(at, g);
       else if (hh.v === "crash") A.crash(at, g);
-    }
-    if (b === 0) {                                                          // 小節首：和弦鋪底(主和弦)
-      var barLen = bd * (beatsPerBar[idx] || 4), pad = 48 + tonicPc;
-      A.chordPad([pad, pad + 4, pad + 7], A.songTimeToCtx(bt), barLen * 0.98, 1);
     }
   }
 

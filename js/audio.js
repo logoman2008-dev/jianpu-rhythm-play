@@ -252,7 +252,8 @@
     this._noise(at, 0.5, this.drumGain, gn * 0.16, 8000);
   };
 
-  // ---- 伴奏 ----
+  // ---- 伴奏（★ 目前未使用：「曲風」只出鼓組音色，game.js 的 scheduleGroove 不再呼叫這兩個。
+  //      保留是為了日後若要加回貝斯／和弦鋪底，只需在 scheduleGroove 重新呼叫即可。）----
   Engine.prototype.bassNote = function (midi, at, dur, gain) {
     if (!this.ctx) return; var ctx = this.ctx, osc = ctx.createOscillator(), sub = ctx.createOscillator(), g = ctx.createGain();
     var f = midiToFreq(midi);
