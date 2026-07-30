@@ -440,3 +440,7 @@ body:has(#setupPanel:not(.hidden)) #menuBg { opacity: 1; }
 .fx-led { font-size: 15px; line-height: 1; color: #4a4a52; transition: color .08s linear; }
 .fx-led.open { color: #5ee08a; text-shadow: 0 0 7px rgba(94,224,138,.75); }
 @media (max-width: 640px) { .fx-grid { grid-template-columns: 1fr; } }
+/* 輸入裝置列：重新掃描／顯示名稱 */
+.dev-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.dev-count { color: var(--muted); font-weight: 400; font-size: 12px; }
+.dev-now b { color: #7CFC9B; }

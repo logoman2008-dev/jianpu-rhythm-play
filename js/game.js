@@ -100,7 +100,7 @@
      "hudScore","hudCombo","hudAcc","hudTitle","progressFill","result","resultBody","micHud","micNote","micLevel",
      "micSettings","sensRange","sensVal","latRange","latVal","micTestBtn","testNote","testLevel",
      "autoCalBtn","leaderboard","calibModal","calibDot","calibProg","calibResult","calibClose","calibCancel",
-     "speedRange","speedVal","bottomSelect","fretWindowSelect","fretStyleSelect","bgInput","guitaristSelect","metronomeToggle","genreSelect","bgOpacityRange","bgOpacityVal","audioInSelect","audioInTip",
+     "speedRange","speedVal","bottomSelect","fretWindowSelect","fretStyleSelect","bgInput","guitaristSelect","metronomeToggle","genreSelect","bgOpacityRange","bgOpacityVal","audioInSelect","audioInTip","audioInCount","audioInNow","audioInRescan","audioInUnlock",
      "ampToggle","ampControls","ampDrive","ampDriveVal","ampLevel","ampLevelVal","ampBuffer","ampLatNow",
      "gateToggle","gateControls","gateThresh","gateThreshVal","gateAutoBtn","gateMeter","gateLed","gateTip",
      "odToggle","odControls","odDrive","odDriveVal","odTone","odToneVal","odLevel","odLevelVal",
@@ -145,6 +145,7 @@
       pullCharUnlocks();
       if (window.JianpuAuth && window.JianpuAuth.onChange) { var _p = false; window.JianpuAuth.onChange(function () { if (!_p) { _p = true; pullCharUnlocks(); } }); }
     }
+    setupAudioInputs();         // 輸入裝置清單（開機就掃、插拔自動更新）
     setupTosBar();              // 首次進站的服務條款同意條
     setupMenuBgm();             // 選單背景音樂
     setupVirtualAmp();          // 虛擬音箱（收音→模擬音色→即時輸出）
@@ -242,22 +243,86 @@
   }
   // 目前選的音訊輸入裝置 id（空＝預設）
   function micDeviceId() { return (els.audioInSelect && els.audioInSelect.value) || ""; }
-  // 列出音訊輸入裝置到下拉（授權後才有名稱）
+  // 列出音訊輸入裝置到下拉。
+  //   注意瀏覽器規則：**沒給過麥克風權限時 enumerateDevices 的 label 是空字串**，
+  //   所以要嘛先授權、要嘛只能顯示「輸入裝置 1/2/3」。這裡兩種情況都處理，
+  //   並在已開麥克風時標出目前實際在用的那一個。
+  var _devPrev = null;
   function refreshAudioInputs() {
-    if (!P.listInputs) return;
-    P.listInputs().then(function (list) {
-      var sel = els.audioInSelect, prev = sel.value;
-      var html = '<option value="">預設輸入裝置</option>', named = false;
+    if (!P.listInputs) return Promise.resolve();
+    var sel = els.audioInSelect; if (!sel) return Promise.resolve();
+    var prev = _devPrev || sel.value;
+    return P.listInputs().then(function (list) {
+      var act = P.activeInput ? P.activeInput() : null;
+      var named = 0;
+      var html = '<option value="">預設輸入裝置（系統設定）</option>';
       list.forEach(function (d, i) {
-        var label = d.label || ("輸入裝置 " + (i + 1));
-        if (d.label) named = true;
-        html += '<option value="' + d.id + '">' + escapeHtml(label) + '</option>';
+        var label = d.label || ("輸入裝置 " + (i + 1) + "（授權後顯示名稱）");
+        if (d.label) named++;
+        var using = act && act.id && d.id === act.id;
+        html += '<option value="' + escapeHtml(d.id) + '">' + (using ? "🎤 " : "") + escapeHtml(label) + (using ? "（使用中）" : "") + '</option>';
       });
       sel.innerHTML = html;
-      if (prev && sel.querySelector('option[value="' + prev + '"]')) sel.value = prev;
-      if (els.audioInTip) els.audioInTip.style.display = named ? "none" : "";
+      if (prev && sel.querySelector('option[value="' + prev.replace(/"/g, '\\"') + '"]')) sel.value = prev;
+      _devPrev = sel.value;
+      // 裝置數量
+      if (els.audioInCount) els.audioInCount.textContent = list.length ? "（找到 " + list.length + " 個）" : "（找不到輸入裝置）";
+      // 目前實際在用的裝置
+      if (els.audioInNow) {
+        if (act) {
+          els.audioInNow.className = "ms-tip dev-now";
+          els.audioInNow.innerHTML = "🎤 目前收音：<b>" + escapeHtml(act.label || "預設裝置") + "</b>　" +
+            (act.sampleRate ? (act.sampleRate / 1000).toFixed(1) + " kHz" : "") +
+            (act.channels ? " · " + act.channels + " ch" : "");
+        } else {
+          els.audioInNow.className = "ms-tip";
+          els.audioInNow.innerHTML = "尚未開始收音（按「測試麥克風」或開始遊戲後，這裡會顯示實際使用的裝置）。";
+        }
+      }
+      // 提示與「顯示名稱」按鈕
+      var needUnlock = list.length > 0 && named === 0;
+      if (els.audioInUnlock) els.audioInUnlock.style.display = needUnlock ? "" : "none";
+      if (els.audioInTip) {
+        if (!list.length) els.audioInTip.innerHTML = "⚠️ 沒偵測到任何音訊輸入裝置。請確認麥克風／錄音介面已接上，再按「重新掃描」。";
+        else if (needUnlock) els.audioInTip.innerHTML = "🔒 瀏覽器規定<b>授權麥克風後才能顯示裝置名稱</b>——按「顯示裝置名稱」授權一次即可（不會開始錄音）。";
+        else els.audioInTip.innerHTML = "💡 用錄音介面（line-in）音質與延遲最好。插拔裝置會自動重新掃描。";
+      }
+      return list;
+    }).catch(function () { return []; });
+  }
+  // 「顯示裝置名稱」：只為解鎖名稱要一次權限，拿到就立刻關掉
+  function unlockDeviceNames() {
+    if (!P.unlockDeviceLabels) return;
+    els.audioInUnlock.disabled = true;
+    P.unlockDeviceLabels().then(function () {
+      return refreshAudioInputs();
+    }).catch(function (e) {
+      if (els.audioInTip) els.audioInTip.innerHTML = "❌ 沒有取得麥克風權限：" + escapeHtml((e && e.message) || String(e)) +
+        "（可到瀏覽器網址列左邊的鎖頭圖示重新允許）";
+    }).then(function () { els.audioInUnlock.disabled = false; });
+  }
+  // 換裝置：若正在收音就立刻用新裝置重開（原本要等下一次 start 才生效）
+  function onAudioInChange() {
+    _devPrev = els.audioInSelect.value;
+    if (!P.isActive()) { refreshAudioInputs(); return; }
+    if (els.audioInNow) els.audioInNow.innerHTML = "切換裝置中…";
+    P.restart(micDeviceId()).then(function () {
+      if (els.ampToggle && els.ampToggle.checked) P.setAmp(true);
+      refreshAudioInputs();
+    }).catch(function (e) {
+      if (els.audioInTip) els.audioInTip.innerHTML = "❌ 切換裝置失敗：" + escapeHtml((e && e.message) || String(e));
     });
   }
+  // 開機時就掃一次；已授權過的話直接看到真實名稱。插拔裝置也自動更新。
+  function setupAudioInputs() {
+    if (!els.audioInSelect) return;
+    els.audioInSelect.addEventListener("change", onAudioInChange);
+    if (els.audioInRescan) els.audioInRescan.addEventListener("click", function () { refreshAudioInputs(); });
+    if (els.audioInUnlock) els.audioInUnlock.addEventListener("click", unlockDeviceNames);
+    if (P.onDeviceChange) P.onDeviceChange(function () { refreshAudioInputs(); });
+    refreshAudioInputs();
+  }
+
   function loadMicSettings() {
     try {
       var s = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
@@ -292,6 +357,7 @@
     if (!P.isSupported()) { setStatus("此環境無法取用麥克風（需 https 或 http://localhost）。", true); return; }
     els.micTestBtn.textContent = "● 測試中…（點此停止）";
     P.start(micDeviceId()).then(function () {
+        refreshAudioInputs();
       refreshAudioInputs();            // 授權後才拿得到裝置名稱
       micTesting = true;
       var tick = function () {

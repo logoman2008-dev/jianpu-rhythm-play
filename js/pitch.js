@@ -247,13 +247,53 @@
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) && window.isSecureContext;
   }
 
-  // 列出可用的音訊輸入裝置（麥克風／錄音介面／混音器）；標籤需授權後才有
+  // 列出可用的音訊輸入裝置（麥克風／錄音介面／混音器）；label 需授權後才拿得到
   function listInputs() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return Promise.resolve([]);
     return navigator.mediaDevices.enumerateDevices().then(function (ds) {
       return ds.filter(function (d) { return d.kind === "audioinput"; })
-               .map(function (d) { return { id: d.deviceId, label: d.label || "" }; });
+               .map(function (d) { return { id: d.deviceId, label: d.label || "", groupId: d.groupId || "" }; });
     }).catch(function () { return []; });
+  }
+  // 是否已取得麥克風權限（決定裝置名稱看不看得到）。回傳 'granted'|'denied'|'prompt'|'unknown'
+  function micPermission() {
+    if (!navigator.permissions || !navigator.permissions.query) return Promise.resolve("unknown");
+    try {
+      return navigator.permissions.query({ name: "microphone" })
+        .then(function (st) { return st.state; })
+        .catch(function () { return "unknown"; });
+    } catch (e) { return Promise.resolve("unknown"); }
+  }
+  // 只為了「解鎖裝置名稱」而要一次權限：拿到就立刻關掉，不佔用麥克風
+  function unlockDeviceLabels() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return Promise.reject(new Error("不支援"));
+    return navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
+      s.getTracks().forEach(function (t) { t.stop(); });
+      return true;
+    });
+  }
+  // 目前實際在用的輸入裝置（開著麥克風時才有）。回傳 {id,label,sampleRate,channels} 或 null
+  function activeInput() {
+    if (!active || !stream) return null;
+    var tr = stream.getAudioTracks()[0];
+    if (!tr) return null;
+    var st = {};
+    try { st = tr.getSettings ? tr.getSettings() : {}; } catch (e) {}
+    return {
+      id: st.deviceId || "",
+      label: tr.label || "",
+      sampleRate: rate,
+      channels: st.channelCount || 1
+    };
+  }
+  // 裝置插拔時通知（插錄音介面/拔耳麥都會觸發）
+  function onDeviceChange(cb) {
+    if (!navigator.mediaDevices) return;
+    try {
+      navigator.mediaDevices.addEventListener
+        ? navigator.mediaDevices.addEventListener("devicechange", cb)
+        : (navigator.mediaDevices.ondevicechange = cb);
+    } catch (e) {}
   }
 
   function start(deviceId) {
@@ -287,9 +327,11 @@
     ctx = analyser = source = stream = buf = null;
   }
 
-  // 重新啟動（換取樣率／換裝置時用）：關掉再以現有設定重開
-  function restart() {
-    var d = lastDevice, wasActive = active;
+  // 重新啟動（換取樣率／換裝置時用）：關掉再重開。
+  //   deviceId 省略＝沿用原本的裝置；有給就換成新裝置（換 I/O 緩衝時省略、換裝置時要給）。
+  function restart(deviceId) {
+    var d = (deviceId === undefined || deviceId === null) ? lastDevice : deviceId;
+    var wasActive = active;
     stop();
     if (!wasActive) return Promise.resolve();
     return start(d);
@@ -416,6 +458,10 @@
   window.Pitch = {
     isSupported: isSupported,
     listInputs: listInputs,
+    micPermission: micPermission,
+    unlockDeviceLabels: unlockDeviceLabels,
+    activeInput: activeInput,
+    onDeviceChange: onDeviceChange,
     start: start,
     stop: stop,
     restart: restart,

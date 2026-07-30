@@ -52,7 +52,7 @@
   }
   </script>
 
-  <link rel="stylesheet" href="css/style.css?v=20260730c" />
+  <link rel="stylesheet" href="css/style.css?v=20260730d" />
 </head>
 <body>
   <!-- 首次進站啟動畫：顯示海報＋讀取動畫，約 2 秒後自動淡出進選單（純 CSS，回選單不重載故不再出現） -->
@@ -63,7 +63,7 @@
     </div>
   </div>
   <div id="menuBg"></div>
-  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260730c" loop preload="auto"></audio>
+  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260730d" loop preload="auto"></audio>
   <div class="app">
     <header class="topbar">
       <div class="logo">簡譜音遊 <span>Jianpu Rhythm</span></div>
@@ -194,10 +194,15 @@
           <div id="micSettings" class="mic-settings hidden">
             <div class="ms-head">收音校正</div>
             <label class="field">
-              <span>輸入裝置</span>
+              <span>輸入裝置<b id="audioInCount" class="dev-count"></b></span>
               <select id="audioInSelect"><option value="">預設輸入裝置</option></select>
             </label>
-            <div class="ms-tip" id="audioInTip">按一次「測試麥克風」授權後，這裡才會顯示各裝置名稱。</div>
+            <div class="dev-row">
+              <button type="button" id="audioInRescan" class="btn small ghost">🔄 重新掃描</button>
+              <button type="button" id="audioInUnlock" class="btn small ghost">🔓 顯示裝置名稱</button>
+            </div>
+            <div class="ms-tip" id="audioInNow"></div>
+            <div class="ms-tip" id="audioInTip"></div>
             <label class="slider-field">
               <span>靈敏度<b id="sensVal">中</b></span>
               <input type="range" id="sensRange" min="0" max="100" value="65" />
@@ -437,15 +442,15 @@
   <script src="lib/alphaTab.min.js"></script>
   <!-- 登入 / 付費驗證（Supabase）。免費曲不需要這些也能玩；離線會自動略過。 -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/supabase-config.js?v=20260730c"></script>
-  <script src="js/auth.js?v=20260730c"></script>
+  <script src="js/supabase-config.js?v=20260730d"></script>
+  <script src="js/auth.js?v=20260730d"></script>
   <!-- 遊戲程式 -->
-  <script src="js/theory.js?v=20260730c"></script>
-  <script src="js/gp-loader.js?v=20260730c"></script>
-  <script src="js/audio.js?v=20260730c"></script>
-  <script src="js/pitch.js?v=20260730c"></script>
-  <script src="js/songs.js?v=20260730c"></script>
-  <script src="js/game.js?v=20260730c"></script>
-  <script src="js/library.js?v=20260730c"></script>
+  <script src="js/theory.js?v=20260730d"></script>
+  <script src="js/gp-loader.js?v=20260730d"></script>
+  <script src="js/audio.js?v=20260730d"></script>
+  <script src="js/pitch.js?v=20260730d"></script>
+  <script src="js/songs.js?v=20260730d"></script>
+  <script src="js/game.js?v=20260730d"></script>
+  <script src="js/library.js?v=20260730d"></script>
 </body>
 </html>
