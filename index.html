@@ -52,7 +52,7 @@
   }
   </script>
 
-  <link rel="stylesheet" href="css/style.css?v=20260730a" />
+  <link rel="stylesheet" href="css/style.css?v=20260730b" />
 </head>
 <body>
   <!-- 首次進站啟動畫：顯示海報＋讀取動畫，約 2 秒後自動淡出進選單（純 CSS，回選單不重載故不再出現） -->
@@ -63,7 +63,7 @@
     </div>
   </div>
   <div id="menuBg"></div>
-  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260730a" loop preload="auto"></audio>
+  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260730b" loop preload="auto"></audio>
   <div class="app">
     <header class="topbar">
       <div class="logo">簡譜音遊 <span>Jianpu Rhythm</span></div>
@@ -233,14 +233,61 @@
               <span>🎸 虛擬音箱（把吉他收音經模擬音色即時輸出，可當監聽音箱）</span>
             </label>
             <div id="ampControls" class="hidden">
-              <label class="slider-field">
-                <span>破音 Drive<b id="ampDriveVal">50%</b></span>
-                <input type="range" id="ampDrive" min="0" max="100" value="50" />
-              </label>
-              <label class="slider-field">
-                <span>音量 Level<b id="ampLevelVal">60%</b></span>
-                <input type="range" id="ampLevel" min="0" max="100" value="60" />
-              </label>
+              <div class="fx-chain">訊號鏈：麥克風 → <b>Noise Gate</b> → <b>TS9</b> → <b>JCM800</b> → 4×12 音箱 → Delay → 限幅器</div>
+
+              <!-- ① Noise Gate -->
+              <div class="fx-unit">
+                <label class="field checkbox">
+                  <input type="checkbox" id="gateToggle" />
+                  <span>🔇 Noise Gate 雜訊閘（切掉沒彈時的底噪／哼聲）</span>
+                </label>
+                <div id="gateControls" class="hidden">
+                  <label class="slider-field">
+                    <span>門檻 Threshold<b id="gateThreshVal">-38 dB</b></span>
+                    <input type="range" id="gateThresh" min="-70" max="-15" step="1" value="-38" />
+                  </label>
+                  <div class="fx-row">
+                    <button type="button" id="gateAutoBtn" class="btn small ghost">🎯 自動偵測底噪</button>
+                    <span class="fx-meter"><i id="gateMeter"></i></span>
+                    <span class="fx-led" id="gateLed" title="閘門狀態">●</span>
+                  </div>
+                  <div class="ms-tip" id="gateTip">按「自動偵測底噪」時<b>手離開弦、保持安靜</b> 1.2 秒，會自動抓底噪並把門檻設在它上面 8dB。</div>
+                </div>
+              </div>
+
+              <!-- ② TS9 -->
+              <div class="fx-unit">
+                <label class="field checkbox">
+                  <input type="checkbox" id="tsToggle" />
+                  <span>🟩 TS9 Tube Screamer（推前級的中頻破音，可開關）</span>
+                </label>
+                <div id="tsControls" class="hidden">
+                  <label class="slider-field"><span>Overdrive<b id="tsDriveVal">50%</b></span><input type="range" id="tsDrive" min="0" max="100" value="50" /></label>
+                  <label class="slider-field"><span>Tone<b id="tsToneVal">50%</b></span><input type="range" id="tsTone" min="0" max="100" value="50" /></label>
+                  <label class="slider-field"><span>Level<b id="tsLevelVal">60%</b></span><input type="range" id="tsLevel" min="0" max="100" value="60" /></label>
+                  <div class="ms-tip">TS9 會<b>先切掉低頻再削波</b>，所以低音不糊、中頻突出——經典用法是 Drive 開小、Level 開大來「推」音箱。</div>
+                </div>
+              </div>
+
+              <!-- ③ JCM800 -->
+              <div class="fx-unit">
+                <div class="fx-head">🎛 音箱模擬：<b>Marshall JCM800 風格</b><span class="fx-sub">（兩段電子管前級＋Marshall tone stack＋4×12 Greenback 音箱）</span></div>
+                <label class="slider-field">
+                  <span>Preamp Gain（破音）<b id="ampDriveVal">50%</b></span>
+                  <input type="range" id="ampDrive" min="0" max="100" value="50" />
+                </label>
+                <div class="fx-grid">
+                  <label class="slider-field"><span>低音 Bass<b id="jcmBassVal">50%</b></span><input type="range" id="jcmBass" min="0" max="100" value="50" /></label>
+                  <label class="slider-field"><span>中音 Middle<b id="jcmMidVal">50%</b></span><input type="range" id="jcmMid" min="0" max="100" value="50" /></label>
+                  <label class="slider-field"><span>高音 Treble<b id="jcmTrebleVal">60%</b></span><input type="range" id="jcmTreble" min="0" max="100" value="60" /></label>
+                  <label class="slider-field"><span>臨場感 Presence<b id="jcmPresenceVal">50%</b></span><input type="range" id="jcmPresence" min="0" max="100" value="50" /></label>
+                </div>
+                <label class="slider-field">
+                  <span>音量 Master<b id="ampLevelVal">60%</b></span>
+                  <input type="range" id="ampLevel" min="0" max="100" value="60" />
+                </label>
+              </div>
+
               <div class="ms-tip">🛡 <b>限幅器 Limiter</b>：輸出上限固定 <b>-3 dB</b>（防爆音・護耳）</div>
               <label class="field checkbox">
                 <input type="checkbox" id="dlyToggle" />
@@ -390,15 +437,15 @@
   <script src="lib/alphaTab.min.js"></script>
   <!-- 登入 / 付費驗證（Supabase）。免費曲不需要這些也能玩；離線會自動略過。 -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/supabase-config.js?v=20260730a"></script>
-  <script src="js/auth.js?v=20260730a"></script>
+  <script src="js/supabase-config.js?v=20260730b"></script>
+  <script src="js/auth.js?v=20260730b"></script>
   <!-- 遊戲程式 -->
-  <script src="js/theory.js?v=20260730a"></script>
-  <script src="js/gp-loader.js?v=20260730a"></script>
-  <script src="js/audio.js?v=20260730a"></script>
-  <script src="js/pitch.js?v=20260730a"></script>
-  <script src="js/songs.js?v=20260730a"></script>
-  <script src="js/game.js?v=20260730a"></script>
-  <script src="js/library.js?v=20260730a"></script>
+  <script src="js/theory.js?v=20260730b"></script>
+  <script src="js/gp-loader.js?v=20260730b"></script>
+  <script src="js/audio.js?v=20260730b"></script>
+  <script src="js/pitch.js?v=20260730b"></script>
+  <script src="js/songs.js?v=20260730b"></script>
+  <script src="js/game.js?v=20260730b"></script>
+  <script src="js/library.js?v=20260730b"></script>
 </body>
 </html>

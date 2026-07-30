@@ -102,6 +102,9 @@
      "autoCalBtn","leaderboard","calibModal","calibDot","calibProg","calibResult","calibClose","calibCancel",
      "speedRange","speedVal","bottomSelect","fretWindowSelect","fretStyleSelect","bgInput","guitaristSelect","metronomeToggle","genreSelect","bgOpacityRange","bgOpacityVal","audioInSelect","audioInTip",
      "ampToggle","ampControls","ampDrive","ampDriveVal","ampLevel","ampLevelVal","ampBuffer","ampLatNow",
+     "gateToggle","gateControls","gateThresh","gateThreshVal","gateAutoBtn","gateMeter","gateLed","gateTip",
+     "tsToggle","tsControls","tsDrive","tsDriveVal","tsTone","tsToneVal","tsLevel","tsLevelVal",
+     "jcmBass","jcmBassVal","jcmMid","jcmMidVal","jcmTreble","jcmTrebleVal","jcmPresence","jcmPresenceVal",
      "dlyToggle","dlyControls","dlyTime","dlyTimeVal","dlyFb","dlyFbVal","dlyMix","dlyMixVal",
      "tunerToggle","tunerDisplay","tunerNote","tunerNeedle","tunerCents"
     ].forEach(function (id) { els[id] = $(id); });
@@ -1491,10 +1494,80 @@
   function stopMicIfIdle() { if (!micNeeded()) P.stop(); }
 
   // 虛擬音箱：勾選→開麥克風把收音經模擬音色(破音+cab+delay+-3dB限幅)即時輸出；可調 I/O 緩衝
+  // dB ↔ 線性 RMS（Noise Gate 門檻用 dB 顯示，內部用線性值）
+  function dbToLin(db) { return Math.pow(10, db / 20); }
+  function linToDb(v) { return 20 * Math.log10(Math.max(1e-6, v)); }
+
   function setupVirtualAmp() {
     var t = els.ampToggle; if (!t) return;
     function driveV() { return (parseInt(els.ampDrive.value, 10) || 0) / 100; }
     function levelV() { return (parseInt(els.ampLevel.value, 10) || 0) / 100; }
+    function pct(el) { return (parseInt(el.value, 10) || 0) / 100; }
+
+    // ── Noise Gate ──
+    function gateThreshLin() { return dbToLin(parseInt(els.gateThresh.value, 10) || -38); }
+    function showGateThresh() { els.gateThreshVal.textContent = (parseInt(els.gateThresh.value, 10) || -38) + " dB"; }
+    els.gateToggle.addEventListener("change", function () {
+      P.setGateOn(els.gateToggle.checked);
+      els.gateControls.classList.toggle("hidden", !els.gateToggle.checked);
+    });
+    els.gateThresh.addEventListener("input", function () { P.setGateThreshold(gateThreshLin()); showGateThresh(); });
+    els.gateAutoBtn.addEventListener("click", function () {
+      if (!P.isActive()) { els.gateTip.innerHTML = "⚠️ 請先勾選上面的「虛擬音箱」把麥克風打開，再按自動偵測。"; return; }
+      els.gateAutoBtn.disabled = true;
+      els.gateTip.innerHTML = "🎧 偵測中…請<b>手離開弦、保持安靜</b>（1.2 秒）";
+      P.autoDetectGate(1200).then(function (r) {
+        els.gateAutoBtn.disabled = false;
+        if (!r) { els.gateTip.innerHTML = "偵測失敗，請確認麥克風已開啟。"; return; }
+        var db = Math.round(linToDb(r.threshold));
+        els.gateThresh.value = Math.max(-70, Math.min(-15, db));
+        showGateThresh();
+        P.setGateThreshold(dbToLin(parseInt(els.gateThresh.value, 10)));
+        if (!els.gateToggle.checked) { els.gateToggle.checked = true; P.setGateOn(true); els.gateControls.classList.remove("hidden"); }
+        els.gateTip.innerHTML = "✅ 偵測完成：底噪約 <b>" + Math.round(linToDb(r.noise)) + " dB</b>，門檻已設為 <b>" +
+          els.gateThresh.value + " dB</b>（已自動開啟雜訊閘）。若彈輕音被切掉，就把門檻往左調低一點。";
+      });
+    });
+
+    // ── TS9 ──
+    els.tsToggle.addEventListener("change", function () {
+      P.setTsOn(els.tsToggle.checked);
+      els.tsControls.classList.toggle("hidden", !els.tsToggle.checked);
+    });
+    els.tsDrive.addEventListener("input", function () { P.setTsDrive(pct(els.tsDrive)); els.tsDriveVal.textContent = els.tsDrive.value + "%"; });
+    els.tsTone.addEventListener("input", function () { P.setTsTone(pct(els.tsTone)); els.tsToneVal.textContent = els.tsTone.value + "%"; });
+    els.tsLevel.addEventListener("input", function () { P.setTsLevel(pct(els.tsLevel)); els.tsLevelVal.textContent = els.tsLevel.value + "%"; });
+
+    // ── JCM800 tone stack ──
+    [["jcmBass","bass"],["jcmMid","mid"],["jcmTreble","treble"],["jcmPresence","presence"]].forEach(function (pair) {
+      var el = els[pair[0]], lab = els[pair[0] + "Val"];
+      el.addEventListener("input", function () { P.setTone(pair[1], pct(el)); lab.textContent = el.value + "%"; });
+    });
+
+    // ── 輸入音量表＋閘門指示燈（開著虛擬音箱時每 60ms 更新一次）──
+    var fxMeterTimer = null;
+    function startFxMeter() {
+      if (fxMeterTimer) return;
+      fxMeterTimer = setInterval(function () {
+        if (!P.isActive() || !P.isAmpOn()) { els.gateMeter.style.width = "0%"; els.gateLed.classList.remove("open"); return; }
+        var rms = P.getInputRms ? P.getInputRms() : 0;
+        var db = linToDb(rms);                                      // -70..0 dB → 0..100%
+        els.gateMeter.style.width = Math.max(0, Math.min(100, (db + 70) / 70 * 100)) + "%";
+        els.gateLed.classList.toggle("open", !!(P.isGateOpen && P.isGateOpen()));
+      }, 60);
+    }
+    function stopFxMeter() { if (fxMeterTimer) { clearInterval(fxMeterTimer); fxMeterTimer = null; } els.gateMeter.style.width = "0%"; els.gateLed.classList.remove("open"); }
+
+    // 開音箱時把目前所有旋鈕值套進去（buildAmp 之後才有節點）
+    function pushAllFx() {
+      P.setAmpDrive(driveV()); P.setAmpLevel(levelV());
+      P.setGateThreshold(gateThreshLin()); P.setGateOn(els.gateToggle.checked);
+      P.setTsDrive(pct(els.tsDrive)); P.setTsTone(pct(els.tsTone)); P.setTsLevel(pct(els.tsLevel)); P.setTsOn(els.tsToggle.checked);
+      P.setTone("bass", pct(els.jcmBass)); P.setTone("mid", pct(els.jcmMid));
+      P.setTone("treble", pct(els.jcmTreble)); P.setTone("presence", pct(els.jcmPresence));
+      P.setDelayOn(els.dlyToggle.checked); P.setDelayTime(dlyTimeV()); P.setDelayFb(dlyFbV()); P.setDelayMix(dlyMixV());
+    }
+    showGateThresh();
     function dlyTimeV() { return parseInt(els.dlyTime.value, 10) || 0; }
     function dlyFbV() { return (parseInt(els.dlyFb.value, 10) || 0) / 100; }
     function dlyMixV() { return (parseInt(els.dlyMix.value, 10) || 0) / 100; }
@@ -1510,16 +1583,17 @@
     // I/O 緩衝(換值需重建 AudioContext)
     els.ampBuffer.addEventListener("change", function () {
       P.setBuffer(els.ampBuffer.value);
-      if (P.isActive()) P.restart().then(showLat); else showLat();
+      if (P.isActive()) P.restart().then(function () { pushAllFx(); showLat(); }); else showLat();
     });
     t.addEventListener("change", function () {
       if (t.checked) {
-        P.setAmpDrive(driveV()); P.setAmpLevel(levelV()); P.setBuffer(els.ampBuffer.value);
-        P.setDelayOn(els.dlyToggle.checked); P.setDelayTime(dlyTimeV()); P.setDelayFb(dlyFbV()); P.setDelayMix(dlyMixV());
-        ensureMic().then(function () { P.setAmp(true); showCtl(true); showLat(); })
-          .catch(function (e) { t.checked = false; showCtl(false); setStatus("無法開啟麥克風（虛擬音箱）：" + ((e && e.message) || e), true); });
+        P.setBuffer(els.ampBuffer.value);
+        ensureMic().then(function () {
+          pushAllFx();                      // 麥克風開起來、效果器鏈建好後才套旋鈕值
+          P.setAmp(true); showCtl(true); showLat(); startFxMeter();
+        }).catch(function (e) { t.checked = false; showCtl(false); setStatus("無法開啟麥克風（虛擬音箱）：" + ((e && e.message) || e), true); });
       } else {
-        P.setAmp(false); showCtl(false); stopMicIfIdle();
+        P.setAmp(false); showCtl(false); stopFxMeter(); stopMicIfIdle();
       }
     });
   }
