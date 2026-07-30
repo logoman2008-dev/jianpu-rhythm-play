@@ -100,7 +100,7 @@
      "hudScore","hudCombo","hudAcc","hudTitle","progressFill","result","resultBody","micHud","micNote","micLevel",
      "micSettings","sensRange","sensVal","latRange","latVal","micTestBtn","testNote","testLevel",
      "autoCalBtn","leaderboard","calibModal","calibDot","calibProg","calibResult","calibClose","calibCancel",
-     "speedRange","speedVal","bottomSelect","fretWindowSelect","fretStyleSelect","bgInput","guitaristSelect","metronomeToggle","genreSelect","bgOpacityRange","bgOpacityVal","audioInSelect","audioInTip","audioInCount","audioInNow","audioInList","audioInRescan","audioInUnlock",
+     "speedRange","speedVal","bottomSelect","fretWindowSelect","fretStyleSelect","bgInput","bgTip","guitaristSelect","metronomeToggle","genreSelect","bgOpacityRange","bgOpacityVal","audioInSelect","audioInTip","audioInCount","audioInNow","audioInList","audioInRescan","audioInUnlock",
      "ampToggle","ampControls","ampDrive","ampDriveVal","ampLevel","ampLevelVal","ampBuffer","ampLatNow",
      "gateToggle","gateControls","gateThresh","gateThreshVal","gateAutoBtn","gateMeter","gateLed","gateTip",
      "odToggle","odControls","odDrive","odDriveVal","odTone","odToneVal","odLevel","odLevelVal",
@@ -165,9 +165,7 @@
     els.bottomSelect.addEventListener("change", updateFretControls);
     els.bgInput.addEventListener("change", function (e) {
       var f = e.target.files && e.target.files[0]; if (!f) return;
-      var r = new FileReader();
-      r.onload = function () { var im = new Image(); im.onload = function () { bgImage = im; }; im.src = r.result; };
-      r.readAsDataURL(f);
+      loadBackgroundPhoto(f);
     });
     els.bgOpacityRange.addEventListener("input", function () {
       bgOpacity = (parseInt(els.bgOpacityRange.value, 10) || 55) / 100;
@@ -1642,6 +1640,73 @@
         location.replace(base + "?u=" + encodeURIComponent(latest));   // 帶版號→一定拿到新的 HTML
       })
       .catch(function () {});
+  }
+
+  // ---- 背景照載入（支援 HEIC）----
+  //   瀏覽器現況：Chrome / Edge / Firefox **不能**解 HEIC，只有 Safari 可以。
+  //   所以流程是：
+  //     ① 先試瀏覽器原生解碼（Safari 直接過；一般 jpg/png 也走這條）
+  //     ② 失敗且看起來是 HEIC → 用 js/heic.js（自己解 HEIF 容器 ＋ 交給瀏覽器內建的 HEVC 解碼器）
+  //     ③ 都不行 → 給明確的替代方案提示
+  //   另外照片通常很大（iPhone 4032×3024），一律縮到 MAX_BG_PX 以內，省記憶體也畫得比較快。
+  var MAX_BG_PX = 2560;
+  function setBgTip(html, isErr) {
+    if (!els.bgTip) return;
+    els.bgTip.innerHTML = html || "";
+    els.bgTip.style.color = isErr ? "#ff9a9a" : "";
+  }
+  // 把來源縮到上限內，回傳 canvas（已在上限內就原樣回傳）
+  function shrinkForBg(src, w, h) {
+    var m = Math.max(w, h);
+    if (m <= MAX_BG_PX) return src;
+    var k = MAX_BG_PX / m;
+    var cv = document.createElement("canvas");
+    cv.width = Math.max(1, Math.round(w * k));
+    cv.height = Math.max(1, Math.round(h * k));
+    cv.getContext("2d").drawImage(src, 0, 0, cv.width, cv.height);
+    return cv;
+  }
+  function applyBg(src, w, h, note) {
+    bgImage = shrinkForBg(src, w, h);
+    setBgTip("🖼 已套用背景照：<b>" + w + "×" + h + "</b>" +
+             (bgImage !== src ? "（已縮到 " + bgImage.width + "×" + bgImage.height + " 以省資源）" : "") +
+             (note ? "　" + note : ""));
+  }
+  function loadBackgroundPhoto(file) {
+    var isHeic = window.HeicDecoder && window.HeicDecoder.looksLikeHeic(file);
+    setBgTip(isHeic ? "🖼 正在解 HEIC 照片…" : "🖼 讀取中…");
+    // ① 原生解碼（jpg/png/webp/avif 都走這條；Safari 連 HEIC 也可以）
+    var native = (typeof createImageBitmap === "function")
+      ? createImageBitmap(file, { imageOrientation: "from-image" })
+      : Promise.reject(new Error("no createImageBitmap"));
+    native.then(function (bmp) {
+      applyBg(bmp, bmp.width, bmp.height);
+    }).catch(function () {
+      // ② HEIC → 自己解
+      if (isHeic && window.HeicDecoder) {
+        window.HeicDecoder.isSupported().then(function (ok) {
+          if (!ok) throw new Error("unsupported");
+          return window.HeicDecoder.decode(file);
+        }).then(function (cv) {
+          applyBg(cv, cv.width, cv.height, "（HEIC）");
+        }).catch(function (err) {
+          setBgTip("❌ 這台瀏覽器沒辦法解這張 HEIC" +
+            (err && err.message && err.message !== "unsupported" ? "（" + escapeHtml(err.message) + "）" : "") +
+            "。<br>替代做法：用 <b>Safari</b> 開這個網頁，或在 Mac 上對照片按右鍵 →「快速動作」→「轉換影像」→ JPEG。", true);
+        });
+        return;
+      }
+      // ③ 不是 HEIC 也解不了 → 退回舊的 dataURL 方式再試一次
+      var r = new FileReader();
+      r.onload = function () {
+        var im = new Image();
+        im.onload = function () { applyBg(im, im.naturalWidth, im.naturalHeight); };
+        im.onerror = function () { setBgTip("❌ 這個圖片格式沒辦法讀取，請改用 JPG / PNG。", true); };
+        im.src = r.result;
+      };
+      r.onerror = function () { setBgTip("❌ 檔案讀取失敗。", true); };
+      r.readAsDataURL(file);
+    });
   }
 
   // dB ↔ 線性 RMS（Noise Gate 門檻用 dB 顯示，內部用線性值）

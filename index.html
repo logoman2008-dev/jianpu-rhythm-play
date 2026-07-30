@@ -52,7 +52,7 @@
   }
   </script>
 
-  <link rel="stylesheet" href="css/style.css?v=20260730g" />
+  <link rel="stylesheet" href="css/style.css?v=20260730h" />
 </head>
 <body>
   <!-- 首次進站啟動畫：顯示海報＋讀取動畫，約 2 秒後自動淡出進選單（純 CSS，回選單不重載故不再出現） -->
@@ -63,7 +63,7 @@
     </div>
   </div>
   <div id="menuBg"></div>
-  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260730g" loop preload="auto"></audio>
+  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260730h" loop preload="auto"></audio>
   <div class="app">
     <header class="topbar">
       <div class="logo">簡譜音遊 <span>Jianpu Rhythm</span></div>
@@ -181,10 +181,11 @@
             </label>
             <label class="field">
               <span>背景圖／個人照</span>
-              <input type="file" id="bgInput" accept="image/*" />
+              <input type="file" id="bgInput" accept="image/*,.heic,.heif,.HEIC,.HEIF" />
             </label>
           </div>
           <!-- 帳號（任何人都能用 Email 建立）：只用來跨裝置記住已解鎖角色，不含曲庫權限 -->
+          <div id="bgTip" class="ms-tip"></div>
           <div id="accountBox"></div>
           <label class="slider-field" id="bgOpacityField">
             <span>背景照透明度<b id="bgOpacityVal">55%</b></span>
@@ -443,15 +444,16 @@
   <script src="lib/alphaTab.min.js"></script>
   <!-- 登入 / 付費驗證（Supabase）。免費曲不需要這些也能玩；離線會自動略過。 -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/supabase-config.js?v=20260730g"></script>
-  <script src="js/auth.js?v=20260730g"></script>
+  <script src="js/supabase-config.js?v=20260730h"></script>
+  <script src="js/auth.js?v=20260730h"></script>
   <!-- 遊戲程式 -->
-  <script src="js/theory.js?v=20260730g"></script>
-  <script src="js/gp-loader.js?v=20260730g"></script>
-  <script src="js/audio.js?v=20260730g"></script>
-  <script src="js/pitch.js?v=20260730g"></script>
-  <script src="js/songs.js?v=20260730g"></script>
-  <script src="js/game.js?v=20260730g"></script>
-  <script src="js/library.js?v=20260730g"></script>
+  <script src="js/heic.js?v=20260730h"></script>
+  <script src="js/theory.js?v=20260730h"></script>
+  <script src="js/gp-loader.js?v=20260730h"></script>
+  <script src="js/audio.js?v=20260730h"></script>
+  <script src="js/pitch.js?v=20260730h"></script>
+  <script src="js/songs.js?v=20260730h"></script>
+  <script src="js/game.js?v=20260730h"></script>
+  <script src="js/library.js?v=20260730h"></script>
 </body>
 </html>

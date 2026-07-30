@@ -1,0 +1,322 @@
+// ===================================================================
+// heic.js — 讀 iPhone 的 HEIC / HEIF 照片（掛在 window.HeicDecoder）
+//
+//   為什麼要自己寫：
+//     Chrome / Edge / Firefox **不能**解 HEIC（實測 createImageBitmap 與 <img>
+//     都是 "The source image could not be decoded."）；只有 Safari 可以（用系統解碼器）。
+//     但 HEIC 的影像內容其實就是 **HEVC**，而瀏覽器的 WebCodecs `VideoDecoder`
+//     支援 hvc1（實測 isConfigSupported = true）。
+//     → 所以這裡自己解析 HEIF(ISOBMFF) 容器，把 HEVC 位元流丟給瀏覽器**內建**的
+//       硬體解碼器。**零第三方依賴、不引入任何 LGPL 解碼庫**。
+//
+//   支援：
+//     ・單張 hvc1 影像
+//     ・grid 拼貼（iPhone 拍的照片幾乎都是切成多塊 tile 再拼起來）
+//     ・irot 旋轉（iPhone 直拍的照片會帶）
+//     ・iloc construction_method 0（mdat）與 1（idat）
+//
+//   對外介面：
+//     HeicDecoder.looksLikeHeic(file)         → boolean（看副檔名/MIME）
+//     HeicDecoder.isSupported()               → Promise<boolean>（這個瀏覽器能不能解）
+//     HeicDecoder.decode(fileOrArrayBuffer)   → Promise<HTMLCanvasElement>
+// ===================================================================
+(function () {
+  "use strict";
+
+  // ---------- ISOBMFF box 走訪 ----------
+  function fourcc(dv, off) {
+    return String.fromCharCode(dv.getUint8(off), dv.getUint8(off + 1), dv.getUint8(off + 2), dv.getUint8(off + 3));
+  }
+  // 逐一走訪 [start,end) 範圍內的 box；cb(type, bodyStart, bodyEnd)
+  function eachBox(dv, start, end, cb) {
+    var o = start;
+    while (o + 8 <= end) {
+      var size = dv.getUint32(o), type = fourcc(dv, o + 4), hdr = 8;
+      if (size === 1) {                                   // 64-bit largesize
+        if (o + 16 > end) break;
+        var hi = dv.getUint32(o + 8), lo = dv.getUint32(o + 12);
+        size = hi * 4294967296 + lo; hdr = 16;
+      } else if (size === 0) {                            // 到檔尾
+        size = end - o;
+      }
+      if (size < hdr || o + size > end) break;
+      if (cb(type, o + hdr, o + size) === false) return;
+      o += size;
+    }
+  }
+  function readN(dv, off, n) {                            // 讀 n bytes 的無號整數（n<=8）
+    var v = 0;
+    for (var i = 0; i < n; i++) v = v * 256 + dv.getUint8(off + i);
+    return v;
+  }
+
+  // ---------- 解析 HEIF 結構 ----------
+  function parseHeif(buf) {
+    var dv = new DataView(buf), end = buf.byteLength;
+    var out = { brand: "", pitm: 0, items: {}, iloc: {}, props: [], ipma: {}, dimg: {}, idat: null };
+
+    eachBox(dv, 0, end, function (type, s, e) {
+      if (type === "ftyp") {
+        out.brand = fourcc(dv, s);
+        out.compat = [];
+        for (var o = s + 8; o + 4 <= e; o += 4) out.compat.push(fourcc(dv, o));
+      } else if (type === "meta") {
+        eachBox(dv, s + 4, e, function (t2, s2, e2) {      // meta 是 FullBox → 跳過 version+flags
+          if (t2 === "pitm") {
+            var v = dv.getUint8(s2);
+            out.pitm = (v === 0) ? dv.getUint16(s2 + 4) : dv.getUint32(s2 + 4);
+          } else if (t2 === "iinf") {
+            var vi = dv.getUint8(s2);
+            var p = s2 + 4;
+            var cnt = (vi === 0) ? dv.getUint16(p) : dv.getUint32(p);
+            p += (vi === 0) ? 2 : 4;
+            eachBox(dv, p, e2, function (t3, s3) {
+              if (t3 !== "infe") return;
+              var v3 = dv.getUint8(s3), q = s3 + 4, id, itype;
+              if (v3 <= 1) { id = dv.getUint16(q); q += 4; itype = ""; }
+              else { id = (v3 === 2) ? dv.getUint16(q) : dv.getUint32(q); q += (v3 === 2) ? 2 : 4; q += 2; itype = fourcc(dv, q); }
+              out.items[id] = { type: itype };
+            });
+          } else if (t2 === "iloc") {
+            var vl = dv.getUint8(s2), p2 = s2 + 4;
+            var b1 = dv.getUint8(p2), b2 = dv.getUint8(p2 + 1);
+            var offSize = b1 >> 4, lenSize = b1 & 15, baseSize = b2 >> 4, idxSize = b2 & 15;
+            p2 += 2;
+            var n = (vl < 2) ? dv.getUint16(p2) : dv.getUint32(p2);
+            p2 += (vl < 2) ? 2 : 4;
+            for (var i = 0; i < n; i++) {
+              var iid = (vl < 2) ? dv.getUint16(p2) : dv.getUint32(p2);
+              p2 += (vl < 2) ? 2 : 4;
+              var cm = 0;
+              if (vl === 1 || vl === 2) { cm = dv.getUint16(p2) & 15; p2 += 2; }
+              p2 += 2;                                     // data_reference_index
+              var base = readN(dv, p2, baseSize); p2 += baseSize;
+              var ec = dv.getUint16(p2); p2 += 2;
+              var ext = [];
+              for (var j = 0; j < ec; j++) {
+                if (idxSize && (vl === 1 || vl === 2)) p2 += idxSize;
+                var eo = readN(dv, p2, offSize); p2 += offSize;
+                var el = readN(dv, p2, lenSize); p2 += lenSize;
+                ext.push({ off: base + eo, len: el });
+              }
+              out.iloc[iid] = { method: cm, extents: ext };
+            }
+          } else if (t2 === "idat") {
+            out.idat = { start: s2, end: e2 };
+          } else if (t2 === "iprp") {
+            eachBox(dv, s2, e2, function (t3, s3, e3) {
+              if (t3 === "ipco") {
+                eachBox(dv, s3, e3, function (t4, s4, e4) {
+                  out.props.push({ type: t4, start: s4, end: e4 });
+                });
+              } else if (t3 === "ipma") {
+                var v4 = dv.getUint8(s3), fl = readN(dv, s3 + 1, 3), p3 = s3 + 4;
+                var cnt2 = dv.getUint32(p3); p3 += 4;
+                for (var k = 0; k < cnt2; k++) {
+                  var iid2 = (v4 < 1) ? dv.getUint16(p3) : dv.getUint32(p3);
+                  p3 += (v4 < 1) ? 2 : 4;
+                  var ac = dv.getUint8(p3); p3 += 1;
+                  var list = [];
+                  for (var a = 0; a < ac; a++) {
+                    if (fl & 1) { list.push(dv.getUint16(p3) & 0x7fff); p3 += 2; }
+                    else { list.push(dv.getUint8(p3) & 0x7f); p3 += 1; }
+                  }
+                  out.ipma[iid2] = list;
+                }
+              }
+            });
+          } else if (t2 === "iref") {
+            var vr = dv.getUint8(s2);
+            eachBox(dv, s2 + 4, e2, function (t3, s3) {
+              var from = (vr === 0) ? dv.getUint16(s3) : dv.getUint32(s3);
+              var q2 = s3 + ((vr === 0) ? 2 : 4);
+              var rc = dv.getUint16(q2); q2 += 2;
+              var to = [];
+              for (var r = 0; r < rc; r++) {
+                to.push((vr === 0) ? dv.getUint16(q2) : dv.getUint32(q2));
+                q2 += (vr === 0) ? 2 : 4;
+              }
+              if (t3 === "dimg") out.dimg[from] = to;
+            });
+          }
+        });
+      }
+    });
+    return out;
+  }
+
+  // 取某個 item 的實際位元組
+  function itemBytes(buf, info, id) {
+    var loc = info.iloc[id]; if (!loc) return null;
+    var parts = [], total = 0;
+    for (var i = 0; i < loc.extents.length; i++) {
+      var ex = loc.extents[i], base = 0;
+      if (loc.method === 1) { if (!info.idat) return null; base = info.idat.start; }
+      var a = base + ex.off, b = a + (ex.len || 0);
+      if (loc.method === 1 && info.idat && (!ex.len)) b = info.idat.end;
+      if (a < 0 || b > buf.byteLength) return null;
+      var slice = new Uint8Array(buf, a, b - a);
+      parts.push(slice); total += slice.length;
+    }
+    if (parts.length === 1) return parts[0];
+    var outArr = new Uint8Array(total), off = 0;
+    parts.forEach(function (p) { outArr.set(p, off); off += p.length; });
+    return outArr;
+  }
+  // 取某個 item 關聯到的某類 property（例：hvcC / ispe / irot）
+  function itemProp(info, id, type) {
+    var list = info.ipma[id] || [];
+    for (var i = 0; i < list.length; i++) {
+      var p = info.props[list[i] - 1];
+      if (p && p.type === type) return p;
+    }
+    return null;
+  }
+
+  // ---------- 由 hvcC 組出 WebCodecs 的 codec 字串 ----------
+  function bitrev32(x) {
+    var r = 0;
+    for (var i = 0; i < 32; i++) { r = (r << 1) | (x & 1); x >>>= 1; }
+    return r >>> 0;
+  }
+  function codecFromHvcC(dv, s) {
+    var b1 = dv.getUint8(s + 1);
+    var profileSpace = b1 >> 6, tierFlag = (b1 >> 5) & 1, profileIdc = b1 & 31;
+    var compat = dv.getUint32(s + 2);
+    var cons = [];
+    for (var i = 0; i < 6; i++) cons.push(dv.getUint8(s + 6 + i));
+    var levelIdc = dv.getUint8(s + 12);
+    var sp = ["", "A", "B", "C"][profileSpace] || "";
+    var str = "hvc1." + sp + profileIdc + "." + bitrev32(compat).toString(16).toUpperCase() +
+              "." + (tierFlag ? "H" : "L") + levelIdc;
+    while (cons.length && cons[cons.length - 1] === 0) cons.pop();     // 去掉尾端的 0
+    for (var j = 0; j < cons.length; j++) {
+      str += "." + (cons[j] < 16 ? "0" : "") + cons[j].toString(16).toUpperCase();
+    }
+    return str;
+  }
+
+  // ---------- 用 VideoDecoder 解一批 tile ----------
+  function decodeChunks(codec, description, chunks) {
+    return new Promise(function (resolve, reject) {
+      if (typeof VideoDecoder === "undefined") { reject(new Error("這個瀏覽器沒有 WebCodecs")); return; }
+      var frames = [], pending = chunks.length;
+      if (!pending) { reject(new Error("沒有可解的影像資料")); return; }
+      var dec = new VideoDecoder({
+        output: function (frame) { frames.push({ t: frame.timestamp, f: frame }); },
+        error: function (e) { try { dec.close(); } catch (x) {} reject(e); }
+      });
+      try {
+        dec.configure({ codec: codec, description: description, optimizeForLatency: true });
+        for (var i = 0; i < chunks.length; i++) {
+          dec.decode(new EncodedVideoChunk({ type: "key", timestamp: i, data: chunks[i] }));
+        }
+        dec.flush().then(function () {
+          try { dec.close(); } catch (x) {}
+          frames.sort(function (a, b) { return a.t - b.t; });
+          resolve(frames.map(function (x) { return x.f; }));
+        }).catch(reject);
+      } catch (e) { reject(e); }
+    });
+  }
+
+  // ---------- 主流程 ----------
+  function toBuffer(input) {
+    if (input instanceof ArrayBuffer) return Promise.resolve(input);
+    if (input && typeof input.arrayBuffer === "function") return input.arrayBuffer();
+    return Promise.reject(new Error("不支援的輸入型別"));
+  }
+
+  function decode(input) {
+    return toBuffer(input).then(function (buf) {
+      var info = parseHeif(buf);
+      var pid = info.pitm;
+      if (!pid || !info.items[pid]) throw new Error("找不到主要影像（可能不是 HEIC 檔）");
+      var ptype = info.items[pid].type;
+
+      // 要解的 tile 清單（單張＝就它自己；grid＝dimg 參照的那一串）
+      var tileIds = (ptype === "grid") ? (info.dimg[pid] || []) : [pid];
+      if (!tileIds.length) throw new Error("HEIC 結構看不懂（grid 沒有 tile）");
+
+      var hvcC = itemProp(info, tileIds[0], "hvcC");
+      if (!hvcC) throw new Error("找不到 HEVC 解碼設定（hvcC）");
+      var dv = new DataView(buf);
+      var codec = codecFromHvcC(dv, hvcC.start);
+      var description = new Uint8Array(buf, hvcC.start, hvcC.end - hvcC.start);
+
+      // tile 尺寸（ispe）
+      var isp = itemProp(info, tileIds[0], "ispe");
+      var tw = isp ? dv.getUint32(isp.start + 4) : 0, th = isp ? dv.getUint32(isp.start + 8) : 0;
+
+      // grid 排列與輸出尺寸
+      var cols = 1, rows = 1, outW = tw, outH = th;
+      if (ptype === "grid") {
+        var gb = itemBytes(buf, info, pid);
+        if (!gb || gb.length < 8) throw new Error("讀不到 grid 排列資訊");
+        var gflags = gb[1];
+        rows = gb[2] + 1; cols = gb[3] + 1;
+        if (gflags & 1) {
+          outW = (gb[4] << 24 | gb[5] << 16 | gb[6] << 8 | gb[7]) >>> 0;
+          outH = (gb[8] << 24 | gb[9] << 16 | gb[10] << 8 | gb[11]) >>> 0;
+        } else {
+          outW = (gb[4] << 8 | gb[5]); outH = (gb[6] << 8 | gb[7]);
+        }
+      }
+
+      var chunks = tileIds.map(function (id) {
+        var b = itemBytes(buf, info, id);
+        if (!b) throw new Error("讀不到影像資料（item " + id + "）");
+        return b;
+      });
+
+      return decodeChunks(codec, description, chunks).then(function (frames) {
+        if (!frames.length) throw new Error("HEVC 解碼沒有輸出畫面");
+        var cw = outW || (frames[0].displayWidth * cols);
+        var ch = outH || (frames[0].displayHeight * rows);
+        var cv = document.createElement("canvas");
+        cv.width = cw; cv.height = ch;
+        var c2 = cv.getContext("2d");
+        for (var i = 0; i < frames.length; i++) {
+          var f = frames[i];
+          var cx = (i % cols) * (tw || f.displayWidth);
+          var cy = Math.floor(i / cols) * (th || f.displayHeight);
+          try { c2.drawImage(f, cx, cy); } catch (e) {}
+          try { f.close(); } catch (e) {}
+        }
+        // irot：iPhone 直拍的照片會帶旋轉資訊（angle 以 90° 逆時針為單位）
+        var rot = itemProp(info, pid, "irot");
+        var angle = rot ? (dv.getUint8(rot.start) & 3) : 0;
+        if (!angle) return cv;
+        var swap = (angle % 2) === 1;
+        var rc = document.createElement("canvas");
+        rc.width = swap ? cv.height : cv.width;
+        rc.height = swap ? cv.width : cv.height;
+        var r2 = rc.getContext("2d");
+        r2.translate(rc.width / 2, rc.height / 2);
+        r2.rotate(-angle * Math.PI / 2);                 // irot 是逆時針
+        r2.drawImage(cv, -cv.width / 2, -cv.height / 2);
+        return rc;
+      });
+    });
+  }
+
+  function looksLikeHeic(file) {
+    var n = (file && file.name ? file.name : "").toLowerCase();
+    var t = (file && file.type ? file.type : "").toLowerCase();
+    return /\.(heic|heif|hif)$/.test(n) || t === "image/heic" || t === "image/heif";
+  }
+
+  var _sup = null;
+  function isSupported() {
+    if (_sup) return _sup;
+    _sup = (function () {
+      if (typeof VideoDecoder === "undefined" || typeof EncodedVideoChunk === "undefined") return Promise.resolve(false);
+      return VideoDecoder.isConfigSupported({ codec: "hvc1.1.6.L93.B0", hardwareAcceleration: "no-preference" })
+        .then(function (r) { return !!(r && r.supported); })
+        .catch(function () { return false; });
+    })();
+    return _sup;
+  }
+
+  window.HeicDecoder = { decode: decode, looksLikeHeic: looksLikeHeic, isSupported: isSupported };
+})();
