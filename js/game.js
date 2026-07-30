@@ -70,8 +70,11 @@
   var TONE_KEY = "jianpu_tone";   // 吉他音色
   var CAB_KEY = "jianpu_cab";     // 音箱模擬(IR)
   var bgImage = null;         // 自訂背景圖／個人照(可選)
-  var lulanBg = new Image();  // 閃電嚕嚕安專屬鎖定背景（吉他室照）
-  lulanBg.src = "assets/lulan-bg.jpg";
+  // 角色專屬鎖定背景（選到該角色時，背景固定用這張照片）
+  var CHAR_BG_SRC = { lulan: "assets/lulan-bg.jpg", family: "assets/family-bg.jpg" };
+  var charBg = {};
+  Object.keys(CHAR_BG_SRC).forEach(function (k) { var im = new Image(); im.src = CHAR_BG_SRC[k]; charBg[k] = im; });
+  var lulanBg = charBg.lulan;   // 舊名保留（drawGymBackdrop 的 fallback 判斷會用到）
   var lulanSweat = [];        // 閃電嚕嚕安汗滴粒子
   var bgOpacity = 0.55;       // 背景照透明度
   var bigJudge = null;        // 右側大字評分動畫狀態
@@ -714,9 +717,12 @@
   // ===================================================================
   var UNLOCK_KEY = "jianpu_unlocked_v1";          // 本機快取：這台是否已取得「嚕嚕安角色」
   var EMAIL_UNLOCK_KEY = "jianpu_email_unlocked"; // 本機快取：進階版（自己上傳的譜無限）
+  var FAMILY_KEY = "jianpu_family_unlocked";      // 本機快取：這台是否已取得「太太＆女兒」
   var ACCOUNT_KEY = "jianpu_account_email";       // 目前登入的帳號 Email（只管角色記憶）
   function isUnlocked() { try { return localStorage.getItem(UNLOCK_KEY) === "1"; } catch (e) { return false; } }
   function setUnlocked(v) { try { if (v) localStorage.setItem(UNLOCK_KEY, "1"); else localStorage.removeItem(UNLOCK_KEY); } catch (e) {} }
+  function isFamilyUnlocked() { try { return localStorage.getItem(FAMILY_KEY) === "1"; } catch (e) { return false; } }
+  function setFamilyUnlocked(v) { try { if (v) localStorage.setItem(FAMILY_KEY, "1"); else localStorage.removeItem(FAMILY_KEY); } catch (e) {} }
   function isEmailUnlocked() { try { return localStorage.getItem(EMAIL_UNLOCK_KEY) === "1"; } catch (e) { return false; } }
   function setEmailUnlocked(v) { try { if (v) localStorage.setItem(EMAIL_UNLOCK_KEY, "1"); else localStorage.removeItem(EMAIL_UNLOCK_KEY); } catch (e) {} }
   function accountEmail() { try { return localStorage.getItem(ACCOUNT_KEY) || ""; } catch (e) { return ""; } }
@@ -741,6 +747,7 @@
   function charUnlocked(id) {
     if (id === "none" || id === "beethoven") return true;
     if (id === "lulan") return isUnlocked();                    // 由老師在管理後台開通該帳號後才可用
+    if (id === "family") return isFamilyUnlocked();             // 同上（太太＆女兒）
     var i = LOCKED_CHARS.indexOf(id);
     return i < 0 ? true : sClearCount() >= (i + 1);
   }
@@ -752,7 +759,7 @@
       if (charUnlocked(id)) { op.textContent = base; op.disabled = false; }
       else {
         op.disabled = true;
-        op.textContent = "🔒 " + base + (id === "lulan" ? "｜需老師開通帳號" : "｜需 " + charNeed(id) + " 首 S 級");
+        op.textContent = "🔒 " + base + ((id === "lulan" || id === "family") ? "｜需老師開通帳號" : "｜需 " + charNeed(id) + " 首 S 級");
       }
     });
     if (sel.value && !charUnlocked(sel.value)) { sel.value = "beethoven"; guitaristId = "beethoven"; try { localStorage.setItem(GUITARIST_KEY, "beethoven"); } catch (e) {} }
@@ -760,13 +767,16 @@
   function charName(id) { var sel = els.guitaristSelect; if (!sel) return id; var op = sel.querySelector('option[value="' + id + '"]'); return op ? (op.getAttribute("data-base") || op.textContent) : id; }
 
   // 帳號被開通「嚕嚕安」：開放該角色並自動選上（只影響角色，不影響曲庫權限）
-  function applyLulanGrant(autoSelect) {
-    setUnlocked(true);
+  function applyLulanGrant(autoSelect) { applyCharGrant("lulan", autoSelect); }
+  // 帳號被開通某個專屬角色：開放它並（可選）自動選上
+  function applyCharGrant(id, autoSelect) {
+    if (id === "lulan") setUnlocked(true);
+    else if (id === "family") setFamilyUnlocked(true);
     pushCharUnlocks();
     refreshGuitaristLocks(); renderAccountBox();
     if (autoSelect && els.guitaristSelect) {
-      els.guitaristSelect.value = "lulan"; guitaristId = "lulan";
-      try { localStorage.setItem(GUITARIST_KEY, "lulan"); } catch (e) {}
+      els.guitaristSelect.value = id; guitaristId = id;
+      try { localStorage.setItem(GUITARIST_KEY, id); } catch (e) {}
     }
   }
   // Email 解鎖成功：只讓「自己上傳的譜」無限（不開放付費教材/角色）
@@ -782,7 +792,7 @@
   function pushCharUnlocks() {
     var email = accountEmail(); if (!email) return;        // 沒登入帳號就只存本機
     var A = window.JianpuAuth; if (!A || !A.saveCharUnlocks) return;
-    A.saveCharUnlocks(email, { s: sClears(), lulan: isUnlocked() });
+    A.saveCharUnlocks(email, { s: sClears(), lulan: isUnlocked(), family: isFamilyUnlocked() });
   }
   function pullCharUnlocks(email) {
     email = (email || accountEmail()).trim().toLowerCase(); if (!email) return;
@@ -797,6 +807,8 @@
       if (merged.length !== before) { try { localStorage.setItem(SCLEAR_KEY, JSON.stringify(merged)); } catch (e) {} changed = true; }
       if (remote.lulan && !isUnlocked()) { setUnlocked(true); changed = true; }   // 帳號已被開通嚕嚕安 → 這台也開
       if (!remote.lulan && isUnlocked()) { setUnlocked(false); changed = true; }  // 帳號被老師收回 → 這台也關
+      if (remote.family && !isFamilyUnlocked()) { setFamilyUnlocked(true); changed = true; }
+      if (!remote.family && isFamilyUnlocked()) { setFamilyUnlocked(false); changed = true; }
       if (remote.all) unlockAllChars();
       if (changed) { refreshGuitaristLocks(); }
       renderAccountBox();
@@ -810,7 +822,7 @@
     var a = sClears(), need = LOCKED_CHARS.length + 2;                 // 補滿 S 級歌數 → 解鎖全部樂手
     for (var i = 0; a.length < need && i < 100; i++) { var k = "vip_all_" + i; if (a.indexOf(k) < 0) a.push(k); }
     try { localStorage.setItem(SCLEAR_KEY, JSON.stringify(a)); } catch (e) {}
-    setUnlocked(true);                                                 // 開嚕嚕安
+    setUnlocked(true); setFamilyUnlocked(true);                        // 開嚕嚕安＋太太女兒
     refreshGuitaristLocks(); renderAccountBox();
     pushCharUnlocks();                                                 // 若後端 char_unlocks 已建，順便存回帳號
   }
@@ -833,13 +845,14 @@
     }
     var chars = [];
     if (isUnlocked()) chars.push("閃電嚕嚕安");
+    if (isFamilyUnlocked()) chars.push("太太＆女兒");
     var extra = Math.min(sClearCount(), LOCKED_CHARS.length);
     if (extra > 0) chars.push("樂手 +" + extra + " 位");
     box.innerHTML = '<div class="paid-unlock unlocked">' +
       '<div>👤 <b>' + escapeHtml(mail) + '</b>　<span style="opacity:.8;font-size:12px">角色解鎖會自動記住</span></div>' +
       '<div class="pu-tip" style="margin-top:4px">已記住的角色：<b>' + (chars.length ? escapeHtml(chars.join("、")) : "尚無") + '</b>' +
       '　<span style="opacity:.75">（換裝置用同一 Email 登入就會帶過去）</span></div>' +
-      (isUnlocked() ? "" : '<div class="pu-tip" style="margin-top:2px">🔒 「閃電嚕嚕安」需老師開通這個 Email，開通後按一下右邊按鈕即可。' +
+      ((isUnlocked() && isFamilyUnlocked()) ? "" : '<div class="pu-tip" style="margin-top:2px">🔒 專屬角色（閃電嚕嚕安／太太＆女兒）需老師開通這個 Email，開通後按一下右邊按鈕即可。' +
         '<button type="button" class="btn small ghost acct-sync" style="margin-left:6px">重新同步</button></div>') +
       '</div>';
     var sync = box.querySelector(".acct-sync");
@@ -917,7 +930,11 @@
     else if (A && A.getCharUnlocks) {
       A.getCharUnlocks(email).then(function (remote) {
         if (remote && remote.all) unlockAllChars();
-        else if (remote && remote.lulan) applyLulanGrant(true);
+        else if (remote && (remote.lulan || remote.family)) {
+          if (remote.lulan) applyCharGrant("lulan", false);
+          if (remote.family) applyCharGrant("family", false);
+          applyCharGrant(remote.family ? "family" : "lulan", true);   // 自動選上其中一個
+        }
         else pullCharUnlocks(email);                          // 同步 S 級進度並回推本機
         renderAccountBox();
       }).catch(function () { renderAccountBox(); });
@@ -1892,7 +1909,8 @@
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
     var st = (state === "playing") ? A.getSongTime() : 0;
     // 選閃電嚕嚕安 → 綁定他的專屬照片(滿版背景，優先於上傳圖與程序舞台)
-    var lockBg = (guitaristId === "lulan" && lulanBg.complete && lulanBg.naturalWidth) ? lulanBg : null;
+    var cbg = charBg[guitaristId];
+    var lockBg = (cbg && cbg.complete && cbg.naturalWidth) ? cbg : null;
     var bg = lockBg || bgImage;
     stageProcedural = !bg;                         // 無背景圖時才畫程序化舞台(升降台/觀眾)
     if (bg) {
@@ -2505,6 +2523,78 @@
         ctx.strokeStyle = "#7a4a38"; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(-8, hy + 31); ctx.lineTo(8, hy + 31); ctx.stroke();  // 咬牙
       }
     },
+    mom: {   // 太太（專屬）：及肩捲髮、黑圓框墨鏡、鼠尾草綠拉鍊連帽外套、淺灰寬褲、白鞋；動作＝比 YA
+      skin: "#f0d2b6", legs: "#c9ccd2", torso: "#c8d6c9", sleeve: "#c8d6c9", chest: "#bccdbd",
+      shoe: "#f4f4f2", ya: true, yaHands: 1, phone: true, scale: 1.0,
+      head: function (hy) {
+        var HAIR = "#2b1d16";
+        // 蓬鬆捲髮：底層外輪廓 ＋ 一圈捲團，做出捲度
+        ctx.fillStyle = HAIR;
+        ctx.beginPath(); ctx.ellipse(0, hy - 2, 58, 54, 0, Math.PI * 0.98, Math.PI * 2.02); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(-46, hy + 22, 20, 26, -0.25, 0, Math.PI * 2); ctx.fill();   // 左側鬢髮
+        ctx.beginPath(); ctx.ellipse(46, hy + 20, 19, 25, 0.25, 0, Math.PI * 2); ctx.fill();     // 右側鬢髮
+        var curls = [[-52,-16,13],[-38,-36,14],[-14,-46,15],[12,-46,15],[36,-34,14],[52,-14,12],
+                     [-56,6,11],[56,4,11],[-50,30,10],[50,28,10]];
+        for (var i = 0; i < curls.length; i++) {
+          ctx.beginPath(); ctx.arc(curls[i][0], hy + curls[i][1], curls[i][2], 0, Math.PI * 2); ctx.fill();
+        }
+        // 墨鏡（黑色圓框）
+        ctx.fillStyle = "#15151a";
+        ctx.beginPath(); ctx.ellipse(-17, hy + 6, 16, 13, -0.05, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(17, hy + 6, 16, 13, 0.05, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = "#15151a"; ctx.lineWidth = 3.4; ctx.lineCap = "round";
+        ctx.beginPath(); ctx.moveTo(-3, hy + 3); ctx.lineTo(3, hy + 3); ctx.stroke();            // 鼻樑
+        ctx.beginPath(); ctx.moveTo(-33, hy + 3); ctx.lineTo(-47, hy - 1); ctx.stroke();          // 鏡腳
+        ctx.beginPath(); ctx.moveTo(33, hy + 3); ctx.lineTo(47, hy - 1); ctx.stroke();
+        ctx.fillStyle = "rgba(255,255,255,0.22)";                                                 // 鏡片反光
+        ctx.beginPath(); ctx.ellipse(-22, hy + 1, 6, 4, -0.5, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(12, hy + 1, 6, 4, -0.5, 0, Math.PI * 2); ctx.fill();
+        // 大笑（露齒）＋腮紅
+        ctx.fillStyle = "rgba(240,140,140,0.42)";
+        ctx.beginPath(); ctx.arc(-30, hy + 22, 8, 0, Math.PI * 2); ctx.arc(30, hy + 22, 8, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#b5535c";
+        ctx.beginPath(); ctx.moveTo(-13, hy + 26); ctx.quadraticCurveTo(0, hy + 42, 13, hy + 26); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = "#fff";
+        ctx.beginPath(); ctx.moveTo(-11, hy + 27); ctx.quadraticCurveTo(0, hy + 32, 11, hy + 27); ctx.closePath(); ctx.fill();
+      }
+    },
+    girl: {   // 女兒（專屬）：瀏海＋雙丸子頭＋紅花髮飾、黑圓墨鏡、黑白格紋洋裝、黑白鞋；動作＝雙手比 YA
+      skin: "#f8dcc4", legs: "#f8dcc4", torso: "#f2f2f0", sleeve: "#f8dcc4", chest: "#f2f2f0",
+      skirt: "#f2f2f0", shoe: "#1b1b20", gingham: true, dress: true, ya: true, yaHands: 2, scale: 0.72,
+      head: function (hy) {
+        var HAIR = "#2f2119";
+        ctx.fillStyle = HAIR;
+        ctx.beginPath(); ctx.arc(0, hy - 2, 52, Math.PI * 0.99, Math.PI * 2.01); ctx.fill();      // 後髮
+        ctx.beginPath(); ctx.arc(-34, hy - 44, 17, 0, Math.PI * 2); ctx.fill();                   // 左丸子頭
+        ctx.beginPath(); ctx.arc(34, hy - 44, 17, 0, Math.PI * 2); ctx.fill();                    // 右丸子頭
+        ctx.beginPath(); ctx.moveTo(-50, hy - 6); ctx.lineTo(-50, hy + 2);                         // 瀏海(上緣上提，露眼)
+        ctx.quadraticCurveTo(-25, hy + 8, 0, hy + 5); ctx.quadraticCurveTo(25, hy + 8, 50, hy + 2);
+        ctx.lineTo(50, hy - 6); ctx.closePath(); ctx.fill();
+        // 左側紅花髮飾（紅花瓣＋黃花心）
+        ctx.fillStyle = "#e03b32";
+        for (var a = 0; a < 5; a++) {
+          var ang = a / 5 * Math.PI * 2;
+          ctx.beginPath(); ctx.arc(-50 + Math.cos(ang) * 7, hy - 20 + Math.sin(ang) * 7, 5.5, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.fillStyle = "#f5c73c"; ctx.beginPath(); ctx.arc(-50, hy - 20, 5, 0, Math.PI * 2); ctx.fill();
+        // 黑色圓墨鏡（對小臉來說偏大）
+        ctx.fillStyle = "#17171c";
+        ctx.beginPath(); ctx.ellipse(-16, hy + 12, 17, 14, -0.05, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(18, hy + 12, 17, 14, 0.05, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = "#17171c"; ctx.lineWidth = 3.2; ctx.lineCap = "round";
+        ctx.beginPath(); ctx.moveTo(-1, hy + 9); ctx.lineTo(3, hy + 9); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-33, hy + 9); ctx.lineTo(-47, hy + 6); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(35, hy + 9); ctx.lineTo(48, hy + 6); ctx.stroke();
+        ctx.fillStyle = "rgba(255,255,255,0.2)";
+        ctx.beginPath(); ctx.ellipse(-21, hy + 7, 6, 4, -0.5, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(13, hy + 7, 6, 4, -0.5, 0, Math.PI * 2); ctx.fill();
+        // 幼兒圓臉：腮紅大一點、小嘴
+        ctx.fillStyle = "rgba(245,145,150,0.5)";
+        ctx.beginPath(); ctx.arc(-32, hy + 28, 10, 0, Math.PI * 2); ctx.arc(32, hy + 28, 10, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = "#c06a68"; ctx.lineWidth = 2.6; ctx.lineCap = "round";
+        ctx.beginPath(); ctx.arc(1, hy + 30, 6, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+      }
+    },
     zengxuan: {   // 曾玹：藍色漢服(襦裙)、瀏海＋雙低馬尾＋紅髮圈、腰前藍蝴蝶結
       skin: "#f2d6bd", legs: "#bcd8ee", torso: "#cfe3f2", sleeve: "#eef4fb", chest: "#dfeaf5",
       skirt: "#bcd8ee", sash: "#8fc0e6", shoe: "#6fa8d6", guitar: "strat", dress: true, bow: true, scale: 0.9,
@@ -2652,6 +2742,7 @@
     }
     if (guitaristId === "lulan") drawSmithMachine(cx, groundY, hgt * 1.06);  // 閃電嚕嚕安→身後擺一台史密斯機(框住人物)
     if (guitaristId === "sisters") { drawSisters(cx, groundY, hgt, songTime); return; }  // 曾玹＆🍋＝同一角色、左右各站一邊(各自 emoji 特效)
+    if (guitaristId === "family") { drawFamily(cx, groundY, hgt, songTime); return; }     // 太太＆女兒＝左右各站一邊、都在比 YA
     var bob = Math.sin(songTime * 6.3) * 4, sway = Math.sin(songTime * 3.1) * 0.04;
     var s = hgt / 320 * (char.scale || 1) * (1 + charPulse * 0.07);
     ctx.save();
@@ -2700,9 +2791,88 @@
     }
   }
 
+  // 比 YA 的手（✌️）：手掌＋兩指張開；flip=-1 時左右鏡射
+  function drawPeaceHand(x, y, r, skin, flip, tilt) {
+    flip = flip || 1; tilt = tilt || 0;
+    ctx.save();
+    ctx.translate(x, y); ctx.rotate(tilt * flip);
+    ctx.fillStyle = skin;
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();                       // 手掌
+    var fw = r * 0.44, fl = r * 1.65;                                                    // 兩根手指（V 字）
+    ctx.save(); ctx.rotate(-0.30 * flip); roundRect(-fw / 2 - r * 0.30 * flip, -fl, fw, fl, fw / 2); ctx.fill(); ctx.restore();
+    ctx.save(); ctx.rotate(0.30 * flip);  roundRect(-fw / 2 + r * 0.30 * flip, -fl, fw, fl, fw / 2); ctx.fill(); ctx.restore();
+    ctx.fillStyle = "rgba(0,0,0,0.10)";                                                   // 收起的手指(陰影暗示)
+    ctx.beginPath(); ctx.arc(r * 0.34 * flip, r * 0.36, r * 0.42, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+  // 比 YA 的角色：不拿吉他，手舉起來比 ✌️（yaHands=1 只有一手，2 則雙手）
+  //   繪製順序很重要：身體 → 裙/腿 → 垂下的手 → **頭** → **舉起的手**
+  //   （舉起的手要畫在頭之後，否則會被頭蓋住，看起來像從頭髮裡冒出來）
+  function paintYaBody(char, songTime) {
+    var wig = Math.sin(songTime * 5.2) * 3, wig2 = Math.sin(songTime * 5.2 + 1.1) * 3;
+    // 身體
+    ctx.fillStyle = char.torso; roundRect(-46, -150, 92, char.dress ? 70 : 150, 20); ctx.fill();
+    if (char.dress) {
+      if (char.gingham) ginghamClip(function () { roundRect(-46, -150, 92, 70, 20); }, -46, -150, 92, 70, 7);   // 上身格紋
+      ctx.fillStyle = char.skirt || char.legs;                                            // 蓬裙(外擴)
+      ctx.beginPath(); ctx.moveTo(-44, -86); ctx.lineTo(44, -86); ctx.lineTo(74, 4); ctx.quadraticCurveTo(0, 20, -74, 4); ctx.closePath(); ctx.fill();
+      if (char.gingham) ginghamClip(function () {                                          // 裙擺格紋
+        ctx.moveTo(-44, -86); ctx.lineTo(44, -86); ctx.lineTo(74, 4); ctx.quadraticCurveTo(0, 20, -74, 4); ctx.closePath();
+      }, -74, -86, 148, 106, 7);
+      ctx.fillStyle = "#ffffff"; roundRect(-31, -153, 62, 7, 3); ctx.fill();               // 領口白滾邊
+      ctx.fillStyle = char.skin; roundRect(-25, 4, 17, 20, 6); ctx.fill(); roundRect(8, 4, 17, 20, 6); ctx.fill();   // 小腿
+      ctx.fillStyle = char.shoe || "#1b1b20"; roundRect(-29, 18, 23, 10, 4); ctx.fill(); roundRect(6, 18, 23, 10, 4); ctx.fill();
+      ctx.fillStyle = "#f2f2f2"; ctx.fillRect(-29, 25, 23, 4); ctx.fillRect(6, 25, 23, 4); // 白鞋底
+    } else {
+      ctx.fillStyle = char.legs; roundRect(-40, -40, 34, 40, 8); ctx.fill(); roundRect(6, -40, 34, 40, 8); ctx.fill();   // 寬褲
+      ctx.fillStyle = char.shoe || "#f2f2f2"; roundRect(-44, -6, 40, 12, 5); ctx.fill(); roundRect(4, -6, 40, 12, 5); ctx.fill();
+      ctx.fillStyle = char.chest; roundRect(-30, -160, 60, 18, 8); ctx.fill();             // 連帽外套立領
+      ctx.strokeStyle = "rgba(0,0,0,0.18)"; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(0, -146); ctx.lineTo(0, -34); ctx.stroke();              // 拉鍊
+      ctx.fillStyle = "rgba(255,255,255,0.5)"; roundRect(-3, -150, 6, 9, 3); ctx.fill();
+    }
+    // 垂下的那隻手（先畫，會被頭蓋一點沒關係）
+    if (char.yaHands < 2) {
+      drawLimb([-34, -140], [-50, -100], [-40, -58], char.sleeve, char.skin, 15, 12);
+      if (char.phone) {
+        ctx.fillStyle = "#22242a"; roundRect(-50, -62, 15, 26, 4); ctx.fill();
+        ctx.fillStyle = "#5f6b7a"; roundRect(-48, -60, 11, 20, 2); ctx.fill();
+      }
+    }
+    // 頭
+    var hy = -206;
+    ctx.fillStyle = char.skin; ctx.beginPath(); ctx.arc(0, hy, 50, 0, Math.PI * 2); ctx.fill();
+    char.head(hy);
+    // ★ 舉起來比 YA 的手（畫在頭之後，位置在臉旁邊，像照片那樣）
+    if (char.yaHands >= 2) {
+      drawLimb([-36, -140], [-62, -172], [-70 + wig, -206], char.sleeve, char.skin, 13, 11);
+      drawLimb([36, -140], [62, -172], [70 + wig2, -206], char.sleeve, char.skin, 13, 11);
+      drawPeaceHand(-70 + wig, -212, 12, char.skin, -1, 0.16);
+      drawPeaceHand(70 + wig2, -212, 12, char.skin, 1, 0.16);
+    } else {
+      drawLimb([36, -140], [66, -168], [72 + wig, -200], char.sleeve, char.skin, 15, 12);
+      drawPeaceHand(72 + wig, -207, 13, char.skin, 1, 0.18);
+    }
+  }
+  // 黑白格紋：用傳入的路徑函式當 clip，在該範圍內鋪格子（洋裝上身與裙擺共用）
+  function ginghamClip(pathFn, x, y, w, h, cell) {
+    cell = cell || 8;
+    ctx.save();
+    ctx.beginPath(); pathFn(); ctx.clip();
+    for (var gy = y; gy < y + h; gy += cell) {
+      for (var gx = x; gx < x + w; gx += cell) {
+        var odd = (Math.floor((gx - x) / cell) + Math.floor((gy - y) / cell)) % 2;
+        ctx.fillStyle = odd ? "rgba(22,22,26,0.88)" : "rgba(22,22,26,0.26)";
+        ctx.fillRect(gx, gy, cell, cell);
+      }
+    }
+    ctx.restore();
+  }
+
   // 畫一個角色的「身體＋腿/裙＋吉他＋手臂＋頭」——假設 ctx 已平移/縮放到該角色腳底、本地座標。
   // 單人(drawGuitarist)與雙人(drawSisters)共用。
   function paintGuitaristBody(char, songTime) {
+    if (char.ya) { paintYaBody(char, songTime); return; }      // 比 YA 的角色不拿吉他，走另一套
     // 身體
     ctx.fillStyle = char.torso; roundRect(-46, -150, 92, char.shorts ? 118 : (char.dress ? 70 : 150), 20); ctx.fill();
     // 腿 / 短褲 / 洋裝裙擺
@@ -2797,6 +2967,35 @@
     }
     drawFxEmoji(sisFx.thumbs, "👍", dt);
     drawFxEmoji(sisFx.lemons, "🍋", dt);
+  }
+
+  // 太太 ＆ 女兒：同一個「角色」＝兩人左右各站一邊，都在比 YA；頭上噴 ✌️ 與 💗
+  var famFx = { ya: [], hearts: [], acc: 0 };
+  function drawFamily(cx, groundY, hgt, songTime) {
+    var dx = hgt * 0.26;
+    var sBase = hgt / 320 * 0.86 * (1 + charPulse * 0.07);
+    function paintAt(char, x, phase) {
+      var t = songTime + phase;
+      var bob = Math.sin(t * 6.3) * 4, sway = Math.sin(t * 3.1) * 0.04;
+      ctx.save();
+      ctx.translate(x, groundY - bob - charPulse * 10);
+      ctx.scale(sBase * (char.scale || 1), sBase * (char.scale || 1));
+      ctx.rotate(sway);
+      ctx.globalAlpha = 0.97;
+      paintYaBody(char, t);
+      ctx.restore();
+    }
+    paintAt(GUITARISTS.mom, cx - dx, 0);                       // 左：太太
+    paintAt(GUITARISTS.girl, cx + dx, 0.9);                    // 右：女兒（錯開相位）
+    var dt = 1 / 60, interval = 0.13 - hypeShown * 0.06, headY = groundY - hgt * 0.62;
+    famFx.acc += dt;
+    while (famFx.acc >= interval) {
+      famFx.acc -= interval;
+      if (famFx.ya.length < 40) spawnFxEmoji(famFx.ya, cx - dx, headY);
+      if (famFx.hearts.length < 40) spawnFxEmoji(famFx.hearts, cx + dx, headY - hgt * 0.06);
+    }
+    drawFxEmoji(famFx.ya, "✌️", dt);
+    drawFxEmoji(famFx.hearts, "💗", dt);
   }
 
   // 右側大字評分動畫

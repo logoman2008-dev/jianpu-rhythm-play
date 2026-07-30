@@ -52,7 +52,7 @@
   }
   </script>
 
-  <link rel="stylesheet" href="css/style.css?v=20260730h" />
+  <link rel="stylesheet" href="css/style.css?v=20260730i" />
 </head>
 <body>
   <!-- 首次進站啟動畫：顯示海報＋讀取動畫，約 2 秒後自動淡出進選單（純 CSS，回選單不重載故不再出現） -->
@@ -63,7 +63,7 @@
     </div>
   </div>
   <div id="menuBg"></div>
-  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260730h" loop preload="auto"></audio>
+  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260730i" loop preload="auto"></audio>
   <div class="app">
     <header class="topbar">
       <div class="logo">簡譜音遊 <span>Jianpu Rhythm</span></div>
@@ -176,6 +176,8 @@
                 <!-- 嚕嚕安：前台看得到（🔒 鎖著），只能由老師在管理後台「角色開通」把該 Email 開通後才可用 -->
                 <option value="lulan">閃電嚕嚕安（挺舉）</option>
                 <option value="sisters">曾玹 ＆ 🍋（姊妹·左右合體）</option>
+                <!-- 太太＆女兒：前台看得到（🔒 鎖著），需老師在管理後台開通該帳號 -->
+                <option value="family">太太 ＆ 女兒（比 YA・合體）</option>
                 <option value="none">不顯示角色</option>
               </select>
             </label>
@@ -444,16 +446,16 @@
   <script src="lib/alphaTab.min.js"></script>
   <!-- 登入 / 付費驗證（Supabase）。免費曲不需要這些也能玩；離線會自動略過。 -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/supabase-config.js?v=20260730h"></script>
-  <script src="js/auth.js?v=20260730h"></script>
+  <script src="js/supabase-config.js?v=20260730i"></script>
+  <script src="js/auth.js?v=20260730i"></script>
   <!-- 遊戲程式 -->
-  <script src="js/heic.js?v=20260730h"></script>
-  <script src="js/theory.js?v=20260730h"></script>
-  <script src="js/gp-loader.js?v=20260730h"></script>
-  <script src="js/audio.js?v=20260730h"></script>
-  <script src="js/pitch.js?v=20260730h"></script>
-  <script src="js/songs.js?v=20260730h"></script>
-  <script src="js/game.js?v=20260730h"></script>
-  <script src="js/library.js?v=20260730h"></script>
+  <script src="js/heic.js?v=20260730i"></script>
+  <script src="js/theory.js?v=20260730i"></script>
+  <script src="js/gp-loader.js?v=20260730i"></script>
+  <script src="js/audio.js?v=20260730i"></script>
+  <script src="js/pitch.js?v=20260730i"></script>
+  <script src="js/songs.js?v=20260730i"></script>
+  <script src="js/game.js?v=20260730i"></script>
+  <script src="js/library.js?v=20260730i"></script>
 </body>
 </html>
