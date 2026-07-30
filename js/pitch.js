@@ -21,16 +21,16 @@
   var gateOn = false, gateThresh = 0.012, gateTimer = null, gateAnalyser = null, gateBuf = null;
   var gateOpen = false, gateHoldUntil = 0;
   var GATE_ATTACK = 0.003, GATE_RELEASE = 0.045, GATE_HOLD_MS = 60;   // 開很快、關留一點尾巴
-  // ---- TS9（Ibanez Tube Screamer 風格：三顆旋鈕 Overdrive / Tone / Level）----
-  var tsOn = false, tsDrive = 0.5, tsTone = 0.5, tsLevel = 0.6;
-  // ---- JCM800 音色控制（Marshall 式 tone stack ＋ Presence）----
-  var jcmBass = 0.5, jcmMid = 0.5, jcmTreble = 0.6, jcmPresence = 0.5;
+  // ---- 綠推 Overdrive（中頻推進型破音踏板：三顆旋鈕 Overdrive / Tone / Level）----
+  var odOn = false, odDrive = 0.5, odTone = 0.5, odLevel = 0.6;
+  // ---- 英倫疊音 音色控制（英式 tone stack ＋ Presence）----
+  var toneBass = 0.5, toneMid = 0.5, toneTreble = 0.6, tonePresence = 0.5;
   function clipCurve(limit) {                                 // 硬切天花板：任何輸入夾在 ±limit(絕對上限)
     var n = 1024, c = new Float32Array(n);
     for (var i = 0; i < n; i++) { var x = (i / (n - 1)) * 2 - 1; c[i] = Math.max(-limit, Math.min(limit, x)); }
     return c;
   }
-  // 真空管式「不對稱」軟削波：正半波比負半波先壓縮，是 Marshall 那種帶奇偶次諧波的髒感來源
+  // 真空管式「不對稱」軟削波：正半波比負半波先壓縮，這是英式高增益那種帶奇偶次諧波的髒感來源
   function tubeCurve(k, asym) {
     var n = 8192, c = new Float32Array(n);
     asym = asym || 0;
@@ -41,7 +41,7 @@
     }
     return c;
   }
-  // TS9 的二極體對稱軟削波（比電子管更「圓」、壓縮感更強）
+  // 破音踏板的二極體對稱軟削波（比電子管更「圓」、壓縮感更強）
   function diodeCurve(k) {
     var n = 8192, c = new Float32Array(n);
     for (var i = 0; i < n; i++) {
@@ -51,7 +51,7 @@
     }
     return c;
   }
-  // 用 OfflineAudioContext 烘一顆「Marshall 1960A / Greenback 風格」4x12 音箱脈衝響應
+  // 用 OfflineAudioContext 烘一顆「英式 4x12 直立箱」風格的音箱脈衝響應
   var cabIR = null;
   function buildCabIR() {
     try {
@@ -65,13 +65,13 @@
         var b = off.createBiquadFilter(); b.type = type; b.frequency.value = f;
         if (Q != null) b.Q.value = Q; if (g != null) b.gain.value = g; return b;
       }
-      // Greenback 的特徵：~100Hz 箱體共振、400Hz 微凹、1.6k~2.5k 明顯的「吼」、>5kHz 掉很快
+      // 英式 4x12 的特徵：~100Hz 箱體共振、400Hz 微凹、1.6k~2.5k 明顯的「吼」、>5kHz 掉很快
       var chain = [
         bq("highpass", 80, 0.7),
         bq("peaking", 105, 1.2, 4.5),      // 箱體低頻共振
         bq("peaking", 400, 1.0, -4),       // 中低凹（去紙箱感）
         bq("peaking", 1000, 0.9, 1.5),
-        bq("peaking", 2000, 1.6, 5.5),     // Greenback 的咬勁
+        bq("peaking", 2000, 1.6, 5.5),     // 英式喇叭的咬勁
         bq("notch", 6500, 1.0),            // 去刺
         bq("lowpass", 5200, 0.7),
         bq("lowpass", 4800, 0.6)           // 兩級→陡降（真喇叭 >5kHz 幾乎不出聲）
@@ -90,7 +90,7 @@
   }
   // ===================================================================
   // 效果器鏈（順序照真實 rig 接法）：
-  //   麥克風 → Noise Gate → TS9（可 bypass）→ JCM800 前級 → tone stack
+  //   麥克風 → Noise Gate → 綠推 Overdrive（可 bypass）→ 英倫疊音前級 → tone stack
   //          → Presence → 功率級 → 4x12 音箱 IR → Delay → Limiter → 輸出
   // ===================================================================
   function buildAmp() {
@@ -103,37 +103,37 @@
     source.connect(gateAnalyser);          // 量測用（不影響訊號）
     source.connect(gate);
 
-    // ── ② TS9：高通「先切低頻再削波」是它的靈魂，所以低音不會糊、中頻突出 ──
-    var tsIn = ctx.createGain(); tsIn.gain.value = 1;
-    var tsHp = ctx.createBiquadFilter(); tsHp.type = "highpass"; tsHp.frequency.value = 720; tsHp.Q.value = 0.707;
-    var tsGain = ctx.createGain(); tsGain.gain.value = 1 + tsDrive * 24;
-    var tsClip = ctx.createWaveShaper(); tsClip.oversample = "4x"; tsClip.curve = diodeCurve(2 + tsDrive * 10);
-    var tsMid = ctx.createBiquadFilter(); tsMid.type = "peaking"; tsMid.frequency.value = 720; tsMid.Q.value = 0.9; tsMid.gain.value = 4;
-    var tsLp = ctx.createBiquadFilter(); tsLp.type = "lowpass"; tsLp.frequency.value = tsToneHz(tsTone);
-    var tsWet = ctx.createGain(); tsWet.gain.value = tsLevel;
-    var tsDry = ctx.createGain(); tsDry.gain.value = 0.35;        // TS 的 op-amp 有乾聲並聯，保留低頻厚度
-    var tsSum = ctx.createGain(); tsSum.gain.value = 1;
-    gate.connect(tsIn);
-    tsIn.connect(tsHp); tsHp.connect(tsGain); tsGain.connect(tsClip); tsClip.connect(tsMid); tsMid.connect(tsLp);
-    tsLp.connect(tsWet); tsWet.connect(tsSum);
-    tsIn.connect(tsDry); tsDry.connect(tsSum);
-    // bypass 用：tsBypass 直通、tsSum 走踏板
-    var tsBypass = ctx.createGain(); tsBypass.gain.value = tsOn ? 0 : 1;
-    var tsOut = ctx.createGain(); tsOut.gain.value = 1;
-    gate.connect(tsBypass); tsBypass.connect(tsOut);
-    tsSum.connect(tsOut);
-    tsSum.gain.value = tsOn ? 1 : 0;
+    // ── ② 綠推 Overdrive：高通「先切低頻再削波」是它的靈魂，所以低音不會糊、中頻突出 ──
+    var odIn = ctx.createGain(); odIn.gain.value = 1;
+    var odHp = ctx.createBiquadFilter(); odHp.type = "highpass"; odHp.frequency.value = 720; odHp.Q.value = 0.707;
+    var odGain = ctx.createGain(); odGain.gain.value = 1 + odDrive * 24;
+    var odClip = ctx.createWaveShaper(); odClip.oversample = "4x"; odClip.curve = diodeCurve(2 + odDrive * 10);
+    var odMid = ctx.createBiquadFilter(); odMid.type = "peaking"; odMid.frequency.value = 720; odMid.Q.value = 0.9; odMid.gain.value = 4;
+    var odLp = ctx.createBiquadFilter(); odLp.type = "lowpass"; odLp.frequency.value = odToneHz(odTone);
+    var odWet = ctx.createGain(); odWet.gain.value = odLevel;
+    var odDry = ctx.createGain(); odDry.gain.value = 0.35;        // 這類踏板的 op-amp 有乾聲並聯，保留低頻厚度
+    var odSum = ctx.createGain(); odSum.gain.value = 1;
+    gate.connect(odIn);
+    odIn.connect(odHp); odHp.connect(odGain); odGain.connect(odClip); odClip.connect(odMid); odMid.connect(odLp);
+    odLp.connect(odWet); odWet.connect(odSum);
+    odIn.connect(odDry); odDry.connect(odSum);
+    // bypass 用：odBypass 直通、odSum 走踏板
+    var odBypass = ctx.createGain(); odBypass.gain.value = odOn ? 0 : 1;
+    var odOut = ctx.createGain(); odOut.gain.value = 1;
+    gate.connect(odBypass); odBypass.connect(odOut);
+    odSum.connect(odOut);
+    odSum.gain.value = odOn ? 1 : 0;
 
-    // ── ③ JCM800 前級：輸入耦合高通 → 兩段串接電子管級 ──
+    // ── ③ 英倫疊音前級：輸入耦合高通 → 兩段串接電子管級 ──
     var inHp = ctx.createBiquadFilter(); inHp.type = "highpass"; inHp.frequency.value = 82; inHp.Q.value = 0.7;
     var v1 = ctx.createGain(); v1.gain.value = 2.2 + ampDrive * 6;
     var v1s = ctx.createWaveShaper(); v1s.oversample = "4x"; v1s.curve = tubeCurve(1.6 + ampDrive * 2.2, 0.18);
     var bright = ctx.createBiquadFilter(); bright.type = "highshelf"; bright.frequency.value = 2200; bright.gain.value = 3;  // bright cap
     var v2 = ctx.createGain(); v2.gain.value = 1.3 + ampDrive * 7;
     var v2s = ctx.createWaveShaper(); v2s.oversample = "4x"; v2s.curve = tubeCurve(2.2 + ampDrive * 5.5, 0.26);
-    tsOut.connect(inHp); inHp.connect(v1); v1.connect(v1s); v1s.connect(bright); bright.connect(v2); v2.connect(v2s);
+    odOut.connect(inHp); inHp.connect(v1); v1.connect(v1s); v1s.connect(bright); bright.connect(v2); v2.connect(v2s);
 
-    // ── ④ Marshall tone stack：低音棚架 / 中頻（JCM800 的凹點在 ~650Hz）/ 高音棚架 ──
+    // ── ④ 英式 tone stack：低音棚架 / 中頻（凹點在 ~650Hz）/ 高音棚架 ──
     var bass = ctx.createBiquadFilter(); bass.type = "lowshelf"; bass.frequency.value = 160;
     var midf = ctx.createBiquadFilter(); midf.type = "peaking"; midf.frequency.value = 650; midf.Q.value = 0.8;
     var treb = ctx.createBiquadFilter(); treb.type = "highshelf"; treb.frequency.value = 3000;
@@ -178,7 +178,7 @@
 
     ampNodes = {
       gate: gate,
-      tsSum: tsSum, tsBypass: tsBypass, tsGain: tsGain, tsClip: tsClip, tsLp: tsLp, tsWet: tsWet,
+      odSum: odSum, odBypass: odBypass, odGain: odGain, odClip: odClip, odLp: odLp, odWet: odWet,
       v1: v1, v1s: v1s, v2: v2, v2s: v2s,
       bass: bass, midf: midf, treb: treb, pres: pres,
       cab: cab, post: post, dl: dl, fb: fb, wet: wet, out: ceil
@@ -187,14 +187,14 @@
     startGateLoop();
     if (ampOn) connectAmp(true);
   }
-  // TS9 的 Tone 旋鈕 → 出力低通截止頻率（左轉悶、右轉亮）
-  function tsToneHz(v) { return 1600 * Math.pow(4.5, Math.max(0, Math.min(1, v))); }   // 1.6k ~ 7.2k
-  // Marshall tone stack：把 0~1 的旋鈕值換成各段 dB
+  // Overdrive 的 Tone 旋鈕 → 出力低通截止頻率（左轉悶、右轉亮）
+  function odToneHz(v) { return 1600 * Math.pow(4.5, Math.max(0, Math.min(1, v))); }   // 1.6k ~ 7.2k
+  // 英式 tone stack：把 0~1 的旋鈕值換成各段 dB
   function applyToneStack(bass, midf, treb, pres) {
-    bass.gain.value = -10 + jcmBass * 20;                 // -10 ~ +10 dB @160Hz
-    midf.gain.value = -9 + jcmMid * 15;                   // -9 ~ +6 dB @650Hz（左轉＝經典 mid scoop）
-    treb.gain.value = -8 + jcmTreble * 18;                // -8 ~ +10 dB @3kHz
-    pres.gain.value = -4 + jcmPresence * 12;              // -4 ~ +8 dB @4.5kHz
+    bass.gain.value = -10 + toneBass * 20;                 // -10 ~ +10 dB @160Hz
+    midf.gain.value = -9 + toneMid * 15;                   // -9 ~ +6 dB @650Hz（左轉＝經典 mid scoop）
+    treb.gain.value = -8 + toneTreble * 18;                // -8 ~ +10 dB @3kHz
+    pres.gain.value = -4 + tonePresence * 12;              // -4 ~ +8 dB @4.5kHz
   }
 
   // ---- Noise Gate 控制迴圈 ----
@@ -380,29 +380,29 @@
   function isGateOpen() { return !gateOn || gateOpen; }
   function getInputRms() { return gateRms(); }
 
-  // ---- TS9 對外控制 ----
-  function setTsOn(on) {
-    tsOn = !!on;
+  // ---- 綠推 Overdrive 對外控制 ----
+  function setOdOn(on) {
+    odOn = !!on;
     if (ampNodes && ctx) {
       var t = ctx.currentTime;
-      ampNodes.tsSum.gain.setTargetAtTime(tsOn ? 1 : 0, t, 0.01);      // 踏板路徑
-      ampNodes.tsBypass.gain.setTargetAtTime(tsOn ? 0 : 1, t, 0.01);   // 直通路徑
+      ampNodes.odSum.gain.setTargetAtTime(odOn ? 1 : 0, t, 0.01);      // 踏板路徑
+      ampNodes.odBypass.gain.setTargetAtTime(odOn ? 0 : 1, t, 0.01);   // 直通路徑
     }
   }
-  function setTsDrive(v) {
-    tsDrive = Math.max(0, Math.min(1, v));
-    if (ampNodes) { ampNodes.tsGain.gain.value = 1 + tsDrive * 24; ampNodes.tsClip.curve = diodeCurve(2 + tsDrive * 10); }
+  function setOdDrive(v) {
+    odDrive = Math.max(0, Math.min(1, v));
+    if (ampNodes) { ampNodes.odGain.gain.value = 1 + odDrive * 24; ampNodes.odClip.curve = diodeCurve(2 + odDrive * 10); }
   }
-  function setTsTone(v) { tsTone = Math.max(0, Math.min(1, v)); if (ampNodes) ampNodes.tsLp.frequency.value = tsToneHz(tsTone); }
-  function setTsLevel(v) { tsLevel = Math.max(0, Math.min(1, v)); if (ampNodes) ampNodes.tsWet.gain.value = tsLevel; }
+  function setOdTone(v) { odTone = Math.max(0, Math.min(1, v)); if (ampNodes) ampNodes.odLp.frequency.value = odToneHz(odTone); }
+  function setOdLevel(v) { odLevel = Math.max(0, Math.min(1, v)); if (ampNodes) ampNodes.odWet.gain.value = odLevel; }
 
-  // ---- JCM800 tone stack 對外控制 ----
+  // ---- 英倫疊音 tone stack 對外控制 ----
   function setTone(which, v) {
     v = Math.max(0, Math.min(1, v));
-    if (which === "bass") jcmBass = v;
-    else if (which === "mid") jcmMid = v;
-    else if (which === "treble") jcmTreble = v;
-    else if (which === "presence") jcmPresence = v;
+    if (which === "bass") toneBass = v;
+    else if (which === "mid") toneMid = v;
+    else if (which === "treble") toneTreble = v;
+    else if (which === "presence") tonePresence = v;
     if (ampNodes) applyToneStack(ampNodes.bass, ampNodes.midf, ampNodes.treb, ampNodes.pres);
   }
 
@@ -432,10 +432,10 @@
     isGateOpen: isGateOpen,
     getInputRms: getInputRms,
     autoDetectGate: autoDetectGate,
-    setTsOn: setTsOn,
-    setTsDrive: setTsDrive,
-    setTsTone: setTsTone,
-    setTsLevel: setTsLevel,
+    setOdOn: setOdOn,
+    setOdDrive: setOdDrive,
+    setOdTone: setOdTone,
+    setOdLevel: setOdLevel,
     setTone: setTone,
     setDelayOn: setDelayOn,
     setDelayTime: setDelayTime,

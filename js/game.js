@@ -103,8 +103,8 @@
      "speedRange","speedVal","bottomSelect","fretWindowSelect","fretStyleSelect","bgInput","guitaristSelect","metronomeToggle","genreSelect","bgOpacityRange","bgOpacityVal","audioInSelect","audioInTip",
      "ampToggle","ampControls","ampDrive","ampDriveVal","ampLevel","ampLevelVal","ampBuffer","ampLatNow",
      "gateToggle","gateControls","gateThresh","gateThreshVal","gateAutoBtn","gateMeter","gateLed","gateTip",
-     "tsToggle","tsControls","tsDrive","tsDriveVal","tsTone","tsToneVal","tsLevel","tsLevelVal",
-     "jcmBass","jcmBassVal","jcmMid","jcmMidVal","jcmTreble","jcmTrebleVal","jcmPresence","jcmPresenceVal",
+     "odToggle","odControls","odDrive","odDriveVal","odTone","odToneVal","odLevel","odLevelVal",
+     "toneBass","toneBassVal","toneMid","toneMidVal","toneTreble","toneTrebleVal","tonePresence","tonePresenceVal",
      "dlyToggle","dlyControls","dlyTime","dlyTimeVal","dlyFb","dlyFbVal","dlyMix","dlyMixVal",
      "tunerToggle","tunerDisplay","tunerNote","tunerNeedle","tunerCents"
     ].forEach(function (id) { els[id] = $(id); });
@@ -1529,17 +1529,17 @@
       });
     });
 
-    // ── TS9 ──
-    els.tsToggle.addEventListener("change", function () {
-      P.setTsOn(els.tsToggle.checked);
-      els.tsControls.classList.toggle("hidden", !els.tsToggle.checked);
+    // ── 綠推 Overdrive ──
+    els.odToggle.addEventListener("change", function () {
+      P.setOdOn(els.odToggle.checked);
+      els.odControls.classList.toggle("hidden", !els.odToggle.checked);
     });
-    els.tsDrive.addEventListener("input", function () { P.setTsDrive(pct(els.tsDrive)); els.tsDriveVal.textContent = els.tsDrive.value + "%"; });
-    els.tsTone.addEventListener("input", function () { P.setTsTone(pct(els.tsTone)); els.tsToneVal.textContent = els.tsTone.value + "%"; });
-    els.tsLevel.addEventListener("input", function () { P.setTsLevel(pct(els.tsLevel)); els.tsLevelVal.textContent = els.tsLevel.value + "%"; });
+    els.odDrive.addEventListener("input", function () { P.setOdDrive(pct(els.odDrive)); els.odDriveVal.textContent = els.odDrive.value + "%"; });
+    els.odTone.addEventListener("input", function () { P.setOdTone(pct(els.odTone)); els.odToneVal.textContent = els.odTone.value + "%"; });
+    els.odLevel.addEventListener("input", function () { P.setOdLevel(pct(els.odLevel)); els.odLevelVal.textContent = els.odLevel.value + "%"; });
 
-    // ── JCM800 tone stack ──
-    [["jcmBass","bass"],["jcmMid","mid"],["jcmTreble","treble"],["jcmPresence","presence"]].forEach(function (pair) {
+    // ── 英倫疊音 tone stack ──
+    [["toneBass","bass"],["toneMid","mid"],["toneTreble","treble"],["tonePresence","presence"]].forEach(function (pair) {
       var el = els[pair[0]], lab = els[pair[0] + "Val"];
       el.addEventListener("input", function () { P.setTone(pair[1], pct(el)); lab.textContent = el.value + "%"; });
     });
@@ -1562,9 +1562,9 @@
     function pushAllFx() {
       P.setAmpDrive(driveV()); P.setAmpLevel(levelV());
       P.setGateThreshold(gateThreshLin()); P.setGateOn(els.gateToggle.checked);
-      P.setTsDrive(pct(els.tsDrive)); P.setTsTone(pct(els.tsTone)); P.setTsLevel(pct(els.tsLevel)); P.setTsOn(els.tsToggle.checked);
-      P.setTone("bass", pct(els.jcmBass)); P.setTone("mid", pct(els.jcmMid));
-      P.setTone("treble", pct(els.jcmTreble)); P.setTone("presence", pct(els.jcmPresence));
+      P.setOdDrive(pct(els.odDrive)); P.setOdTone(pct(els.odTone)); P.setOdLevel(pct(els.odLevel)); P.setOdOn(els.odToggle.checked);
+      P.setTone("bass", pct(els.toneBass)); P.setTone("mid", pct(els.toneMid));
+      P.setTone("treble", pct(els.toneTreble)); P.setTone("presence", pct(els.tonePresence));
       P.setDelayOn(els.dlyToggle.checked); P.setDelayTime(dlyTimeV()); P.setDelayFb(dlyFbV()); P.setDelayMix(dlyMixV());
     }
     showGateThresh();
@@ -1892,16 +1892,16 @@
     ctx.restore();
   }
 
-  // 單一知名音箱(cabinet)：依品牌配色，含控制面板/喇叭網/logo板
+  // 舞台音箱(cabinet)：依風格配色，含控制面板/喇叭網/標牌（皆為原創配色，非任何品牌之重製）
   var AMP_STYLE = {
-    marshall: { body: "#0b0b0d", grille: "#1b1b20", accent: "#d9b24a", panel: "#d9b24a" },  // 黑箱金牌白字
-    orange:   { body: "#d5641b", grille: "#0c0c0c", accent: "#f2f2f2", panel: "#f4f4f4" },  // 橘箱
-    fender:   { body: "#111319", grille: "#3a4150", accent: "#c7ccd6", panel: "#c7ccd6" },  // 黑箱銀網
-    vox:      { body: "#14110d", grille: "#c9bfa6", accent: "#8a6a2a", panel: "#e9dcc0" },  // 鑽石網米色
-    mesa:     { body: "#0c0c0e", grille: "#161616", accent: "#7a1414", panel: "#7a1414" }   // 黑箱紅標
+    british: { body: "#0b0b0d", grille: "#1b1b20", accent: "#d9b24a", panel: "#d9b24a" },  // 黑箱金牌白字
+    amber:    { body: "#d5641b", grille: "#0c0c0c", accent: "#f2f2f2", panel: "#f4f4f4" },  // 橘箱
+    tweed:    { body: "#111319", grille: "#3a4150", accent: "#c7ccd6", panel: "#c7ccd6" },  // 黑箱銀網
+    retro:    { body: "#14110d", grille: "#c9bfa6", accent: "#8a6a2a", panel: "#e9dcc0" },  // 鑽石網米色
+    boutique: { body: "#0c0c0e", grille: "#161616", accent: "#7a1414", panel: "#7a1414" }   // 黑箱紅標
   };
   function drawAmp(x, baseY, w, h, brand, hy, st) {
-    var s = AMP_STYLE[brand] || AMP_STYLE.marshall, top = baseY - h;
+    var s = AMP_STYLE[brand] || AMP_STYLE.british, top = baseY - h;
     hy = hy || 0; st = st || 0;
     var puls = 0.5 + 0.5 * Math.sin(st * 9 + x * 0.05);            // 低頻脈動(像喇叭在推空氣)
     ctx.save();
@@ -1921,14 +1921,14 @@
     ctx.beginPath(); ctx.arc(x + w / 2 - 12, top + 8 + Math.max(4, h * 0.08) / 2, 2.4, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
   }
-  // 音箱 backline：舞台後方一整排知名音箱(在樂手左後方)，數量隨熱度變多
+  // 音箱 backline：舞台後方一整排音箱(在樂手左後方)，數量隨熱度變多
   function drawAmpBackline(cx, deckTopY, hgt, hy, st) {
-    var brands = ["marshall", "orange", "fender", "vox", "mesa"];
+    var styles = ["british", "amber", "tweed", "retro", "boutique"];   // 配色風格名（非品牌）
     var n = 4 + (hy > 0.5 ? 1 : 0);                       // 4~5 座
     var ah = hgt * 0.46, aw = hgt * 0.38, baseY = deckTopY + 4;   // 音箱加寬(0.26→0.38)
     var startX = stageLeftX() + aw * 0.55, endX = W - aw * 0.55;  // 沿整個舞台後方鋪開(樂手站前方中央)
     var gap = n > 1 ? (endX - startX) / (n - 1) : 0;
-    for (var i = 0; i < n; i++) drawAmp(startX + gap * i, baseY, aw, ah, brands[i % brands.length], hy, st || 0);
+    for (var i = 0; i < n; i++) drawAmp(startX + gap * i, baseY, aw, ah, styles[i % styles.length], hy, st || 0);
   }
 
   // 其他團員(黑色剪影)共用身體：腿＋身＋頭＋舞台邊光；回傳肩/頭座標供加樂器

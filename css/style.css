@@ -420,7 +420,7 @@ body:has(#setupPanel:not(.hidden)) #menuBg { opacity: 1; }
   .tos-bar .tos-txt { font-size: 11.5px; }
 }
 
-/* ═══════════ 效果器鏈（Noise Gate / TS9 / JCM800）═══════════ */
+/* ═══════════ 效果器鏈（Noise Gate / 綠推 Overdrive / 英倫疊音）═══════════ */
 .fx-chain { font-size: 11.5px; line-height: 1.6; color: var(--muted); padding: 6px 9px;
   border-radius: 8px; background: rgba(255,255,255,.03); border: 1px solid var(--line); }
 .fx-chain b { color: #e0c08a; }
