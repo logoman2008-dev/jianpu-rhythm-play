@@ -3,8 +3,56 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>簡譜音遊 · Jianpu Rhythm</title>
-  <link rel="stylesheet" href="css/style.css?v=20260727b" />
+
+  <!-- ── SEO：讓 Google 能收錄（site: 搜得到）；標題含關鍵字 ── -->
+  <title>簡譜音遊 Jianpu Rhythm｜Guitar Pro 樂譜轉簡譜．對麥克風彈真吉他的節奏遊戲</title>
+  <meta name="description" content="免費線上吉他練習遊戲：匯入 Guitar Pro（.gp/.gpx/.gp5）樂譜，自動轉成六線譜與簡譜，對著麥克風彈真吉他闖關，即時判定音高與節奏。內建調音器、虛擬音箱、節拍器。純網頁、免安裝，樂譜只在你的瀏覽器內解析、不會上傳。" />
+  <meta name="keywords" content="簡譜音遊,Jianpu Rhythm,吉他練習,Guitar Pro,簡譜,六線譜,TAB,吉他遊戲,節奏遊戲,線上調音器,吉他自學,音高辨識" />
+  <meta name="author" content="簡譜音遊 Jianpu Rhythm" />
+  <meta name="application-name" content="簡譜音遊 Jianpu Rhythm" />
+  <meta name="robots" content="index, follow, max-image-preview:large" />
+  <meta name="googlebot" content="index, follow" />
+  <meta name="theme-color" content="#15151a" />
+  <link rel="canonical" href="https://logoman2008-dev.github.io/jianpu-rhythm-play/" />
+
+  <!-- Open Graph（分享到 LINE / FB / IG 時的預覽） -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="簡譜音遊 Jianpu Rhythm" />
+  <meta property="og:locale" content="zh_TW" />
+  <meta property="og:url" content="https://logoman2008-dev.github.io/jianpu-rhythm-play/" />
+  <meta property="og:title" content="簡譜音遊 Jianpu Rhythm｜Guitar Pro 樂譜轉簡譜的吉他節奏遊戲" />
+  <meta property="og:description" content="匯入 Guitar Pro 樂譜自動轉六線譜＋簡譜，對著麥克風彈真吉他闖關。內建調音器與虛擬音箱，純網頁免安裝。" />
+  <meta property="og:image" content="https://logoman2008-dev.github.io/jianpu-rhythm-play/assets/menu-bg.jpg" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="簡譜音遊 Jianpu Rhythm｜對麥克風彈真吉他的節奏遊戲" />
+  <meta name="twitter:description" content="匯入 Guitar Pro 樂譜自動轉六線譜＋簡譜，對著麥克風彈真吉他闖關。" />
+  <meta name="twitter:image" content="https://logoman2008-dev.github.io/jianpu-rhythm-play/assets/menu-bg.jpg" />
+
+  <!-- 結構化資料：讓搜尋引擎知道這是一個網頁應用程式 -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "簡譜音遊 Jianpu Rhythm",
+    "alternateName": ["簡譜音遊", "Jianpu Rhythm"],
+    "url": "https://logoman2008-dev.github.io/jianpu-rhythm-play/",
+    "applicationCategory": "GameApplication",
+    "operatingSystem": "Web browser",
+    "inLanguage": "zh-Hant",
+    "description": "匯入 Guitar Pro 樂譜自動轉成六線譜與簡譜，對著麥克風彈真吉他闖關的線上節奏遊戲。內建調音器、虛擬音箱與節拍器；樂譜僅在瀏覽器內解析，不會上傳。",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "TWD" },
+    "featureList": [
+      "Guitar Pro 檔（.gp/.gpx/.gp5/.gp4/.gp3）解析",
+      "自動轉六線譜與簡譜（首調／可動 Do）",
+      "麥克風即時音高辨識判定",
+      "線上吉他調音器",
+      "虛擬音箱（破音／Delay／限幅）",
+      "節拍器與速度調整"
+    ]
+  }
+  </script>
+
+  <link rel="stylesheet" href="css/style.css?v=20260727c" />
 </head>
 <body>
   <!-- 首次進站啟動畫：顯示海報＋讀取動畫，約 2 秒後自動淡出進選單（純 CSS，回選單不重載故不再出現） -->
@@ -15,7 +63,7 @@
     </div>
   </div>
   <div id="menuBg"></div>
-  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260727b" loop preload="auto"></audio>
+  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260727c" loop preload="auto"></audio>
   <div class="app">
     <header class="topbar">
       <div class="logo">簡譜音遊 <span>Jianpu Rhythm</span></div>
@@ -125,8 +173,8 @@
                 <option value="tesla">特斯拉（中分八字鬍）</option>
                 <option value="paganini">帕格尼尼（狂亂長黑髮）</option>
                 <option value="confucius">孔子（儒巾長鬍）</option>
-                <!-- 嚕嚕安：前台預設隱藏，需後台把 app_config.lulan_visible 設為 "1" 才會顯示（見 game.js applyLulanVisibility） -->
-                <option value="lulan" hidden style="display:none">閃電嚕嚕安（挺舉）</option>
+                <!-- 嚕嚕安：前台看得到（🔒 鎖著），只能由老師在管理後台「角色開通」把該 Email 開通後才可用 -->
+                <option value="lulan">閃電嚕嚕安（挺舉）</option>
                 <option value="sisters">曾玹 ＆ 🍋（姊妹·左右合體）</option>
                 <option value="none">不顯示角色</option>
               </select>
@@ -136,7 +184,8 @@
               <input type="file" id="bgInput" accept="image/*" />
             </label>
           </div>
-          <div id="lulanUnlock"></div>
+          <!-- 帳號（任何人都能用 Email 建立）：只用來跨裝置記住已解鎖角色，不含曲庫權限 -->
+          <div id="accountBox"></div>
           <label class="slider-field" id="bgOpacityField">
             <span>背景照透明度<b id="bgOpacityVal">55%</b></span>
             <input type="range" id="bgOpacityRange" min="10" max="100" step="5" value="55" />
@@ -341,15 +390,15 @@
   <script src="lib/alphaTab.min.js"></script>
   <!-- 登入 / 付費驗證（Supabase）。免費曲不需要這些也能玩；離線會自動略過。 -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/supabase-config.js?v=20260727b"></script>
-  <script src="js/auth.js?v=20260727b"></script>
+  <script src="js/supabase-config.js?v=20260727c"></script>
+  <script src="js/auth.js?v=20260727c"></script>
   <!-- 遊戲程式 -->
-  <script src="js/theory.js?v=20260727b"></script>
-  <script src="js/gp-loader.js?v=20260727b"></script>
-  <script src="js/audio.js?v=20260727b"></script>
-  <script src="js/pitch.js?v=20260727b"></script>
-  <script src="js/songs.js?v=20260727b"></script>
-  <script src="js/game.js?v=20260727b"></script>
-  <script src="js/library.js?v=20260727b"></script>
+  <script src="js/theory.js?v=20260727c"></script>
+  <script src="js/gp-loader.js?v=20260727c"></script>
+  <script src="js/audio.js?v=20260727c"></script>
+  <script src="js/pitch.js?v=20260727c"></script>
+  <script src="js/songs.js?v=20260727c"></script>
+  <script src="js/game.js?v=20260727c"></script>
+  <script src="js/library.js?v=20260727c"></script>
 </body>
 </html>

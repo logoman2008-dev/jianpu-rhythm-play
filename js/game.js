@@ -133,13 +133,12 @@
     updateOwnGateTip();
     if (window.JianpuAuth && window.JianpuAuth.onChange) window.JianpuAuth.onChange(updateOwnGateTip);
 
-    // 解鎖 UI：嚕嚕安「角色」密碼在吉他手選單下方；Email 解鎖＋購買連結在「我的曲庫」；付費資料夾各自密碼在清單。
-    loadUnlockConfig();
+    // UI 分工：【帳號】(記住角色) 在吉他手選單下方；【進階版】(自己上傳無限) 在「我的曲庫」；付費資料夾各自密碼在清單。
     loadPaidFolders();          // 讀取後台的付費資料夾上鎖設定
     renderLibUnlock();
-    renderLulanUnlock();
-    // 已用 Email 解鎖過 → 頁面載入時也從帳號同步一次已解鎖角色(拉別台裝置新解的)；後端未就緒就 onChange 再試一次
-    if (isEmailUnlocked() && currentUnlockEmail()) {
+    renderAccountBox();
+    // 已登入帳號 → 開機時同步一次角色解鎖（拉老師剛開通的、或別台裝置新解的）；後端未就緒就 onChange 再試一次
+    if (accountEmail()) {
       pullCharUnlocks();
       if (window.JianpuAuth && window.JianpuAuth.onChange) { var _p = false; window.JianpuAuth.onChange(function () { if (!_p) { _p = true; pullCharUnlocks(); } }); }
     }
@@ -182,7 +181,6 @@
       try { localStorage.setItem(GUITARIST_KEY, guitaristId); } catch (e) {}
     });
     refreshGuitaristLocks();                                          // 依解鎖狀態標示🔒/停用
-    applyLulanVisibility();                                           // 嚕嚕安角色預設隱藏（等後台 lulan_visible 回來才可能顯示）
     // 音色固定：High Gain（重破音）＋ 合成音箱（內建 IR）；選單已移除、不再由使用者切換
     A.setTone("high");
     A.setCab("synth");
@@ -608,66 +606,31 @@
   }
 
   // ===================================================================
-  // 共用密碼解鎖（教材＋嚕嚕安角色）＋ 角色解鎖進度（S 級）
-  //   - 解鎖密碼預設 lulu9453，可由「管理後台」改（存 Supabase app_config 的 SHA-256，前端只拿到 hash）。
-  //   - 輸入正確密碼 → 這個瀏覽器永久解鎖：付費教材可載入、每日限次解除、嚕嚕安角色開放。
-  //   - 其他吉他手角色 → 累積幾首歌拿到 S 級才逐一解鎖。
+  // 帳號（記住角色解鎖）＋ 角色解鎖進度（S 級）
+  //   ★ 兩件事完全分開，互不影響：
+  //     (A)【帳號】任何人都能用 Email 免費建立 → 只用來「跨裝置記住已解鎖的角色」。
+  //         不含任何曲庫權限。資料存 Supabase char_unlocks（RPC 對 anon 開放）。
+  //     (B)【進階版】付費 → 自己上傳的譜無限解析（我的曲庫那一欄，走 allowed_emails）。
+  //   ★ 嚕嚕安角色：前台看得到但鎖著，**只能由老師在管理後台「角色開通」把該 Email 開通**
+  //     （寫入 char_unlocks.data.lulan）。已無密碼解鎖這條路。
+  //   ★ 其他吉他手角色 → 累積幾首歌拿到 S 級才逐一解鎖（存本機，登入帳號後跟著帳號跑）。
   // ===================================================================
-  var DEFAULT_UNLOCK_PW = "lulu9453";
-  var UNLOCK_KEY = "jianpu_unlocked_v1";          // 密碼解鎖（付費教材＋嚕嚕安角色＋自己上傳無限）
-  var EMAIL_UNLOCK_KEY = "jianpu_email_unlocked"; // Email 解鎖（只讓「自己上傳的譜」無限；不開放付費教材/角色）
-  var _unlockHash = null;                       // 後台設定的密碼 SHA-256(hex)；null=用預設密碼比對
-  function isUnlocked() { try { return localStorage.getItem(UNLOCK_KEY) === "1"; } catch (e) { return false; } }     // = 密碼解鎖（付費教材用這個把關）
+  var UNLOCK_KEY = "jianpu_unlocked_v1";          // 本機快取：這台是否已取得「嚕嚕安角色」
+  var EMAIL_UNLOCK_KEY = "jianpu_email_unlocked"; // 本機快取：進階版（自己上傳的譜無限）
+  var ACCOUNT_KEY = "jianpu_account_email";       // 目前登入的帳號 Email（只管角色記憶）
+  function isUnlocked() { try { return localStorage.getItem(UNLOCK_KEY) === "1"; } catch (e) { return false; } }
   function setUnlocked(v) { try { if (v) localStorage.setItem(UNLOCK_KEY, "1"); else localStorage.removeItem(UNLOCK_KEY); } catch (e) {} }
   function isEmailUnlocked() { try { return localStorage.getItem(EMAIL_UNLOCK_KEY) === "1"; } catch (e) { return false; } }
   function setEmailUnlocked(v) { try { if (v) localStorage.setItem(EMAIL_UNLOCK_KEY, "1"); else localStorage.removeItem(EMAIL_UNLOCK_KEY); } catch (e) {} }
-  function sha256hex(str) {
+  function accountEmail() { try { return localStorage.getItem(ACCOUNT_KEY) || ""; } catch (e) { return ""; } }
+  function setAccountEmail(e) { try { if (e) localStorage.setItem(ACCOUNT_KEY, e); else localStorage.removeItem(ACCOUNT_KEY); } catch (x) {} }
+  function sha256hex(str) {                       // 仍供「付費資料夾各自密碼」使用
     try {
       var buf = new TextEncoder().encode(str);
       return crypto.subtle.digest("SHA-256", buf).then(function (h) {
         return [].map.call(new Uint8Array(h), function (b) { return b.toString(16).padStart(2, "0"); }).join("");
       });
     } catch (e) { return Promise.reject(e); }
-  }
-  function verifyUnlockPw(pw) {                  // 回傳 Promise<boolean>
-    pw = (pw || "").trim();
-    if (!pw) return Promise.resolve(false);
-    if (_unlockHash) return sha256hex(pw).then(function (h) { return h === _unlockHash; }).catch(function () { return pw === DEFAULT_UNLOCK_PW; });
-    return Promise.resolve(pw === DEFAULT_UNLOCK_PW);
-  }
-  // 開機時向後台拿目前設定的密碼 hash（沒設定或連不到 → 用預設密碼）
-  function loadUnlockConfig() {
-    var A = window.JianpuAuth;
-    if (!A || !A.fetchConfig) return;
-    A.fetchConfig("unlock_pw_hash").then(function (v) { if (v) _unlockHash = String(v).toLowerCase(); }).catch(function () {});
-    // 嚕嚕安角色：前台預設完全隱藏，只有後台把 app_config.lulan_visible 設成 "1" 才會出現
-    A.fetchConfig("lulan_visible")
-      .then(function (v) { setLulanVisible(v === "1" || v === 1 || String(v).toLowerCase() === "true"); })
-      .catch(function () { setLulanVisible(false); });
-  }
-
-  // ---- 嚕嚕安角色的「前台顯示」開關（由後台 app_config.lulan_visible 控制）----
-  //   預設 false＝前台看不到這個角色（選單選項與解鎖欄位都不出現）；後台開啟後才會顯示（仍需密碼/Email 解鎖）。
-  var _lulanVisible = false;
-  function lulanVisible() { return _lulanVisible; }
-  function setLulanVisible(v) { _lulanVisible = !!v; applyLulanVisibility(); }
-  function applyLulanVisibility() {
-    var sel = els.guitaristSelect;
-    if (sel) {
-      var op = sel.querySelector('option[value="lulan"]');
-      if (op) {
-        op.hidden = !_lulanVisible;
-        op.style.display = _lulanVisible ? "" : "none";   // 部分瀏覽器不吃 option.hidden，補上 display
-        if (!_lulanVisible && sel.value === "lulan") {     // 已選到→退回預設角色
-          sel.value = "beethoven"; guitaristId = "beethoven";
-          try { localStorage.setItem(GUITARIST_KEY, "beethoven"); } catch (e) {}
-        }
-      }
-    }
-    var box = document.getElementById("lulanUnlock");
-    if (box) box.style.display = _lulanVisible ? "" : "none";
-    refreshGuitaristLocks();
-    renderLulanUnlock();
   }
 
   // ---- 角色解鎖 ----
@@ -680,7 +643,7 @@
   function charNeed(id) { var i = LOCKED_CHARS.indexOf(id); return i < 0 ? 0 : (i + 1); }
   function charUnlocked(id) {
     if (id === "none" || id === "beethoven") return true;
-    if (id === "lulan") return _lulanVisible && isUnlocked();   // 後台沒開啟 → 前台完全不能選
+    if (id === "lulan") return isUnlocked();                    // 由老師在管理後台開通該帳號後才可用
     var i = LOCKED_CHARS.indexOf(id);
     return i < 0 ? true : sClearCount() >= (i + 1);
   }
@@ -692,19 +655,22 @@
       if (charUnlocked(id)) { op.textContent = base; op.disabled = false; }
       else {
         op.disabled = true;
-        op.textContent = "🔒 " + base + (id === "lulan" ? "｜輸入解鎖密碼開放" : "｜需 " + charNeed(id) + " 首 S 級");
+        op.textContent = "🔒 " + base + (id === "lulan" ? "｜需老師開通帳號" : "｜需 " + charNeed(id) + " 首 S 級");
       }
     });
     if (sel.value && !charUnlocked(sel.value)) { sel.value = "beethoven"; guitaristId = "beethoven"; try { localStorage.setItem(GUITARIST_KEY, "beethoven"); } catch (e) {} }
   }
   function charName(id) { var sel = els.guitaristSelect; if (!sel) return id; var op = sel.querySelector('option[value="' + id + '"]'); return op ? (op.getAttribute("data-base") || op.textContent) : id; }
 
-  // 嚕嚕安角色密碼解鎖成功：只開放「嚕嚕安角色」，不影響其他功能
-  function applyPasswordUnlock() {
+  // 帳號被開通「嚕嚕安」：開放該角色並自動選上（只影響角色，不影響曲庫權限）
+  function applyLulanGrant(autoSelect) {
     setUnlocked(true);
-    pushCharUnlocks();                    // 嚕嚕安解鎖 → 也記到 Email 帳號(若已用 Email 解鎖)
-    refreshGuitaristLocks(); renderLulanUnlock();
-    if (els.guitaristSelect) { els.guitaristSelect.value = "lulan"; guitaristId = "lulan"; try { localStorage.setItem(GUITARIST_KEY, "lulan"); } catch (e) {} }   // 自動選上嚕嚕安
+    pushCharUnlocks();
+    refreshGuitaristLocks(); renderAccountBox();
+    if (autoSelect && els.guitaristSelect) {
+      els.guitaristSelect.value = "lulan"; guitaristId = "lulan";
+      try { localStorage.setItem(GUITARIST_KEY, "lulan"); } catch (e) {}
+    }
   }
   // Email 解鎖成功：只讓「自己上傳的譜」無限（不開放付費教材/角色）
   function applyEmailUnlock() {
@@ -716,15 +682,13 @@
   //   本機解鎖狀態＝哪些歌拿過 S(jianpu_s_songs)＋嚕嚕安密碼(jianpu_unlocked_v1)。
   //   Email 登入時：從帳號拉回雲端解鎖 → 與本機「聯集」→ 更新 UI → 回推聯集(讓雲端也含本機新解的)。
   //   之後每次多解一個角色，就自動推上帳號。後端未建 RPC 時全部靜默略過(照舊只存本機)。
-  function currentUnlockEmail() { try { return localStorage.getItem("jianpu_unlock_email") || ""; } catch (e) { return ""; } }
   function pushCharUnlocks() {
-    if (!isEmailUnlocked()) return;                       // 沒用 Email 解鎖就不上傳
-    var email = currentUnlockEmail(); if (!email) return;
+    var email = accountEmail(); if (!email) return;        // 沒登入帳號就只存本機
     var A = window.JianpuAuth; if (!A || !A.saveCharUnlocks) return;
     A.saveCharUnlocks(email, { s: sClears(), lulan: isUnlocked() });
   }
   function pullCharUnlocks(email) {
-    email = (email || currentUnlockEmail()).trim().toLowerCase(); if (!email) return;
+    email = (email || accountEmail()).trim().toLowerCase(); if (!email) return;
     var A = window.JianpuAuth; if (!A || !A.getCharUnlocks) return;
     A.getCharUnlocks(email).then(function (remote) {
       if (!remote) { pushCharUnlocks(); return; }          // 雲端還沒有 → 直接把本機推上去
@@ -734,8 +698,11 @@
       (remote.s || []).forEach(function (k) { if (k) set[k] = 1; });   // 聯集「拿過 S 的歌」
       var merged = Object.keys(set);
       if (merged.length !== before) { try { localStorage.setItem(SCLEAR_KEY, JSON.stringify(merged)); } catch (e) {} changed = true; }
-      if (remote.lulan && !isUnlocked()) { setUnlocked(true); changed = true; }   // 雲端有嚕嚕安 → 本機也開
-      if (changed) { refreshGuitaristLocks(); renderLulanUnlock(); }
+      if (remote.lulan && !isUnlocked()) { setUnlocked(true); changed = true; }   // 帳號已被開通嚕嚕安 → 這台也開
+      if (!remote.lulan && isUnlocked()) { setUnlocked(false); changed = true; }  // 帳號被老師收回 → 這台也關
+      if (remote.all) unlockAllChars();
+      if (changed) { refreshGuitaristLocks(); }
+      renderAccountBox();
       pushCharUnlocks();                                   // 回推聯集(雲端補上本機獨有的)
     });
   }
@@ -747,51 +714,68 @@
     for (var i = 0; a.length < need && i < 100; i++) { var k = "vip_all_" + i; if (a.indexOf(k) < 0) a.push(k); }
     try { localStorage.setItem(SCLEAR_KEY, JSON.stringify(a)); } catch (e) {}
     setUnlocked(true);                                                 // 開嚕嚕安
-    refreshGuitaristLocks(); renderLulanUnlock();
+    refreshGuitaristLocks(); renderAccountBox();
     pushCharUnlocks();                                                 // 若後端 char_unlocks 已建，順便存回帳號
   }
   // 購買解鎖的 Google 訂購表單（學生填完→老師收款→回傳解鎖密碼）
   var ORDER_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScwb4iexfUwKLuf5AHumcz0NpPJfcYM6W5V7fJDw5_1sxqrXQ/viewform";
-  // 嚕嚕安角色解鎖控制（在吉他手選單下方）：密碼只解鎖「這個角色」，不影響其他功能
-  function renderLulanUnlock() {
-    var box = document.getElementById("lulanUnlock"); if (!box) return;
-    if (!_lulanVisible) { box.innerHTML = ""; box.style.display = "none"; return; }   // 後台未開啟→前台連解鎖欄都不顯示
-    box.style.display = "";
-    if (isUnlocked()) { box.innerHTML = '<div class="paid-unlock unlocked">🔓 <b>閃電嚕嚕安角色已解鎖</b>（在上方「吉他手」選單即可選用）。</div>'; return; }
-    box.innerHTML = '<div class="paid-unlock">' +
-      '<div class="pu-tip">🔒 「閃電嚕嚕安」角色可用<b>密碼</b>或<b>後台開通的 Email</b>解鎖。</div>' +
-      '<div class="pu-row"><input type="password" class="lulanpw-input" placeholder="輸入嚕嚕安角色密碼" autocomplete="off" />' +
-      '<button type="button" class="btn small lulanpw-btn">解鎖角色</button></div>' +
-      '<div class="pu-row"><input type="email" class="lulanmail-input" placeholder="或輸入已開通的 Email" autocomplete="email" />' +
-      '<button type="button" class="btn small ghost lulanmail-btn">Email 開通</button></div>' +
-      '<div class="lulanpw-msg"></div></div>';
-    var inp = box.querySelector(".lulanpw-input"), btn = box.querySelector(".lulanpw-btn"), msg = box.querySelector(".lulanpw-msg");
-    var mailInp = box.querySelector(".lulanmail-input"), mailBtn = box.querySelector(".lulanmail-btn");
-    function go() {
-      verifyUnlockPw(inp.value).then(function (ok) {
-        if (ok) applyPasswordUnlock();
-        else { msg.textContent = "密碼不對，再確認一下～"; msg.style.color = "#ff9a9a"; }
+  // ---- 帳號區塊（吉他手選單下方）----
+  //   任何人都能用 Email 免費建立帳號，唯一用途＝跨裝置記住「已解鎖的角色」。
+  //   ★ 帳號不含任何曲庫權限（自己上傳的譜要無限，得另外升級進階版，在「我的曲庫」那一欄）。
+  //   ★ 嚕嚕安角色只能由老師在管理後台「角色開通」把該 Email 開通後才會出現在這個帳號上。
+  function renderAccountBox() {
+    var box = document.getElementById("accountBox"); if (!box) return;
+    var mail = accountEmail();
+    if (mail) {
+      var chars = [];
+      if (isUnlocked()) chars.push("閃電嚕嚕安");
+      var n = sClearCount(), extra = Math.min(n, LOCKED_CHARS.length);
+      if (extra > 0) chars.push("樂手 +" + extra + " 位");
+      box.innerHTML = '<div class="paid-unlock unlocked">' +
+        '<div>👤 <b>已登入</b>：' + escapeHtml(mail) +
+        '<button type="button" class="btn small ghost acct-out" style="margin-left:8px">登出</button></div>' +
+        '<div class="pu-tip" style="margin-top:4px">已記住的角色：<b>' + (chars.length ? escapeHtml(chars.join("、")) : "尚無") + '</b>' +
+        '　<span style="opacity:.75">（換裝置用同一 Email 登入就會帶過去）</span></div>' +
+        (isUnlocked() ? "" : '<div class="pu-tip" style="margin-top:2px">🔒 「閃電嚕嚕安」需老師在後台開通這個 Email。開通後按一下「重新同步」即可。' +
+          '<button type="button" class="btn small ghost acct-sync" style="margin-left:6px">重新同步</button></div>') +
+        '</div>';
+      var out = box.querySelector(".acct-out");
+      if (out) out.addEventListener("click", function () {
+        if (!confirm("登出後這台裝置就不會再同步角色解鎖（本機已解鎖的仍保留）。\n確定要登出嗎？")) return;
+        setAccountEmail(""); renderAccountBox(); setStatus("已登出帳號。", false);
       });
+      var sync = box.querySelector(".acct-sync");
+      if (sync) sync.addEventListener("click", function () { setStatus("同步中…", false); pullCharUnlocks(mail); });
+      return;
     }
-    function goMail() {   // 用「後台開通的 Email」解鎖：管理者→全解；一般→查後端 char_unlocks 是否開通嚕嚕安
-      var email = (mailInp.value || "").trim().toLowerCase();
-      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { msg.textContent = "請輸入正確的 Email。"; msg.style.color = "#ff9a9a"; return; }
-      if (isAllUnlockEmail(email)) { try { localStorage.setItem("jianpu_unlock_email", email); } catch (e) {} unlockAllChars(); setStatus("管理者帳號：已開通全部角色 ✓", false); return; }
+    box.innerHTML = '<div class="paid-unlock">' +
+      '<div class="pu-tip">👤 <b>建立／登入帳號（免費）</b>：用 Email 就能建立，作用是<b>跨裝置記住你解鎖的角色</b>。' +
+      '<br><span style="opacity:.8">不需要付費，也不會開放曲庫權限。「閃電嚕嚕安」需老師在後台開通你的 Email。</span></div>' +
+      '<div class="pu-row"><input type="email" class="acct-email" placeholder="輸入 Email 建立／登入" autocomplete="email" />' +
+      '<button type="button" class="btn small acct-in">登入</button></div>' +
+      '<div class="acct-msg"></div></div>';
+    var inp = box.querySelector(".acct-email"), btn = box.querySelector(".acct-in"), msg = box.querySelector(".acct-msg");
+    function setMsg(t, c) { msg.textContent = t; msg.style.color = c || "#d7c9ac"; }
+    function go() {
+      var email = (inp.value || "").trim().toLowerCase();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { setMsg("請輸入正確的 Email。", "#ff9a9a"); return; }
       var A = window.JianpuAuth;
-      if (!A || !A.getCharUnlocks) { msg.textContent = "後端尚未設定，暫時無法用 Email 開通（請洽老師）。"; msg.style.color = "#ff9a9a"; return; }
-      msg.textContent = "查詢中…"; msg.style.color = "#d7c9ac";
+      if (!A || !A.getCharUnlocks) { setMsg("目前連不到伺服器，角色只會存在這台裝置。", "#ffb454"); setAccountEmail(email); renderAccountBox(); return; }
+      setMsg("登入中…");
+      if (isAllUnlockEmail(email)) {                       // 管理者帳號→全部角色
+        setAccountEmail(email); unlockAllChars();
+        setStatus("管理者帳號：已開通全部角色 ✓", false); return;
+      }
       A.getCharUnlocks(email).then(function (remote) {
-        if (remote && (remote.lulan || remote.all)) {
-          try { localStorage.setItem("jianpu_unlock_email", email); } catch (e) {}
-          applyPasswordUnlock();                 // 開嚕嚕安(會重繪成已解鎖)
-          if (remote.all) unlockAllChars();
-        } else { msg.textContent = "這個 Email 尚未被開通嚕嚕安（請洽老師開通）。"; msg.style.color = "#ffb454"; }
-      }).catch(function () { msg.textContent = "查詢失敗，稍後再試。"; msg.style.color = "#ff9a9a"; });
+        setAccountEmail(email);                            // 帳號一律建立（雲端沒資料就由 pushCharUnlocks 建一筆）
+        if (remote && remote.all) { unlockAllChars(); return; }
+        if (remote && remote.lulan) { applyLulanGrant(true); setStatus("帳號已開通「閃電嚕嚕安」，已自動選上 ✓", false); return; }
+        pullCharUnlocks(email);                            // 同步 S 級進度＋回推本機
+        renderAccountBox();
+      }).catch(function () { setAccountEmail(email); renderAccountBox(); setMsg("同步失敗，角色暫時只存這台。", "#ffb454"); });
     }
     btn.addEventListener("click", go);
     inp.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
-    mailBtn.addEventListener("click", goMail);
-    mailInp.addEventListener("keydown", function (e) { if (e.key === "Enter") goMail(); });
   }
 
   // 每台瀏覽器一組固定裝置碼（限制一個 Email 最多 4 台用）
@@ -847,7 +831,7 @@
       box.innerHTML = '<div class="paid-unlock unlocked">🔓 <b>進階版已啟用</b>：樂譜解析次數與本機曲庫容量皆無上限。' +
         '<span class="lu-acct" style="color:#9fb0c8;font-size:12px;margin-left:4px"></span>' +
         '<button type="button" class="btn small ghost lu-logout" style="margin-left:8px">登出帳號</button>' +
-        '<div class="pu-tip" style="margin-top:4px">💡 此帳號會<b>記住你解鎖的角色</b>：換裝置用同一 Email 解鎖，已解鎖的角色會一起帶過去。</div></div>';
+        '<div class="pu-tip" style="margin-top:4px">💡 這是<b>進階版（工具）</b>的開通狀態。<b>角色解鎖</b>是另一件事，由上方「吉他手」下面的<b>帳號</b>負責記憶。</div></div>';
       var acct = box.querySelector(".lu-acct"); if (acct && savedEmail) acct.textContent = "（帳號：" + savedEmail + "）";
       var lo = box.querySelector(".lu-logout");
       if (lo) lo.addEventListener("click", function () {
@@ -876,10 +860,10 @@
     var inp = box.querySelector(".lu-email"), btn = box.querySelector(".lu-btn"), msg = box.querySelector(".lu-msg"), resetBtn = box.querySelector(".lu-reset");
     function setMsg(t, c) { msg.textContent = t; msg.style.color = c || "#d7c9ac"; }
     function emailVal() { var e = (inp.value || "").trim(); return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e) ? e : null; }
-    function onOk(email) { try { localStorage.setItem("jianpu_unlock_email", email.toLowerCase()); } catch (e) {} applyEmailUnlock(); pullCharUnlocks(email); }   // 登入成功→從帳號還原已解鎖角色
+    function onOk(email) { try { localStorage.setItem("jianpu_unlock_email", email.toLowerCase()); } catch (e) {} applyEmailUnlock(); }   // 只開通進階版；角色解鎖走上方的「帳號」
     function go() {
       var email = emailVal(); if (!email) { setMsg("請輸入正確的 Email。", "#ff9a9a"); return; }
-      if (isAllUnlockEmail(email)) { unlockAllChars(); setStatus("🎸 帳號 " + email + " 已解鎖「全部角色」，在上方「吉他手」選單即可選用。", false); }   // VIP 帳號→直接開全部角色(不受曲庫開通與否影響)
+      if (isAllUnlockEmail(email)) { setAccountEmail(email); unlockAllChars(); setStatus("🎸 帳號 " + email + " 已解鎖「全部角色」，在上方「吉他手」選單即可選用。", false); }   // VIP 帳號→直接開全部角色(不受曲庫開通與否影響)
       var A = window.JianpuAuth;
       if (!A || !A.registerDevice) { setMsg("後端尚未設定，暫時無法用 Email 解鎖（請洽老師 LINE：paul780516）。", "#ff9a9a"); return; }
       setMsg("登入中…"); resetBtn.style.display = "none";
@@ -933,7 +917,7 @@
     if (A && A.fetchFolders) A.fetchFolders().then(function (m) { _paidFolders = m || {}; buildSampleList(); }).catch(function () {});
   }
   function folderIsLocked(grp) { var f = _paidFolders[grp]; return !!(f && f.locked); }   // 沒設定=不上鎖(開放)
-  function folderUnlocked(grp) {                                                          // 只認該資料夾自己的密碼
+  function folderUnlocked(grp) {                                                          // 只認該資料夾自己的密碼（無萬能主密碼）
     try { return localStorage.getItem("jianpu_folder_" + grp) === "1"; } catch (e) { return false; }
   }
   function setFolderUnlocked(grp) { try { localStorage.setItem("jianpu_folder_" + grp, "1"); } catch (e) {} }

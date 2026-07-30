@@ -1,0 +1,5 @@
+# 簡譜音遊 Jianpu Rhythm
+User-agent: *
+Allow: /
+
+Sitemap: https://logoman2008-dev.github.io/jianpu-rhythm-play/sitemap.xml

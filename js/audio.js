@@ -136,7 +136,9 @@
   Engine.prototype._loadDrums = function () {
     if (!this.ctx || this._drumsInit) return;
     this._drumsInit = true; this.drumBuf = {};
-    var self = this, list = ["kick", "snare", "hat", "openhat", "crash"];   // MuldjordKit 真原音鼓(CC-BY)
+    // MuldjordKit 真原音鼓(CC-BY)。**kick 不載入**：那顆樣本只剩 50Hz 純低頻＝汽笛聲，
+    // 大鼓改用 Engine.prototype.kick 的三層合成（見該函式註解）。
+    var self = this, list = ["snare", "hat", "openhat", "crash"];
     var ver = "";   // 跟著 audio.js 的 ?v= 帶版本→改鼓檔自動破快取(不會卡舊聲音)
     try { var sc = document.querySelector('script[src*="audio.js"]'); var m = sc && sc.src.match(/\?v=[^&]+/); if (m) ver = m[0]; } catch (e) {}
     list.forEach(function (k) {
@@ -171,19 +173,35 @@
   };
 
   // ---- 鼓組（更接近真鼓：有打擊瞬態＋鼓身＋衰減） ----
+  // 大鼓：**全合成，不用 kick.mp3 樣本**。
+  //   為什麼不用樣本：實測 assets/drums/kick.mp3 的頻譜幾乎只剩 50Hz 純低頻
+  //   （250Hz 比主峰低 45dB、800Hz 低 55dB），等於沒有真鼓的中頻「咚」與敲擊聲，
+  //   剩下一條持續的低頻正弦 —— 那就是「船汽笛」的聲音特徵，怎麼裁短都還是像汽笛。
+  //   改用三層合成，關鍵是：音高在 30ms 內就掉完、低頻尾巴 150ms 內收乾淨、補回中頻與敲擊。
   Engine.prototype.kick = function (at, gain) {
     if (!this.ctx) return; var ctx = this.ctx, dg = this.drumGain, gn = gain || 1;
-    if (this.drumBuf && this.drumBuf.kick) {                         // 真鼓樣本(已裁短)＋敲擊瞬態→有 punch、不像汽笛
-      this._playSample(this.drumBuf.kick, at, gn * 1.0);
-      this._noise(at, 0.010, dg, gn * 0.38, 3200);                  // beater click(高頻敲擊感)
-      return;
-    }
-    var o = ctx.createOscillator(), g = ctx.createGain();          // 低頻鼓身（快速下滑＝punch）
-    o.type = "sine"; o.frequency.setValueAtTime(175, at);
-    o.frequency.exponentialRampToValueAtTime(46, at + 0.08);
-    g.gain.setValueAtTime(gn * 1.0, at); g.gain.exponentialRampToValueAtTime(0.0001, at + 0.34);
-    o.connect(g); g.connect(dg); o.start(at); o.stop(at + 0.36);
-    this._noise(at, 0.012, dg, gn * 0.4, 3200);                    // beater 敲擊瞬態
+    //   三層的音量比例是實測掃出來的（見下方數據），不要單獨改一層，會破壞平衡：
+    //   低頻:中頻:敲擊 = 0.22 : 0.42 : 0.88
+    // ① 鼓身 body：115Hz → 52Hz 極快下滑（有 punch、不會拖成滑音）
+    var o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = "sine";
+    o.frequency.setValueAtTime(115, at);
+    o.frequency.exponentialRampToValueAtTime(52, at + 0.030);
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(gn * 0.22, at + 0.004);     // 4ms attack，避免爆音
+    g.gain.exponentialRampToValueAtTime(gn * 0.044, at + 0.070);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + 0.120);        // 120ms 收乾淨＝不會嗡嗡拖尾
+    o.connect(g); g.connect(dg); o.start(at); o.stop(at + 0.13);
+    // ② 中頻 knock：實體「咚」感（補回樣本完全缺掉的 150~350Hz）
+    var k = ctx.createOscillator(), kg = ctx.createGain();
+    k.type = "triangle";
+    k.frequency.setValueAtTime(230, at);
+    k.frequency.exponentialRampToValueAtTime(150, at + 0.025);
+    kg.gain.setValueAtTime(gn * 0.42, at);
+    kg.gain.exponentialRampToValueAtTime(0.0001, at + 0.070);
+    k.connect(kg); kg.connect(dg); k.start(at); k.stop(at + 0.08);
+    // ③ beater click：鼓槌打到鼓皮的那一下（樣本也幾乎沒有）
+    this._noise(at, 0.016, dg, gn * 0.88, 900, 7000);
   };
   Engine.prototype.snare = function (at, gain) {
     if (!this.ctx) return; var ctx = this.ctx, dg = this.drumGain, gn = gain || 1, frs = [185, 295], pks = [0.24, 0.15];
