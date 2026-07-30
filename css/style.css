@@ -444,3 +444,8 @@ body:has(#setupPanel:not(.hidden)) #menuBg { opacity: 1; }
 .dev-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .dev-count { color: var(--muted); font-weight: 400; font-size: 12px; }
 .dev-now b { color: #7CFC9B; }
+/* 偵測到的音源清單（一眼看到，不用點開下拉） */
+.dev-list { font-size: 12px; line-height: 1.75; color: var(--muted); }
+.dev-list b { color: var(--text); }
+.dev-list .dev-pick { color: #7CFC9B; font-weight: 700; }
+.dev-list .dev-dot { color: #55596a; margin: 0 5px; }

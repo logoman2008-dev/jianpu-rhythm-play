@@ -52,7 +52,7 @@
   }
   </script>
 
-  <link rel="stylesheet" href="css/style.css?v=20260730d" />
+  <link rel="stylesheet" href="css/style.css?v=20260730e" />
 </head>
 <body>
   <!-- 首次進站啟動畫：顯示海報＋讀取動畫，約 2 秒後自動淡出進選單（純 CSS，回選單不重載故不再出現） -->
@@ -63,7 +63,7 @@
     </div>
   </div>
   <div id="menuBg"></div>
-  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260730d" loop preload="auto"></audio>
+  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260730e" loop preload="auto"></audio>
   <div class="app">
     <header class="topbar">
       <div class="logo">簡譜音遊 <span>Jianpu Rhythm</span></div>
@@ -201,6 +201,7 @@
               <button type="button" id="audioInRescan" class="btn small ghost">🔄 重新掃描</button>
               <button type="button" id="audioInUnlock" class="btn small ghost">🔓 顯示裝置名稱</button>
             </div>
+            <div class="dev-list" id="audioInList"></div>
             <div class="ms-tip" id="audioInNow"></div>
             <div class="ms-tip" id="audioInTip"></div>
             <label class="slider-field">
@@ -442,15 +443,15 @@
   <script src="lib/alphaTab.min.js"></script>
   <!-- 登入 / 付費驗證（Supabase）。免費曲不需要這些也能玩；離線會自動略過。 -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/supabase-config.js?v=20260730d"></script>
-  <script src="js/auth.js?v=20260730d"></script>
+  <script src="js/supabase-config.js?v=20260730e"></script>
+  <script src="js/auth.js?v=20260730e"></script>
   <!-- 遊戲程式 -->
-  <script src="js/theory.js?v=20260730d"></script>
-  <script src="js/gp-loader.js?v=20260730d"></script>
-  <script src="js/audio.js?v=20260730d"></script>
-  <script src="js/pitch.js?v=20260730d"></script>
-  <script src="js/songs.js?v=20260730d"></script>
-  <script src="js/game.js?v=20260730d"></script>
-  <script src="js/library.js?v=20260730d"></script>
+  <script src="js/theory.js?v=20260730e"></script>
+  <script src="js/gp-loader.js?v=20260730e"></script>
+  <script src="js/audio.js?v=20260730e"></script>
+  <script src="js/pitch.js?v=20260730e"></script>
+  <script src="js/songs.js?v=20260730e"></script>
+  <script src="js/game.js?v=20260730e"></script>
+  <script src="js/library.js?v=20260730e"></script>
 </body>
 </html>

@@ -100,7 +100,7 @@
      "hudScore","hudCombo","hudAcc","hudTitle","progressFill","result","resultBody","micHud","micNote","micLevel",
      "micSettings","sensRange","sensVal","latRange","latVal","micTestBtn","testNote","testLevel",
      "autoCalBtn","leaderboard","calibModal","calibDot","calibProg","calibResult","calibClose","calibCancel",
-     "speedRange","speedVal","bottomSelect","fretWindowSelect","fretStyleSelect","bgInput","guitaristSelect","metronomeToggle","genreSelect","bgOpacityRange","bgOpacityVal","audioInSelect","audioInTip","audioInCount","audioInNow","audioInRescan","audioInUnlock",
+     "speedRange","speedVal","bottomSelect","fretWindowSelect","fretStyleSelect","bgInput","guitaristSelect","metronomeToggle","genreSelect","bgOpacityRange","bgOpacityVal","audioInSelect","audioInTip","audioInCount","audioInNow","audioInList","audioInRescan","audioInUnlock",
      "ampToggle","ampControls","ampDrive","ampDriveVal","ampLevel","ampLevelVal","ampBuffer","ampLatNow",
      "gateToggle","gateControls","gateThresh","gateThreshVal","gateAutoBtn","gateMeter","gateLed","gateTip",
      "odToggle","odControls","odDrive","odDriveVal","odTone","odToneVal","odLevel","odLevelVal",
@@ -248,30 +248,59 @@
   //   所以要嘛先授權、要嘛只能顯示「輸入裝置 1/2/3」。這裡兩種情況都處理，
   //   並在已開麥克風時標出目前實際在用的那一個。
   var _devPrev = null;
+  // 把裝置名稱修短好讀：去掉「預設 - 」前綴與尾端的 USB vendor id（如「(0499:170d)」）
+  function shortDevName(label) {
+    return String(label || "")
+      .replace(/^\s*(預設|默认|默認|Default)\s*-\s*/i, "")
+      .replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$/i, "")
+      .trim();
+  }
   function refreshAudioInputs() {
     if (!P.listInputs) return Promise.resolve();
     var sel = els.audioInSelect; if (!sel) return Promise.resolve();
     var prev = _devPrev || sel.value;
     return P.listInputs().then(function (list) {
       var act = P.activeInput ? P.activeInput() : null;
+      // 瀏覽器會多給「default」/「communications」這種**系統別名**，它指向的其實是下面某一台。
+      // 要把它濾掉，否則同一台會被算兩次（使用者看到「找到 4 個」但其實只有 3 台）。
+      var real = list.filter(function (d) { return d.id !== "default" && d.id !== "communications"; });
+      var aliasDef = null;
+      list.forEach(function (d) { if (d.id === "default" && d.label) aliasDef = d; });
+      var defName = aliasDef ? shortDevName(aliasDef.label) : "";
+
       var named = 0;
-      var html = '<option value="">預設輸入裝置（系統設定）</option>';
-      list.forEach(function (d, i) {
-        var label = d.label || ("輸入裝置 " + (i + 1) + "（授權後顯示名稱）");
+      var html = '<option value="">預設輸入裝置' +
+                 (defName ? '（系統目前：' + escapeHtml(defName) + '）' : '（系統設定）') + '</option>';
+      real.forEach(function (d, i) {
+        var nm = d.label ? shortDevName(d.label) : ("輸入裝置 " + (i + 1) + "（授權後顯示名稱）");
         if (d.label) named++;
         var using = act && act.id && d.id === act.id;
-        html += '<option value="' + escapeHtml(d.id) + '">' + (using ? "🎤 " : "") + escapeHtml(label) + (using ? "（使用中）" : "") + '</option>';
+        html += '<option value="' + escapeHtml(d.id) + '">' + (using ? "🎤 " : "") + escapeHtml(nm) + (using ? "（使用中）" : "") + '</option>';
       });
       sel.innerHTML = html;
       if (prev && sel.querySelector('option[value="' + prev.replace(/"/g, '\\"') + '"]')) sel.value = prev;
       _devPrev = sel.value;
-      // 裝置數量
-      if (els.audioInCount) els.audioInCount.textContent = list.length ? "（找到 " + list.length + " 個）" : "（找不到輸入裝置）";
-      // 目前實際在用的裝置
+
+      if (els.audioInCount) els.audioInCount.textContent = real.length ? "（找到 " + real.length + " 個）" : "（找不到輸入裝置）";
+
+      // ★ 直接把偵測到的音源列出來，不用點開下拉就看得到；目前選中的那台標綠色
+      if (els.audioInList) {
+        if (!real.length) els.audioInList.innerHTML = "";
+        else if (!named) els.audioInList.innerHTML = "🎚 偵測到 <b>" + real.length + "</b> 個音源，但名稱要授權後才看得到（按下面的「顯示裝置名稱」）。";
+        else {
+          var picked = sel.value;
+          els.audioInList.innerHTML = "🎚 偵測到的音源：" + real.map(function (d) {
+            var nm = escapeHtml(shortDevName(d.label) || "未命名裝置");
+            var isPick = picked ? (d.id === picked) : (aliasDef && d.label === aliasDef.label.replace(/^\s*(預設|Default)\s*-\s*/i, ""));
+            return (d.id === picked) ? '<span class="dev-pick">✓ ' + nm + '</span>' : nm;
+          }).join('<span class="dev-dot">·</span>');
+        }
+      }
+
       if (els.audioInNow) {
         if (act) {
           els.audioInNow.className = "ms-tip dev-now";
-          els.audioInNow.innerHTML = "🎤 目前收音：<b>" + escapeHtml(act.label || "預設裝置") + "</b>　" +
+          els.audioInNow.innerHTML = "🎤 目前收音：<b>" + escapeHtml(shortDevName(act.label) || "預設裝置") + "</b>　" +
             (act.sampleRate ? (act.sampleRate / 1000).toFixed(1) + " kHz" : "") +
             (act.channels ? " · " + act.channels + " ch" : "");
         } else {
@@ -279,15 +308,15 @@
           els.audioInNow.innerHTML = "尚未開始收音（按「測試麥克風」或開始遊戲後，這裡會顯示實際使用的裝置）。";
         }
       }
-      // 提示與「顯示名稱」按鈕
-      var needUnlock = list.length > 0 && named === 0;
+
+      var needUnlock = real.length > 0 && named === 0;
       if (els.audioInUnlock) els.audioInUnlock.style.display = needUnlock ? "" : "none";
       if (els.audioInTip) {
-        if (!list.length) els.audioInTip.innerHTML = "⚠️ 沒偵測到任何音訊輸入裝置。請確認麥克風／錄音介面已接上，再按「重新掃描」。";
+        if (!real.length) els.audioInTip.innerHTML = "⚠️ 沒偵測到任何音訊輸入裝置。請確認麥克風／錄音介面已接上，再按「重新掃描」。";
         else if (needUnlock) els.audioInTip.innerHTML = "🔒 瀏覽器規定<b>授權麥克風後才能顯示裝置名稱</b>——按「顯示裝置名稱」授權一次即可（不會開始錄音）。";
-        else els.audioInTip.innerHTML = "💡 用錄音介面（line-in）音質與延遲最好。插拔裝置會自動重新掃描。";
+        else els.audioInTip.innerHTML = "💡 接錄音介面的話請在上面<b>直接選那一台</b>（音質與延遲最好）；選「預設」會跟著系統設定跑。插拔裝置會自動重新掃描。";
       }
-      return list;
+      return real;
     }).catch(function () { return []; });
   }
   // 「顯示裝置名稱」：只為解鎖名稱要一次權限，拿到就立刻關掉
