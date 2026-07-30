@@ -136,9 +136,7 @@
   Engine.prototype._loadDrums = function () {
     if (!this.ctx || this._drumsInit) return;
     this._drumsInit = true; this.drumBuf = {};
-    // MuldjordKit 真原音鼓(CC-BY)。**kick 不載入**：那顆樣本只剩 50Hz 純低頻＝汽笛聲，
-    // 大鼓改用 Engine.prototype.kick 的三層合成（見該函式註解）。
-    var self = this, list = ["snare", "hat", "openhat", "crash"];
+    var self = this, list = ["kick", "snare", "hat", "openhat", "crash"];   // MuldjordKit 真原音鼓(CC-BY)
     var ver = "";   // 跟著 audio.js 的 ?v= 帶版本→改鼓檔自動破快取(不會卡舊聲音)
     try { var sc = document.querySelector('script[src*="audio.js"]'); var m = sc && sc.src.match(/\?v=[^&]+/); if (m) ver = m[0]; } catch (e) {}
     list.forEach(function (k) {
@@ -149,8 +147,9 @@
     });
   };
   // 播放一個鼓樣本；成功回 true(給 kick/snare/hat 判斷要不要退回合成)
-  //   opts.fade  = 幾秒內收乾淨（真原音樣本的殘響尾巴太長 → 連打時會疊成「嗡」）
-  //   opts.notch = {f,q,gain} 用 peaking 濾波挖掉鼓身共振（不挖的話那個頻率會變成有音高的持續音）
+  //   opts（選用，目前沒有聲部在用；保留給日後需要修樣本時用）：
+  //     opts.fade  = 幾秒內收乾淨（樣本殘響尾巴太長時可裁）
+  //     opts.notch = {f,q,gain} 用 peaking 濾波挖掉鼓身共振
   Engine.prototype._playSample = function (buf, at, gain, rate, opts) {
     if (!buf || !this.ctx) return false;
     var ctx = this.ctx;
@@ -193,42 +192,23 @@
   };
 
   // ---- 鼓組（更接近真鼓：有打擊瞬態＋鼓身＋衰減） ----
-  // 大鼓：**全合成，不用 kick.mp3 樣本**。
-  //   為什麼不用樣本：實測 assets/drums/kick.mp3 的頻譜幾乎只剩 50Hz 純低頻
-  //   （250Hz 比主峰低 45dB、800Hz 低 55dB），等於沒有真鼓的中頻「咚」與敲擊聲，
-  //   剩下一條持續的低頻正弦 —— 那就是「船汽笛」的聲音特徵，怎麼裁短都還是像汽笛。
-  //   改用三層合成，關鍵是：音高在 30ms 內就掉完、低頻尾巴 150ms 內收乾淨、補回中頻與敲擊。
-  Engine.prototype.kick = function (at, gain) {
+Engine.prototype.kick = function (at, gain) {
     if (!this.ctx) return; var ctx = this.ctx, dg = this.drumGain, gn = gain || 1;
-    //   三層的音量比例是實測掃出來的（見下方數據），不要單獨改一層，會破壞平衡：
-    //   低頻:中頻:敲擊 = 0.22 : 0.42 : 0.88
-    // ① 鼓身 body：115Hz → 52Hz 極快下滑（有 punch、不會拖成滑音）
-    var o = ctx.createOscillator(), g = ctx.createGain();
-    o.type = "sine";
-    o.frequency.setValueAtTime(115, at);
-    o.frequency.exponentialRampToValueAtTime(52, at + 0.030);
-    g.gain.setValueAtTime(0.0001, at);
-    g.gain.exponentialRampToValueAtTime(gn * 0.22, at + 0.004);     // 4ms attack，避免爆音
-    g.gain.exponentialRampToValueAtTime(gn * 0.044, at + 0.070);
-    g.gain.exponentialRampToValueAtTime(0.0001, at + 0.120);        // 120ms 收乾淨＝不會嗡嗡拖尾
-    o.connect(g); g.connect(dg); o.start(at); o.stop(at + 0.13);
-    // ② 中頻 knock：實體「咚」感（補回樣本完全缺掉的 150~350Hz）
-    var k = ctx.createOscillator(), kg = ctx.createGain();
-    k.type = "triangle";
-    k.frequency.setValueAtTime(230, at);
-    k.frequency.exponentialRampToValueAtTime(150, at + 0.025);
-    kg.gain.setValueAtTime(gn * 0.42, at);
-    kg.gain.exponentialRampToValueAtTime(0.0001, at + 0.070);
-    k.connect(kg); kg.connect(dg); k.start(at); k.stop(at + 0.08);
-    // ③ beater click：鼓槌打到鼓皮的那一下（樣本也幾乎沒有）
-    this._noise(at, 0.016, dg, gn * 0.88, 900, 7000);
+    if (this.drumBuf && this.drumBuf.kick) {                         // 真鼓樣本(已裁短)＋敲擊瞬態→有 punch、不像汽笛
+      this._playSample(this.drumBuf.kick, at, gn * 1.0);
+      this._noise(at, 0.010, dg, gn * 0.38, 3200);                  // beater click(高頻敲擊感)
+      return;
+    }
+    var o = ctx.createOscillator(), g = ctx.createGain();          // 低頻鼓身（快速下滑＝punch）
+    o.type = "sine"; o.frequency.setValueAtTime(175, at);
+    o.frequency.exponentialRampToValueAtTime(46, at + 0.08);
+    g.gain.setValueAtTime(gn * 1.0, at); g.gain.exponentialRampToValueAtTime(0.0001, at + 0.34);
+    o.connect(g); g.connect(dg); o.start(at); o.stop(at + 0.36);
+    this._noise(at, 0.012, dg, gn * 0.4, 3200);                    // beater 敲擊瞬態
   };
   Engine.prototype.snare = function (at, gain) {
     if (!this.ctx) return; var ctx = this.ctx, dg = this.drumGain, gn = gain || 1, frs = [185, 295], pks = [0.24, 0.15];
-    // 真鼓樣本優先。⚠️ MuldjordKit 的 snare 樣本長 1.93 秒，且鼓身在 **410Hz 有 +11dB 共振**，
-    //   直接播會在每個 backbeat 疊一層 410Hz 的持續嗡聲（聽起來像汽笛）→ 挖共振 ＋ 260ms 收尾。
-    if (this._playSample(this.drumBuf && this.drumBuf.snare, at, gn * 0.85, 0,
-        { fade: 0.36, notch: { f: 410, q: 3.2, gain: -15 } })) return;
+    if (this._playSample(this.drumBuf && this.drumBuf.snare, at, gn * 0.85)) return;   // 真鼓樣本優先
     for (var i = 0; i < 2; i++) {                                  // 兩個鼓身音（有音高感）
       var o = ctx.createOscillator(), g = ctx.createGain();
       o.type = "triangle"; o.frequency.setValueAtTime(frs[i], at); o.frequency.exponentialRampToValueAtTime(frs[i] * 0.7, at + 0.08);
@@ -258,13 +238,8 @@
     if (!this.ctx) return; var ctx = this.ctx, osc = ctx.createOscillator(), sub = ctx.createOscillator(), g = ctx.createGain();
     var f = midiToFreq(midi);
     osc.type = "sawtooth"; sub.type = "sine"; osc.frequency.value = f; sub.frequency.value = f / 2;
-    // ⚠️ 舊版是單級 600Hz 低通 → 65Hz 鋸齒波的諧波一路留到 585Hz，
-    //   那些中頻（含 390Hz）就是「跟著鼓一起出現的嗡嗡聲」。
-    //   改成 **兩級 200Hz 低通**（-24dB/oct）：只留基音與二次諧波當低音地基，
-    //   實測 400-600Hz −37→−47dB、300-450Hz −35→−46dB，而 60-160Hz 反而更紮實（−27→−25dB）。
-    var lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 200;
-    var lp2 = ctx.createBiquadFilter(); lp2.type = "lowpass"; lp2.frequency.value = 200;
-    osc.connect(lp); sub.connect(lp); lp.connect(lp2); lp2.connect(g); g.connect(this.backGain);
+    var lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 600;
+    osc.connect(lp); sub.connect(lp); lp.connect(g); g.connect(this.backGain);
     var pk = (gain || 1) * 0.5, e = at + Math.max(0.1, dur);
     g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(pk, at + 0.01);
     g.gain.setValueAtTime(pk, e - 0.05); g.gain.exponentialRampToValueAtTime(0.0001, e + 0.03);
