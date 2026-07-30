@@ -449,3 +449,6 @@ body:has(#setupPanel:not(.hidden)) #menuBg { opacity: 1; }
 .dev-list b { color: var(--text); }
 .dev-list .dev-pick { color: #7CFC9B; font-weight: 700; }
 .dev-list .dev-dot { color: #55596a; margin: 0 5px; }
+/* 帳號狀態（樂譜／角色兩行） */
+.acct-stat { display: flex; flex-direction: column; gap: 3px; font-size: 12px; line-height: 1.65; color: var(--muted); margin: 4px 0; }
+.acct-stat b { color: var(--text); }

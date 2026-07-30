@@ -140,10 +140,10 @@
     loadPaidFolders();          // 讀取後台的付費資料夾上鎖設定
     renderLibUnlock();
     renderAccountBox();
-    // 已登入帳號 → 開機時同步一次角色解鎖（拉老師剛開通的、或別台裝置新解的）；後端未就緒就 onChange 再試一次
+    // 已登入帳號 → 開機時重新對一次後台（付款開通/被收回、別台新解的角色都會即時反映）
     if (accountEmail()) {
-      pullCharUnlocks();
-      if (window.JianpuAuth && window.JianpuAuth.onChange) { var _p = false; window.JianpuAuth.onChange(function () { if (!_p) { _p = true; pullCharUnlocks(); } }); }
+      refreshAccountState();
+      if (window.JianpuAuth && window.JianpuAuth.onChange) { var _p = false; window.JianpuAuth.onChange(function () { if (!_p) { _p = true; refreshAccountState(); } }); }
     }
     checkForUpdate();           // 版本自動檢查（避免拿到瀏覽器/CDN 快取的舊版）
     setupAudioInputs();         // 輸入裝置清單（開機就掃、插拔自動更新）
@@ -822,59 +822,34 @@
   //   任何人都能用 Email 免費建立帳號，唯一用途＝跨裝置記住「已解鎖的角色」。
   //   ★ 帳號不含任何曲庫權限（自己上傳的譜要無限，得另外升級進階版，在「我的曲庫」那一欄）。
   //   ★ 嚕嚕安角色只能由老師在管理後台「角色開通」把該 Email 開通後才會出現在這個帳號上。
+  // 吉他手選單下方：只顯示「角色記憶」狀態，登入統一在「我的曲庫」那一個帳號欄
   function renderAccountBox() {
     var box = document.getElementById("accountBox"); if (!box) return;
     var mail = accountEmail();
-    if (mail) {
-      var chars = [];
-      if (isUnlocked()) chars.push("閃電嚕嚕安");
-      var n = sClearCount(), extra = Math.min(n, LOCKED_CHARS.length);
-      if (extra > 0) chars.push("樂手 +" + extra + " 位");
-      box.innerHTML = '<div class="paid-unlock unlocked">' +
-        '<div>👤 <b>已登入</b>：' + escapeHtml(mail) +
-        '<button type="button" class="btn small ghost acct-out" style="margin-left:8px">登出</button></div>' +
-        '<div class="pu-tip" style="margin-top:4px">已記住的角色：<b>' + (chars.length ? escapeHtml(chars.join("、")) : "尚無") + '</b>' +
-        '　<span style="opacity:.75">（換裝置用同一 Email 登入就會帶過去）</span></div>' +
-        (isUnlocked() ? "" : '<div class="pu-tip" style="margin-top:2px">🔒 「閃電嚕嚕安」需老師在後台開通這個 Email。開通後按一下「重新同步」即可。' +
-          '<button type="button" class="btn small ghost acct-sync" style="margin-left:6px">重新同步</button></div>') +
-        '</div>';
-      var out = box.querySelector(".acct-out");
-      if (out) out.addEventListener("click", function () {
-        if (!confirm("登出後這台裝置就不會再同步角色解鎖（本機已解鎖的仍保留）。\n確定要登出嗎？")) return;
-        setAccountEmail(""); renderAccountBox(); setStatus("已登出帳號。", false);
-      });
-      var sync = box.querySelector(".acct-sync");
-      if (sync) sync.addEventListener("click", function () { setStatus("同步中…", false); pullCharUnlocks(mail); });
+    if (!mail) {
+      box.innerHTML = '<div class="paid-unlock">' +
+        '<div class="pu-tip">👤 <b>尚未登入</b>：在左邊「我的曲庫」用 Email 登入後（免費），' +
+        '你解鎖的角色就會<b>跟著帳號跨裝置記住</b>。' +
+        '<br><span style="opacity:.8">「閃電嚕嚕安」需老師在後台開通你的 Email。</span></div></div>';
       return;
     }
-    box.innerHTML = '<div class="paid-unlock">' +
-      '<div class="pu-tip">👤 <b>建立／登入帳號（免費）</b>：用 Email 就能建立，作用是<b>跨裝置記住你解鎖的角色</b>。' +
-      '<br><span style="opacity:.8">不需要付費，也不會開放曲庫權限。「閃電嚕嚕安」需老師在後台開通你的 Email。</span></div>' +
-      '<div class="pu-row"><input type="email" class="acct-email" placeholder="輸入 Email 建立／登入" autocomplete="email" />' +
-      '<button type="button" class="btn small acct-in">登入</button></div>' +
-      '<div class="acct-msg"></div></div>';
-    var inp = box.querySelector(".acct-email"), btn = box.querySelector(".acct-in"), msg = box.querySelector(".acct-msg");
-    function setMsg(t, c) { msg.textContent = t; msg.style.color = c || "#d7c9ac"; }
-    function go() {
-      var email = (inp.value || "").trim().toLowerCase();
-      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { setMsg("請輸入正確的 Email。", "#ff9a9a"); return; }
-      var A = window.JianpuAuth;
-      if (!A || !A.getCharUnlocks) { setMsg("目前連不到伺服器，角色只會存在這台裝置。", "#ffb454"); setAccountEmail(email); renderAccountBox(); return; }
-      setMsg("登入中…");
-      if (isAllUnlockEmail(email)) {                       // 管理者帳號→全部角色
-        setAccountEmail(email); unlockAllChars();
-        setStatus("管理者帳號：已開通全部角色 ✓", false); return;
-      }
-      A.getCharUnlocks(email).then(function (remote) {
-        setAccountEmail(email);                            // 帳號一律建立（雲端沒資料就由 pushCharUnlocks 建一筆）
-        if (remote && remote.all) { unlockAllChars(); return; }
-        if (remote && remote.lulan) { applyLulanGrant(true); setStatus("帳號已開通「閃電嚕嚕安」，已自動選上 ✓", false); return; }
-        pullCharUnlocks(email);                            // 同步 S 級進度＋回推本機
-        renderAccountBox();
-      }).catch(function () { setAccountEmail(email); renderAccountBox(); setMsg("同步失敗，角色暫時只存這台。", "#ffb454"); });
-    }
-    btn.addEventListener("click", go);
-    inp.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
+    var chars = [];
+    if (isUnlocked()) chars.push("閃電嚕嚕安");
+    var extra = Math.min(sClearCount(), LOCKED_CHARS.length);
+    if (extra > 0) chars.push("樂手 +" + extra + " 位");
+    box.innerHTML = '<div class="paid-unlock unlocked">' +
+      '<div>👤 <b>' + escapeHtml(mail) + '</b>　<span style="opacity:.8;font-size:12px">角色解鎖會自動記住</span></div>' +
+      '<div class="pu-tip" style="margin-top:4px">已記住的角色：<b>' + (chars.length ? escapeHtml(chars.join("、")) : "尚無") + '</b>' +
+      '　<span style="opacity:.75">（換裝置用同一 Email 登入就會帶過去）</span></div>' +
+      (isUnlocked() ? "" : '<div class="pu-tip" style="margin-top:2px">🔒 「閃電嚕嚕安」需老師開通這個 Email，開通後按一下右邊按鈕即可。' +
+        '<button type="button" class="btn small ghost acct-sync" style="margin-left:6px">重新同步</button></div>') +
+      '</div>';
+    var sync = box.querySelector(".acct-sync");
+    if (sync) sync.addEventListener("click", function () {
+      sync.disabled = true; setStatus("同步中…", false);
+      pullCharUnlocks(mail);
+      setTimeout(function () { sync.disabled = false; }, 1200);
+    });
   }
 
   // 每台瀏覽器一組固定裝置碼（限制一個 Email 最多 4 台用）
@@ -923,90 +898,137 @@
   function startPromoTimer() { if (!_promoTimer) _promoTimer = setInterval(updatePromoUI, 1000); }
 
   // 「我的曲庫」欄位上的解鎖：用 Email（每信箱限 4 台，超過需重置）＋購買連結
+  // ===================================================================
+  // 單一帳號登入（★ 只需要輸入一次 Email）
+  //   登入後同時處理兩件事：
+  //     ① 曲譜權限 —— 後台有開通(付款) → 進階版無限；沒開通 → 免費帳號(保留每日額度)
+  //     ② 角色記憶 —— **不管有沒有付費都會記住**（跨裝置同步，走 char_unlocks）
+  //   換句話說：沒付款也可以登入，帳號一樣會記住你解鎖的角色。
+  // ===================================================================
+  function accountLogin(email, ui) {
+    email = (email || "").trim().toLowerCase();
+    var A = window.JianpuAuth;
+    var setMsg = (ui && ui.setMsg) || function () {};
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { setMsg("請輸入正確的 Email。", "#ff9a9a"); return; }
+
+    setAccountEmail(email);            // ★ 帳號一律建立（免費帳號也算帳號）
+    setMsg("登入中…");
+
+    // ── ② 角色記憶：不管付不付費都做 ──
+    if (isAllUnlockEmail(email)) unlockAllChars();          // 管理者帳號→全部角色
+    else if (A && A.getCharUnlocks) {
+      A.getCharUnlocks(email).then(function (remote) {
+        if (remote && remote.all) unlockAllChars();
+        else if (remote && remote.lulan) applyLulanGrant(true);
+        else pullCharUnlocks(email);                          // 同步 S 級進度並回推本機
+        renderAccountBox();
+      }).catch(function () { renderAccountBox(); });
+    } else renderAccountBox();
+
+    // ── ① 曲譜權限：查後台有沒有開通（沒開通就是免費帳號，不算失敗）──
+    function freeAccount(note) {
+      setEmailUnlocked(false);
+      updateOwnGateTip(); renderLibUnlock();
+      setStatus("已登入 " + email + "（免費帳號）" + (note ? "：" + note : "") + "。角色解鎖會記在這個帳號。", false);
+    }
+    function paidAccount() {
+      try { localStorage.setItem("jianpu_unlock_email", email); } catch (e) {}
+      applyEmailUnlock(); renderLibUnlock();
+      setStatus("已登入 " + email + "：進階版已啟用，樂譜解析無上限 ✓", false);
+    }
+    if (!A || !A.registerDevice) { freeAccount("目前連不到伺服器"); return; }
+    A.registerDevice(email, deviceId()).then(function (r) {
+      if (r === "ok") { paidAccount(); return; }
+      if (r === "limit") {
+        if (confirm("這個 Email 已在 4 台裝置登入（已滿）。\n是否要「清除全部裝置」後，用這台重新登入？\n\n（會把先前登入的裝置全部登出）")) {
+          setMsg("重置裝置中…");
+          A.resetDevices(email).then(function (n) {
+            if (typeof n === "number" && n >= 0) {
+              A.registerDevice(email, deviceId()).then(function (r2) {
+                if (r2 === "ok") paidAccount();
+                else freeAccount("已重置裝置，請再按一次「登入」");
+              });
+            } else freeAccount("重置失敗，請洽老師 LINE：paul780516");
+          });
+        } else freeAccount("已取消裝置重置");
+        return;
+      }
+      if (r === "not_entitled") { freeAccount("尚未升級進階版，仍可用每日免費額度"); return; }
+      // r === null：後端沒有裝置限制 RPC → 退回單純開通檢查
+      if (!A.checkEmailUnlock) { freeAccount("後端尚未設定進階版驗證"); return; }
+      A.checkEmailUnlock(email).then(function (ok) {
+        if (ok === true) paidAccount();
+        else freeAccount(ok === false ? "尚未升級進階版，仍可用每日免費額度" : "後端尚未設定進階版驗證");
+      }).catch(function () { freeAccount("驗證失敗"); });
+    }).catch(function () { freeAccount("連線失敗"); });
+  }
+
+  // 開機時：已登入就重新對一次後台（付款開通／被收回、角色新解鎖都會即時反映）
+  function refreshAccountState() {
+    var email = accountEmail(); if (!email) return;
+    var A = window.JianpuAuth; if (!A) return;
+    if (A.getCharUnlocks) pullCharUnlocks(email);
+    if (!A.registerDevice) return;
+    A.registerDevice(email, deviceId()).then(function (r) {
+      if (r === "ok") { if (!isEmailUnlocked()) { applyEmailUnlock(); renderLibUnlock(); } }
+      else if (r === "not_entitled") { if (isEmailUnlocked()) { setEmailUnlocked(false); updateOwnGateTip(); renderLibUnlock(); } }
+    }).catch(function () {});
+  }
+
+  // 「我的曲庫」欄位：唯一的帳號登入處（曲譜權限＋角色記憶都靠這一次登入）
   function renderLibUnlock() {
     var box = document.getElementById("libUnlock"); if (!box) return;
-    if (isPaid()) {   // 已 Email 解鎖 → 自己上傳的譜已無限；提供「登出帳號」
-      var savedEmail = ""; try { savedEmail = localStorage.getItem("jianpu_unlock_email") || ""; } catch (e) {}
-      box.innerHTML = '<div class="paid-unlock unlocked">🔓 <b>進階版已啟用</b>：樂譜解析次數與本機曲庫容量皆無上限。' +
-        '<span class="lu-acct" style="color:#9fb0c8;font-size:12px;margin-left:4px"></span>' +
-        '<button type="button" class="btn small ghost lu-logout" style="margin-left:8px">登出帳號</button>' +
-        '<div class="pu-tip" style="margin-top:4px">💡 這是<b>進階版（工具）</b>的開通狀態。<b>角色解鎖</b>是另一件事，由上方「吉他手」下面的<b>帳號</b>負責記憶。</div></div>';
-      var acct = box.querySelector(".lu-acct"); if (acct && savedEmail) acct.textContent = "（帳號：" + savedEmail + "）";
+    var mail = accountEmail();
+
+    if (mail) {   // 已登入：顯示帳號＋兩項狀態
+      var paid = isPaid();
+      box.innerHTML = '<div class="paid-unlock unlocked">' +
+        '<div>👤 <b>' + escapeHtml(mail) + '</b>' +
+        '<button type="button" class="btn small ghost lu-logout" style="margin-left:8px">登出</button></div>' +
+        '<div class="acct-stat">' +
+          '<div>' + (paid ? '🔓 <b>樂譜</b>：進階版，解析次數與曲庫容量<b>無上限</b>'
+                          : '🔒 <b>樂譜</b>：免費帳號，每天有解析次數額度') + '</div>' +
+          '<div>🎭 <b>角色</b>：解鎖狀態會記在這個帳號（<b>不管有沒有付費</b>都會記住）</div>' +
+        '</div>' +
+        (paid ? '' : promoBoxHtml() +
+          '<a class="pu-buy pu-buy-orig" href="' + ORDER_FORM_URL + '" target="_blank" rel="noopener">🔓 升級進階版（填訂購單）</a>') +
+        '<div class="lu-msg"></div>' +
+        '</div>';
+      if (!paid) { updatePromoUI(); startPromoTimer(); }
       var lo = box.querySelector(".lu-logout");
       if (lo) lo.addEventListener("click", function () {
-        if (!confirm("登出後這台裝置會回到「每日免費額度」，並從這個 Email 的裝置名額中移除一台（釋放一個名額）。需要時再用 Email 重新解鎖即可。\n\n確定要登出嗎？")) return;
+        if (!confirm("登出後：\n・樂譜會回到每日免費額度\n・角色解鎖仍留在這台裝置，但不再與帳號同步\n・會釋放這個 Email 的一個裝置名額\n\n確定要登出嗎？")) return;
         var A = window.JianpuAuth;
-        if (A && A.unregisterDevice && savedEmail) { try { A.unregisterDevice(savedEmail, deviceId()); } catch (e) {} }   // 釋放這台的裝置名額
-        setEmailUnlocked(false);
+        if (A && A.unregisterDevice) { try { A.unregisterDevice(mail, deviceId()); } catch (e) {} }
+        setEmailUnlocked(false); setAccountEmail("");
         try { localStorage.removeItem("jianpu_unlock_email"); } catch (e) {}
         if (A && A.signOut) { try { A.signOut(); } catch (e) {} }
-        updateOwnGateTip(); renderLibUnlock();
+        updateOwnGateTip(); renderLibUnlock(); renderAccountBox();
         setStatus("已登出帳號（已釋放這台的裝置名額）。", false);
       });
       return;
     }
+
+    // 未登入：一個 Email 欄位就好
     box.innerHTML = '<div class="paid-unlock">' +
       promoBoxHtml() +
-      '<div class="pu-tip">🔒 免費版每天有<b>樂譜解析次數</b>上限。升級進階版後，用你填在訂購單的 <b>Email</b> 啟用，即可解除次數與本機曲庫容量限制（一個 Email 最多 4 台裝置）。<br>' +
-      '<span style="opacity:.8">※ 解鎖的是工具功能，<b>不含任何音樂內容</b>；樂譜請自行提供並確認你有合法權利。</span></div>' +
-      '<div class="pu-row"><input type="email" class="lu-email" placeholder="輸入你的 Email 啟用" autocomplete="email" />' +
-      '<button type="button" class="btn small lu-btn">解鎖</button></div>' +
+      '<div class="pu-tip">👤 <b>用 Email 登入（只需輸入一次）</b>——同一個帳號同時管兩件事：' +
+      '<div class="acct-stat" style="margin-top:4px">' +
+        '<div>🎼 <b>樂譜</b>：已付款開通 → 解析次數無上限；<b>沒付款也可以登入</b>，就是免費帳號（保留每日額度）</div>' +
+        '<div>🎭 <b>角色</b>：解鎖的角色<b>一律記在帳號裡</b>，換裝置用同一 Email 登入就帶過去</div>' +
+      '</div>' +
+      '<span style="opacity:.8">※ 一個 Email 最多 4 台裝置。解鎖的是工具功能，<b>不含任何音樂內容</b>。</span></div>' +
+      '<div class="pu-row"><input type="email" class="lu-email" placeholder="輸入 Email 登入" autocomplete="email" />' +
+      '<button type="button" class="btn small lu-btn">登入</button></div>' +
       '<div class="lu-msg"></div>' +
-      '<button type="button" class="btn small ghost lu-reset" style="display:none;margin-top:6px">🔄 重置裝置（我要換機器）</button>' +
       '<a class="pu-buy pu-buy-orig" href="' + ORDER_FORM_URL + '" target="_blank" rel="noopener">🔓 升級進階版（填訂購單）</a>' +
       '</div>';
-    updatePromoUI(); startPromoTimer();   // 倒數碼錶：立即刷新一次＋每秒更新（同時切換購買連結位置）
-    var inp = box.querySelector(".lu-email"), btn = box.querySelector(".lu-btn"), msg = box.querySelector(".lu-msg"), resetBtn = box.querySelector(".lu-reset");
+    updatePromoUI(); startPromoTimer();
+    var inp = box.querySelector(".lu-email"), btn = box.querySelector(".lu-btn"), msg = box.querySelector(".lu-msg");
     function setMsg(t, c) { msg.textContent = t; msg.style.color = c || "#d7c9ac"; }
-    function emailVal() { var e = (inp.value || "").trim(); return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e) ? e : null; }
-    function onOk(email) { try { localStorage.setItem("jianpu_unlock_email", email.toLowerCase()); } catch (e) {} applyEmailUnlock(); }   // 只開通進階版；角色解鎖走上方的「帳號」
-    function go() {
-      var email = emailVal(); if (!email) { setMsg("請輸入正確的 Email。", "#ff9a9a"); return; }
-      if (isAllUnlockEmail(email)) { setAccountEmail(email); unlockAllChars(); setStatus("🎸 帳號 " + email + " 已解鎖「全部角色」，在上方「吉他手」選單即可選用。", false); }   // VIP 帳號→直接開全部角色(不受曲庫開通與否影響)
-      var A = window.JianpuAuth;
-      if (!A || !A.registerDevice) { setMsg("後端尚未設定，暫時無法用 Email 解鎖（請洽老師 LINE：paul780516）。", "#ff9a9a"); return; }
-      setMsg("登入中…"); resetBtn.style.display = "none";
-      A.registerDevice(email, deviceId()).then(function (r) {
-        if (r === "ok") { onOk(email); }
-        else if (r === "limit") {   // 已滿 4 台 → 直接詢問是否全部重置，確認就清空全部再用這台重新登入
-          if (confirm("這個 Email 已在 4 台裝置登入（已滿）。\n是否要「清除全部裝置」後，用這台重新登入？\n\n（會把先前登入的裝置全部登出）")) {
-            setMsg("重置中…");
-            A.resetDevices(email).then(function (n) {
-              if (typeof n === "number" && n >= 0) {
-                A.registerDevice(email, deviceId()).then(function (r2) {   // 重置成功→重新登記這台
-                  if (r2 === "ok") onOk(email);
-                  else setMsg("已全部重置，請再按一次「解鎖」登入。", "#ffb454");
-                });
-              } else if (n === -1) setMsg("這個 Email 還沒開通，無法重置。", "#ffb454");
-              else setMsg("重置失敗，請確認網路或洽老師 LINE：paul780516。", "#ff9a9a");
-            });
-          } else { setMsg("已取消，這台未登入。", "#ffb454"); }
-        }
-        else if (r === "not_entitled") { setMsg("這個 Email 還沒開通。付款後老師會幫你開通，稍後再試 🙂", "#ffb454"); }
-        else {   // r===null：後端尚未建立裝置限制 → 退回單純 Email 開通檢查(不限台數)
-          if (!A.checkEmailUnlock) { setMsg("後端尚未設定 Email 解鎖（請洽老師 LINE：paul780516）。", "#ff9a9a"); return; }
-          A.checkEmailUnlock(email).then(function (ok) {
-            if (ok === true) onOk(email);
-            else if (ok === false) setMsg("這個 Email 還沒開通。付款後老師會幫你開通 🙂", "#ffb454");
-            else setMsg("後端尚未設定 Email 解鎖（請洽老師 LINE：paul780516）。", "#ff9a9a");
-          });
-        }
-      });
-    }
-    function doReset() {
-      var email = emailVal(); if (!email) { setMsg("請先在上面輸入你的 Email。", "#ff9a9a"); return; }
-      if (!confirm("重置會清除這個 Email 目前綁定的所有裝置（包含別台），確定要重置嗎？重置後再按「解鎖」重新登入。")) return;
-      var A = window.JianpuAuth;
-      setMsg("重置中…");
-      A.resetDevices(email).then(function (n) {
-        if (typeof n === "number" && n >= 0) { setMsg("已重置（清除 " + n + " 台）。請再按「解鎖」重新登入。", "#7CFC9B"); resetBtn.style.display = "none"; }
-        else if (n === -1) { setMsg("這個 Email 還沒開通，無法重置。", "#ffb454"); }
-        else { setMsg("重置失敗，請確認網路或洽老師 LINE：paul780516。", "#ff9a9a"); }
-      });
-    }
+    function go() { accountLogin(inp.value, { setMsg: setMsg }); }
     btn.addEventListener("click", go);
     inp.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
-    resetBtn.addEventListener("click", doReset);
   }
 
   // ---- 付費資料夾：每個資料夾(grp)可各自上鎖＋各自密碼（後台設定，存 Supabase paid_folders）----
