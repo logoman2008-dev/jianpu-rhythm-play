@@ -149,13 +149,33 @@
     });
   };
   // 播放一個鼓樣本；成功回 true(給 kick/snare/hat 判斷要不要退回合成)
-  Engine.prototype._playSample = function (buf, at, gain, rate) {
+  //   opts.fade  = 幾秒內收乾淨（真原音樣本的殘響尾巴太長 → 連打時會疊成「嗡」）
+  //   opts.notch = {f,q,gain} 用 peaking 濾波挖掉鼓身共振（不挖的話那個頻率會變成有音高的持續音）
+  Engine.prototype._playSample = function (buf, at, gain, rate, opts) {
     if (!buf || !this.ctx) return false;
-    var src = this.ctx.createBufferSource(); src.buffer = buf;
+    var ctx = this.ctx;
+    var src = ctx.createBufferSource(); src.buffer = buf;
     if (rate) src.playbackRate.value = rate;
-    var g = this.ctx.createGain(); g.gain.value = gain;
-    src.connect(g); g.connect(this.drumGain);
+    var node = src;
+    if (opts && opts.notch) {
+      var pk = ctx.createBiquadFilter();
+      pk.type = "peaking";
+      pk.frequency.value = opts.notch.f;
+      pk.Q.value = opts.notch.q || 4;
+      pk.gain.value = (opts.notch.gain != null) ? opts.notch.gain : -12;
+      node.connect(pk); node = pk;
+    }
+    var g = ctx.createGain();
+    if (opts && opts.fade) {
+      g.gain.setValueAtTime(gain, at);
+      g.gain.setValueAtTime(gain, at + opts.fade * 0.4);              // 前 40% 維持原音頭
+      g.gain.exponentialRampToValueAtTime(0.0001, at + opts.fade);    // 之後收掉
+    } else {
+      g.gain.value = gain;
+    }
+    node.connect(g); g.connect(this.drumGain);
     src.start(at);
+    if (opts && opts.fade) src.stop(at + opts.fade + 0.02);
     return true;
   };
 
@@ -205,7 +225,10 @@
   };
   Engine.prototype.snare = function (at, gain) {
     if (!this.ctx) return; var ctx = this.ctx, dg = this.drumGain, gn = gain || 1, frs = [185, 295], pks = [0.24, 0.15];
-    if (this._playSample(this.drumBuf && this.drumBuf.snare, at, gn * 0.85)) return;   // 真鼓樣本優先
+    // 真鼓樣本優先。⚠️ MuldjordKit 的 snare 樣本長 1.93 秒，且鼓身在 **410Hz 有 +11dB 共振**，
+    //   直接播會在每個 backbeat 疊一層 410Hz 的持續嗡聲（聽起來像汽笛）→ 挖共振 ＋ 260ms 收尾。
+    if (this._playSample(this.drumBuf && this.drumBuf.snare, at, gn * 0.85, 0,
+        { fade: 0.36, notch: { f: 410, q: 3.2, gain: -15 } })) return;
     for (var i = 0; i < 2; i++) {                                  // 兩個鼓身音（有音高感）
       var o = ctx.createOscillator(), g = ctx.createGain();
       o.type = "triangle"; o.frequency.setValueAtTime(frs[i], at); o.frequency.exponentialRampToValueAtTime(frs[i] * 0.7, at + 0.08);
@@ -241,15 +264,23 @@
     g.gain.setValueAtTime(pk, e - 0.05); g.gain.exponentialRampToValueAtTime(0.0001, e + 0.03);
     osc.start(at); sub.start(at); osc.stop(e + 0.05); sub.stop(e + 0.05);
   };
+  // 和弦鋪底。⚠️ 舊版是 **三角波 ＋ 整個小節維持同一音量**，
+  //   三角波只有奇次諧波 → E3(165Hz) 的三次諧波正好落在 **495Hz**，
+  //   加上音量不衰減，就變成一整個小節不斷的中頻單音＝「汽笛聲」。
+  //   改法（實測 495Hz 降 24dB、和弦基音幾乎不變）：
+  //     ① 波形改 **sine**（完全沒有 495Hz 那個諧波）
+  //     ② 包絡改成 **會衰減**（不再恆定），聽起來是鋪底而不是持續音
   Engine.prototype.chordPad = function (midis, at, dur, gain) {
     if (!this.ctx) return; var self = this, e = at + Math.max(0.2, dur);
     midis.forEach(function (m) {
       var ctx = self.ctx, osc = ctx.createOscillator(), g = ctx.createGain();
-      osc.type = "triangle"; osc.frequency.value = midiToFreq(m);
+      osc.type = "sine"; osc.frequency.value = midiToFreq(m);
       osc.connect(g); g.connect(self.backGain);
       var pk = (gain || 1) * 0.14;
-      g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(pk, at + 0.04);
-      g.gain.setValueAtTime(pk, e - 0.1); g.gain.exponentialRampToValueAtTime(0.0001, e + 0.05);
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.exponentialRampToValueAtTime(pk, at + 0.04);
+      g.gain.exponentialRampToValueAtTime(pk * 0.35, at + (e - at) * 0.55);   // 中段先掉一半以上
+      g.gain.exponentialRampToValueAtTime(0.0001, e + 0.05);
       osc.start(at); osc.stop(e + 0.08);
     });
   };
