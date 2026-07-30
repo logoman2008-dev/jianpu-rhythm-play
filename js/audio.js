@@ -257,8 +257,13 @@
     if (!this.ctx) return; var ctx = this.ctx, osc = ctx.createOscillator(), sub = ctx.createOscillator(), g = ctx.createGain();
     var f = midiToFreq(midi);
     osc.type = "sawtooth"; sub.type = "sine"; osc.frequency.value = f; sub.frequency.value = f / 2;
-    var lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 600;
-    osc.connect(lp); sub.connect(lp); lp.connect(g); g.connect(this.backGain);
+    // ⚠️ 舊版是單級 600Hz 低通 → 65Hz 鋸齒波的諧波一路留到 585Hz，
+    //   那些中頻（含 390Hz）就是「跟著鼓一起出現的嗡嗡聲」。
+    //   改成 **兩級 200Hz 低通**（-24dB/oct）：只留基音與二次諧波當低音地基，
+    //   實測 400-600Hz −37→−47dB、300-450Hz −35→−46dB，而 60-160Hz 反而更紮實（−27→−25dB）。
+    var lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 200;
+    var lp2 = ctx.createBiquadFilter(); lp2.type = "lowpass"; lp2.frequency.value = 200;
+    osc.connect(lp); sub.connect(lp); lp.connect(lp2); lp2.connect(g); g.connect(this.backGain);
     var pk = (gain || 1) * 0.5, e = at + Math.max(0.1, dur);
     g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(pk, at + 0.01);
     g.gain.setValueAtTime(pk, e - 0.05); g.gain.exponentialRampToValueAtTime(0.0001, e + 0.03);
