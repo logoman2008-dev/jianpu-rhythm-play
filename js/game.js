@@ -145,6 +145,7 @@
       pullCharUnlocks();
       if (window.JianpuAuth && window.JianpuAuth.onChange) { var _p = false; window.JianpuAuth.onChange(function () { if (!_p) { _p = true; pullCharUnlocks(); } }); }
     }
+    checkForUpdate();           // 版本自動檢查（避免拿到瀏覽器/CDN 快取的舊版）
     setupAudioInputs();         // 輸入裝置清單（開機就掃、插拔自動更新）
     setupTosBar();              // 首次進站的服務條款同意條
     setupMenuBgm();             // 選單背景音樂
@@ -1589,6 +1590,38 @@
   function stopMicIfIdle() { if (!micNeeded()) P.stop(); }
 
   // 虛擬音箱：勾選→開麥克風把收音經模擬音色(破音+cab+delay+-3dB限幅)即時輸出；可調 I/O 緩衝
+  // ---- 版本自動檢查 ----
+  //   GitHub Pages 會快取 index.html（約 10 分鐘），而 _headers / netlify.toml 對它無效，
+  //   所以更新後使用者可能拿到舊的 HTML → 連帶載到舊的 js（?v= 也是舊的）。
+  //   解法：抓一份不快取的 version.json 比對；不一樣就帶上新版號重載一次（同一版只重載一次，不會鬼打牆）。
+  function currentAppVersion() {
+    try {
+      var sc = document.querySelector('script[src*="game.js"]');
+      var m = sc && sc.src.match(/[?&]v=([^&]+)/);
+      return m ? m[1] : "";
+    } catch (e) { return ""; }
+  }
+  function checkForUpdate() {
+    var cur = currentAppVersion(); if (!cur) return;
+    fetch("version.json", { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        var latest = j && j.v;
+        if (!latest || latest === cur) return;
+        var key = "jianpu_reloaded_for";
+        var tried = "";
+        try { tried = sessionStorage.getItem(key) || ""; } catch (e) {}
+        if (tried === latest) {                                  // 已經為這一版重載過還是舊的→不再重試
+          setStatus("有新版本（" + latest + "）但瀏覽器仍在用快取，請手動強制重新整理（⌘⇧R）。", true);
+          return;
+        }
+        try { sessionStorage.setItem(key, latest); } catch (e) {}
+        var base = location.href.split("?")[0].split("#")[0];
+        location.replace(base + "?u=" + encodeURIComponent(latest));   // 帶版號→一定拿到新的 HTML
+      })
+      .catch(function () {});
+  }
+
   // dB ↔ 線性 RMS（Noise Gate 門檻用 dB 顯示，內部用線性值）
   function dbToLin(db) { return Math.pow(10, db / 20); }
   function linToDb(v) { return 20 * Math.log10(Math.max(1e-6, v)); }
