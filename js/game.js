@@ -88,8 +88,7 @@
   var stageOn = false;                     // 這幀是否要畫舞台道具(台面/追蹤燈/音箱牆/觀眾)。
                                            //   專屬角色雖然背景鎖成照片，舞台照樣要有(跟其他角色一樣)；
                                            //   只有玩家自己上傳的背景圖才整個不畫，免得蓋掉他的照片。
-  var laneFlash, padFlash, pad = null, popups, dpr = 1;
-  var flashByString = [0, 0, 0, 0, 0, 0];   // Rocksmith 公路：命中時各弦色標閃動
+  var pad = null, popups, dpr = 1;
   var canvas, ctx, W = 0, H = 0, judgeY = 0;
   var els = {};
   // 收音 onset 狀態
@@ -112,7 +111,8 @@
      "odToggle","odControls","odDrive","odDriveVal","odTone","odToneVal","odLevel","odLevelVal",
      "toneBass","toneBassVal","toneMid","toneMidVal","toneTreble","toneTrebleVal","tonePresence","tonePresenceVal",
      "dlyToggle","dlyControls","dlyTime","dlyTimeVal","dlyFb","dlyFbVal","dlyMix","dlyMixVal",
-     "tunerToggle","tunerDisplay","tunerNote","tunerNeedle","tunerCents"
+     "tunerToggle","tunerDisplay","tunerNote","tunerNeedle","tunerCents",
+     "liteToggle","liteControls","liteConnectBtn","liteTestBtn","liteStatus","liteColorMain","liteNextToggle","liteColorNext","liteBright","liteBrightVal","liteLead","liteLeadVal","liteReverse","liteTip"
     ].forEach(function (id) { els[id] = $(id); });
     canvas = $("gameCanvas");
     ctx = canvas.getContext("2d");
@@ -134,7 +134,8 @@
       var f = e.dataTransfer.files && e.dataTransfer.files[0];
       if (f) loadFile(f);
     });
-    els.dropZone.addEventListener("click", function () { els.fileInput.click(); });
+    els.dropZone.addEventListener("click", function () { ensureAlphaTab().catch(function () {}); els.fileInput.click(); });   // 點選檔區＝要載歌，先暖身把 alphaTab 拉下來
+    els.dropZone.addEventListener("pointerenter", function () { ensureAlphaTab().catch(function () {}); }, { once: true });
 
     // 範例曲快速載入（讓沒有 .gp 檔的訪客也能玩）
     buildSampleList();
@@ -202,6 +203,8 @@
     });
 
     // 判定延遲：手動微調已移除，改為固定預設＋「收音校正」自動量測(見 loadMicSettings / 自動校正)
+
+    initLiteJam();                                          // LiteJam LED 吉他連動
 
     // 收音校正：載入設定並套用
     loadMicSettings();
@@ -367,6 +370,187 @@
   }
   function saveMicSettings() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify({ sens: +els.sensRange.value, lat: +els.latRange.value })); } catch (e) {}
+  }
+
+  // ===== LiteJam LED 吉他連動 =====
+  // 把譜面「正在彈的音」與「下一個音」即時亮在真吉他指板上，跟著遊戲播放同步。
+  var LITE_KEY = "jianpu_litejam";
+  var liteEnabled = false;                 // 使用者有沒有勾「連動」
+  var lite = (window.JianpuLite && window.JianpuLite.instance) || null;
+  var _liteCurIdx = -1;                     // updateLite 用的目前拍索引快取
+  var _liteTesting = false;                 // 測試亮燈序列進行中
+
+  function liteLoad() {
+    var s = {};
+    try { s = JSON.parse(localStorage.getItem(LITE_KEY) || "{}"); } catch (e) {}
+    if (typeof s.enabled === "boolean") liteEnabled = s.enabled;
+    if (els.liteColorMain && s.colorMain) els.liteColorMain.value = s.colorMain;
+    if (els.liteColorNext && s.colorNext) els.liteColorNext.value = s.colorNext;
+    if (els.liteNextToggle && typeof s.showNext === "boolean") els.liteNextToggle.checked = s.showNext;
+    if (els.liteBright && typeof s.bright === "number") els.liteBright.value = s.bright;
+    if (els.liteLead && typeof s.lead === "number") els.liteLead.value = s.lead;
+    if (els.liteReverse && typeof s.reverse === "boolean") els.liteReverse.checked = s.reverse;
+  }
+  function liteSave() {
+    try {
+      localStorage.setItem(LITE_KEY, JSON.stringify({
+        enabled: liteEnabled,
+        colorMain: els.liteColorMain ? els.liteColorMain.value : "#00e0ff",
+        colorNext: els.liteColorNext ? els.liteColorNext.value : "#ff9a3c",
+        showNext: els.liteNextToggle ? els.liteNextToggle.checked : true,
+        bright: els.liteBright ? +els.liteBright.value : 80,
+        lead: els.liteLead ? +els.liteLead.value : 0,
+        reverse: els.liteReverse ? els.liteReverse.checked : false,
+      }));
+    } catch (e) {}
+  }
+  function liteBrightVal() { return (els.liteBright ? +els.liteBright.value : 80) / 100; }
+  function liteSetStatus(text, cls) {
+    if (!els.liteStatus) return;
+    els.liteStatus.textContent = text;
+    els.liteStatus.className = "lite-status" + (cls ? " " + cls : "");
+  }
+  function liteRefreshStatus() {
+    if (!lite) return;
+    var connected = lite.status === "connected";
+    if (connected) {
+      var extra = (lite.battery != null ? "　🔋" + lite.battery + "%" : "");
+      liteSetStatus("已連線：" + (lite.deviceName || "LiteJam") + extra, "connected");
+      if (els.liteConnectBtn) els.liteConnectBtn.textContent = "✂ 中斷連線";
+    } else if (lite.status === "connecting") {
+      liteSetStatus("連線中…", "connecting");
+    } else {
+      liteSetStatus("未連線", "");
+      if (els.liteConnectBtn) els.liteConnectBtn.textContent = "🔗 連接吉他";
+    }
+    if (els.liteTestBtn) els.liteTestBtn.disabled = !connected || _liteTesting;   // 只有連上、且沒在測時可按
+  }
+  function initLiteJam() {
+    if (!els.liteToggle) return;
+    liteLoad();
+    // 沒有藍牙支援（Safari / iPhone）就直接把整塊停用，避免誤以為故障
+    if (!lite || !lite.supported()) {
+      liteEnabled = false;
+      els.liteToggle.checked = false;
+      els.liteToggle.disabled = true;
+      if (els.liteTip) els.liteTip.innerHTML = "⚠️ 這個瀏覽器不支援 Web Bluetooth，無法連動 LiteJam。請用<b>電腦版 Chrome / Edge</b>（Safari、iPhone 不支援）。";
+      return;
+    }
+    els.liteToggle.checked = liteEnabled;
+    els.liteControls.classList.toggle("hidden", !liteEnabled);
+    if (els.liteBrightVal) els.liteBrightVal.textContent = els.liteBright.value + "%";
+    if (els.liteLeadVal) els.liteLeadVal.textContent = els.liteLead.value + " ms";
+
+    els.liteToggle.addEventListener("change", function () {
+      liteEnabled = els.liteToggle.checked;
+      els.liteControls.classList.toggle("hidden", !liteEnabled);
+      liteSave();
+      if (!liteEnabled) liteClear();
+    });
+    els.liteConnectBtn.addEventListener("click", function () {
+      if (lite.status === "connected") { lite.disconnect(); return; }
+      liteSetStatus("連線中…", "connecting");
+      lite.connect().then(function (snap) {
+        if (snap) liteRefreshStatus(); else liteRefreshStatus();   // null = 使用者取消
+      }).catch(function (err) {
+        liteSetStatus((err && err.message) || "連線失敗", "error");
+      });
+    });
+    on(els.liteTestBtn, "click", liteTest);
+    on(els.liteColorMain, "input", liteSave);
+    on(els.liteColorNext, "input", liteSave);
+    on(els.liteNextToggle, "change", liteSave);
+    on(els.liteReverse, "change", liteSave);
+    on(els.liteBright, "input", function () { if (els.liteBrightVal) els.liteBrightVal.textContent = els.liteBright.value + "%"; liteSave(); });
+    on(els.liteLead, "input", function () { if (els.liteLeadVal) els.liteLeadVal.textContent = els.liteLead.value + " ms"; liteSave(); });
+
+    lite.on("state", liteRefreshStatus);
+    lite.on("status", liteRefreshStatus);
+    lite.on("error", function (d) { if (lite.status !== "connected") liteSetStatus((d && d.message) || "連線失敗", "error"); });
+    liteRefreshStatus();
+  }
+
+  // 事件綁定小工具（null-safe）
+  function on(el, type, fn) { if (el) el.addEventListener(type, fn); }
+
+  // alphaTab 的 string(1=最粗第六弦) → 送給琴的弦號(bit0=第1弦)。
+  // 先換成吉他慣例(1=最細第一弦)=7-string，再視「弦序反轉」決定要不要上下對調。
+  function liteHwString(atString) {
+    var guitar = 7 - atString;
+    return (els.liteReverse && els.liteReverse.checked) ? (7 - guitar) : guitar;
+  }
+  function liteNotesOf(item) {
+    if (!item || !item.notes || !item.notes.length) return [];
+    var out = [];
+    for (var i = 0; i < item.notes.length; i++) {
+      var n = item.notes[i];
+      if (n.string == null || n.fret == null || n.fret < 0) continue;
+      out.push({ string: liteHwString(n.string), fret: n.fret });
+    }
+    return out;
+  }
+  // 找出「時間 <= t 的最後一個有音符的拍」的索引（含快取，播放時多為順序前進）
+  function liteBeatIndexAt(t) {
+    if (!items || !items.length) return -1;
+    var i = _liteCurIdx;
+    if (i < 0 || i >= items.length || items[i].time > t) i = -1;   // 倒退/尋位→重找
+    while (i + 1 < items.length && items[i + 1].time <= t) i++;
+    _liteCurIdx = i;
+    return i;
+  }
+  function liteFirstWithNotes(from, dir) {
+    for (var i = from; i >= 0 && i < items.length; i += dir) if (items[i].notes && items[i].notes.length) return i;
+    return -1;
+  }
+  // 每幀呼叫：把目前該彈的音（＋預告下一個音）送到吉他。內容沒變時 sendSegment 會自動略過。
+  function updateLite(songTime) {
+    if (!lite || !liteEnabled || lite.status !== "connected" || _liteTesting) return;
+    var lead = (els.liteLead ? +els.liteLead.value : 0) / 1000;   // 提前亮燈：把時間軸往前挪，燈比拍點早亮
+    songTime += lead;
+    var b = liteBrightVal();
+    var mainCol = window.JianpuLite.scaleColor(window.JianpuLite.hexToRgb(els.liteColorMain ? els.liteColorMain.value : "#00e0ff"), b);
+    var groups = [];
+
+    var curRaw = liteBeatIndexAt(songTime);
+    var curIdx = (curRaw >= 0 && items[curRaw].notes && items[curRaw].notes.length) ? curRaw : liteFirstWithNotes(curRaw, -1);
+    var now = curIdx >= 0 ? liteNotesOf(items[curIdx]) : [];
+    if (now.length) groups.push({ leds: window.JianpuLite.packNotes(now), color: mainCol });
+
+    if (els.liteNextToggle && els.liteNextToggle.checked) {
+      var nextIdx = liteFirstWithNotes((curRaw < 0 ? 0 : curRaw + 1), 1);
+      if (nextIdx >= 0) {
+        var next = liteNotesOf(items[nextIdx]);
+        var taken = {};
+        for (var t = 0; t < now.length; t++) taken[now[t].string + ":" + now[t].fret] = 1;
+        var preview = next.filter(function (n) { return !taken[n.string + ":" + n.fret]; });
+        if (preview.length) {
+          var nextCol = window.JianpuLite.scaleColor(window.JianpuLite.hexToRgb(els.liteColorNext ? els.liteColorNext.value : "#ff9a3c"), b * 0.45);
+          groups.push({ leds: window.JianpuLite.packNotes(preview), color: nextCol });
+        }
+      }
+    }
+    lite.sendSegment(groups);
+  }
+  // 測試亮燈：依序亮第 1～6 弦（都在第 3 格），用來確認實機弦序對不對——
+  // 若「第 1 弦」亮到的是最粗那條，就去勾「弦序反轉」再測一次。
+  function liteTest() {
+    if (!lite || lite.status !== "connected" || _liteTesting) return;
+    _liteTesting = true;
+    if (els.liteTestBtn) els.liteTestBtn.disabled = true;
+    var col = window.JianpuLite.scaleColor(window.JianpuLite.hexToRgb(els.liteColorMain ? els.liteColorMain.value : "#00e0ff"), liteBrightVal());
+    var k = 1;
+    (function step() {
+      if (k > 6) { lite.ledOff(); _liteTesting = false; liteRefreshStatus(); return; }
+      var hw = (els.liteReverse && els.liteReverse.checked) ? (7 - k) : k;   // 吉他慣例第 k 弦（1=最細）→ 送琴弦號
+      lite.sendNotes([{ string: hw, fret: 3 }], col);
+      liteSetStatus("測試亮燈：第 " + k + " 弦（1=最細高音弦）· 第 3 格", "connected");
+      k++;
+      setTimeout(step, 480);
+    })();
+  }
+  function liteClear() {
+    _liteCurIdx = -1;
+    if (lite && lite.status === "connected") lite.ledOff();
   }
   function applySens() {
     var s = +els.sensRange.value;                 // 0..100
@@ -629,6 +813,7 @@
   }
   function encodePath(p) { return String(p).split("/").map(encodeURIComponent).join("/"); }
   function loadSample(path, label, ctx) {
+    ensureAlphaTab().catch(function () {});   // 與抓譜的 fetch 平行下載解析引擎，縮短等待
     ctx = ctx || {};
     var base = String(path).split("/").pop();
     var name = label || base.replace(/\.gp\d?$/i, "");
@@ -1097,7 +1282,30 @@
     reader.readAsArrayBuffer(file);
   }
 
+  // alphaTab（977KB）延遲載入：首頁不下載，第一次要解析 GP 檔時才注入。只載一次。
+  var _alphaTabPromise = null;
+  function ensureAlphaTab() {
+    if (window.alphaTab && window.alphaTab.importer) return Promise.resolve();
+    if (_alphaTabPromise) return _alphaTabPromise;
+    _alphaTabPromise = new Promise(function (resolve, reject) {
+      var s = document.createElement("script");
+      s.src = "lib/alphaTab.min.js?v=20260731b";
+      s.onload = function () { resolve(); };
+      s.onerror = function () { _alphaTabPromise = null; reject(new Error("無法載入樂譜解析引擎（alphaTab）")); };
+      document.head.appendChild(s);
+    });
+    return _alphaTabPromise;
+  }
+
   function loadArrayBuffer(arrayBuffer, name) {
+    setStatus("載入樂譜解析引擎中…");
+    ensureAlphaTab().then(function () { parseLoadedBuffer(arrayBuffer, name); }).catch(function (err) {
+      setStatus("解析失敗：" + (err && err.message ? err.message : err), true);
+      els.startBtn.disabled = true;
+    });
+  }
+
+  function parseLoadedBuffer(arrayBuffer, name) {
     try {
       var scoreObj = GP.parseBytes(arrayBuffer);
       window._score = scoreObj;
@@ -1344,8 +1552,6 @@
     comboBurst = { t: 999, level: 0 }; hypeShown = 0;
     stats = { perfect: 0, great: 0, good: 0, miss: 0 };
     popups = [];
-    laneFlash = new Array(LANES).fill(0);
-    padFlash = new Array(LANES).fill(0);
     micCand = -1; micStable = 0; micLastPc = -1; micWasSilent = true; micDisp = { midi: null, rms: 0, t: 0 };
     micSmooth = 0; micPrevSmooth = 0; micOnsetT = -9; micLastHit = -9;
     _metroIdx = 0; _grooveIdx = 0;
@@ -1377,6 +1583,7 @@
   function backToSetup() {
     state = "ready";
     A.pause();
+    liteClear();           // 關掉吉他指板燈
     stopMicIfIdle();       // 虛擬音箱/調音器有開就不關麥克風 → 回選單自動延續
     els.gameWrap.classList.add("hidden");
     els.result.classList.add("hidden");
@@ -1386,7 +1593,7 @@
   }
 
   function togglePause() {
-    if (state === "playing") { state = "paused"; A.pause(); els.pauseBtn.textContent = "▶ 繼續"; }
+    if (state === "playing") { state = "paused"; A.pause(); liteClear(); els.pauseBtn.textContent = "▶ 繼續"; }
     else if (state === "paused") { state = "playing"; A.resume(); els.pauseBtn.textContent = "⏸ 暫停"; }
   }
 
@@ -1409,10 +1616,6 @@
 
   // 泛用命中：找最接近、在窗內、且符合 matchFn 的未判定項目
   function attemptHit(matchFn, flashLane) {
-    if (flashLane != null) {
-      padFlash[flashLane] = 1;
-      if (displayMode === "jianpu") laneFlash[flashLane] = 1;
-    }
     var win = windows();
     var songTime = A.getSongTime() - (inputMode === "mic" ? micLatencyMs / 1000 : 0) - JUDGE_OFFSET;
     var best = null, bestDelta = 1e9;
@@ -1442,8 +1645,6 @@
       if (inputMode !== "mic") A.crash(A.now());          // 一記鈸聲慶祝(收音時不疊合成音)
     }
     score += Math.round(SCORE[tier] * comboMult(current.combo));
-    laneFlash[n.lane] = 1;
-    if (displayMode === "rocksmith" && n.notes) n.notes.forEach(function (nn) { flashByString[5 - nn.row] = 1; });
     if (inputMode !== "mic") A.click(true);   // 收音時不發命中「喀」音效（彈真吉他只聽自己的聲音）
     if (inputMode !== "mic" && !els.melodyToggle.checked) A.playNote(n.midi, n.dur || 0.25, (n.bend || 0) / 2);   // 收音時不播回饋音（彈真吉他不需疊合成音）
     popups.push({ lane: n.lane, tier: tier, t: 0 });
@@ -1465,6 +1666,9 @@
 
       // 收音輸入
       if (inputMode === "mic" && P.isActive()) micTick(songTime);
+
+      // LiteJam LED 吉他：把正在彈的音（＋預告）亮在真吉他指板上
+      updateLite(songTime);
 
       // 倒數嗶聲
       if (songTime < 0) {
@@ -1559,6 +1763,7 @@
   function endGame() {
     state = "result";
     A.pause();
+    liteClear();           // 關掉吉他指板燈
     stopMicIfIdle();       // 虛擬音箱/調音器有開就不關麥克風 → 遊戲結束自動延續、不用重新點開
     var total = stats.perfect + stats.great + stats.good + stats.miss;
     var accSum = stats.perfect * ACC.perfect + stats.great * ACC.great + stats.good * ACC.good;
@@ -1619,7 +1824,9 @@
     // 設定頁顯示/隱藏切換時自動播/停
     new MutationObserver(apply).observe(panel, { attributes: true, attributeFilter: ["class"] });
     if (btn) btn.addEventListener("click", function () { off = !off; try { localStorage.setItem(BGM_OFF_KEY, off ? "1" : "0"); } catch (e) {} apply(); });
-    syncBtn(); apply();
+    // 開場不主動 play()：preload=none 下，play() 會立刻抓整首 2.87MB。等使用者第一次互動
+    //（上面的 pointerdown/keydown/touchstart）再補播，音檔就只在真的要出聲時才下載。
+    syncBtn(); if (off) bgm.pause();
   }
 
   // 麥克風生命週期：虛擬音箱/調音器/收音測試/遊玩 任一需要就開著，全都不需要才關
@@ -1897,13 +2104,12 @@
 
   // 底部觸控鍵盤幾何（不依賴繪製，開場即可用於觸控命中判定）
   function layoutPad() {
-    if (displayMode === "rocksmith") pad = null;                 // 公路模式：鍵盤/收音，無觸控琴格
-    else pad = (displayMode === "tab") ? { y0: H - 64, h: 56 } : { y0: judgeY + 8, h: 74 };
+    pad = { y0: H - 64, h: 56 };
   }
   function laneX(l) { return l * (W / LANES); }
   function laneW() { return W / LANES; }
-  function usesTabData() { return displayMode === "tab" || displayMode === "rocksmith"; }  // 六線譜與 Rocksmith 皆用弦/格資料
-  function dispName() { return displayMode === "tab" ? "六線譜" : displayMode === "rocksmith" ? "搖滾史密斯" : "簡譜"; }
+  function usesTabData() { return displayMode === "tab"; }  // 六線譜與 Rocksmith 皆用弦/格資料
+  function dispName() { return "六線譜"; }
 
   // 舞台背景（或自訂背景圖）
   function drawBackground() {
@@ -3053,9 +3259,7 @@
       drawGuitarist(songTime);                                          // 角色＋舞台(在音符之下)
       if (stageOn) drawCrowd(hypeShown, songTime, guitaristHeight());   // 台下觀眾(前景，約樂手1/4高、前後交錯)
       if (stageProcedural) { ctx.fillStyle = "rgba(10,8,16,0.30)"; ctx.fillRect(0, 0, W, H); }   // 暗幕：讓舞台沉到背景、音符更清楚
-      if (displayMode === "rocksmith") renderRocksmith(songTime);
-      else if (displayMode === "tab") renderTab(songTime);
-      else renderJianpu(songTime);
+      renderTab(songTime);
       drawBigJudge();                                                   // 大字評分(最上層)
       charPulse = Math.max(0, charPulse - 0.05);
       drawHud(songTime);
@@ -3066,175 +3270,6 @@
       }
       if (state === "paused") drawCenterText("已暫停　（空白鍵繼續）");
     }
-  }
-
-  // --- Rocksmith 風：透視琴頸公路 ---
-  // 弦色（低E→高e，依 Rocksmith 慣例；slot0=低E 在左）
-  var ROCK_COLS = ["#ff5d5d", "#ffd93d", "#4a9cff", "#ff9a3c", "#3ec46a", "#c06cff"];
-  function rockAnchorTop() { return H - Math.max(130, Math.min(190, H * 0.32)); }   // 底部擬真指板加大
-  function rockGeom() { return { cx: W * 0.5, topY: 20, strikeY: rockAnchorTop() - 10, farHalf: W * 0.05, nearHalf: W * 0.46 }; }
-  function rockAt(p) {                                     // p: 0 遠 → 1 打擊線
-    var G = rockGeom();
-    return { cx: G.cx, y: G.topY + (G.strikeY - G.topY) * p, half: G.farHalf + (G.nearHalf - G.farHalf) * p, scale: 0.3 + 0.7 * p };
-  }
-  function rockStringX(slot, p) { var a = rockAt(p); return a.cx + ((slot - 2.5) / 2.5) * a.half; }
-
-  function renderRocksmith(songTime) {
-    var aFar = rockAt(0), aNear = rockAt(1);
-    // 琴頸表面（深色木質梯形）
-    ctx.beginPath();
-    ctx.moveTo(aFar.cx - aFar.half, aFar.y); ctx.lineTo(aFar.cx + aFar.half, aFar.y);
-    ctx.lineTo(aNear.cx + aNear.half, aNear.y); ctx.lineTo(aNear.cx - aNear.half, aNear.y); ctx.closePath();
-    var ng = ctx.createLinearGradient(0, aFar.y, 0, aNear.y);
-    ng.addColorStop(0, "rgba(24,18,14,0.15)"); ng.addColorStop(1, "rgba(42,31,22,0.72)");
-    ctx.fillStyle = ng; ctx.fill();
-    // 琴衍（橫向）＋鑲嵌點（越遠越密，帶景深）
-    for (var r = 1; r <= 9; r++) {
-      var pr = 1 - Math.pow(1 - r / 10, 1.7), aR = rockAt(pr);
-      ctx.strokeStyle = "rgba(205,208,220," + (0.10 + aR.scale * 0.32) + ")"; ctx.lineWidth = Math.max(1, aR.scale * 3);
-      ctx.beginPath(); ctx.moveTo(aR.cx - aR.half, aR.y); ctx.lineTo(aR.cx + aR.half, aR.y); ctx.stroke();
-      if (r % 2 === 1) { ctx.fillStyle = "rgba(215,215,230," + (0.12 + aR.scale * 0.25) + ")"; ctx.beginPath(); ctx.arc(aR.cx, aR.y, 2.5 * aR.scale + 1, 0, Math.PI * 2); ctx.fill(); }
-    }
-    // 6 條收束的上色弦（低音弦較粗）
-    for (var s = 0; s < 6; s++) {
-      var xF = rockStringX(s, 0), xB = rockStringX(s, 1), wN = 3.4 - s * 0.4;
-      ctx.globalAlpha = 0.72; ctx.fillStyle = ROCK_COLS[s];
-      ctx.beginPath(); ctx.moveTo(xF - 0.6, aFar.y); ctx.lineTo(xF + 0.6, aFar.y); ctx.lineTo(xB + wN, aNear.y); ctx.lineTo(xB - wN, aNear.y); ctx.closePath(); ctx.fill();
-    }
-    ctx.globalAlpha = 1;
-    // 音符寶石（由遠而近，寶石上標實際格位）
-    ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
-    for (var i = 0; i < items.length; i++) {
-      var it = items[i], remain = it.time - songTime;
-      if (remain > travel || remain < -0.16) continue;
-      var p = Math.max(0, 1 - remain / travel), a = rockAt(p), notes = it.notes || [];
-      var alpha = it.judged ? (it.missed ? 0.16 : 0.28) : Math.min(1, 0.4 + p * 0.6);
-      for (var j = 0; j < notes.length; j++) {
-        var n = notes[j], slot = 5 - n.row, gx = rockStringX(slot, p), gy = a.y;
-        var w = 52 * a.scale, hh = 34 * a.scale, col = ROCK_COLS[slot];
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = col; roundRect(gx - w / 2, gy - hh / 2, w, hh, 8 * a.scale); ctx.fill();
-        ctx.strokeStyle = "rgba(255,255,255,0.92)"; ctx.lineWidth = 2 * a.scale; roundRect(gx - w / 2, gy - hh / 2, w, hh, 8 * a.scale); ctx.stroke();
-        ctx.font = "800 " + Math.round(22 * a.scale) + "px system-ui, sans-serif";
-        ctx.lineWidth = 3.5 * a.scale; ctx.strokeStyle = "rgba(0,0,0,0.6)"; ctx.strokeText(String(n.fret), gx, gy);
-        ctx.fillStyle = "#fff"; ctx.fillText(String(n.fret), gx, gy);
-      }
-    }
-    ctx.globalAlpha = 1;
-    // 打擊線 + 各弦色標（命中閃動）
-    ctx.strokeStyle = "rgba(255,255,255,0.92)"; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(aNear.cx - aNear.half, aNear.y); ctx.lineTo(aNear.cx + aNear.half, aNear.y); ctx.stroke();
-    for (var ss = 0; ss < 6; ss++) {
-      var fl = flashByString[ss] || 0, sx = rockStringX(ss, 1);
-      ctx.globalAlpha = 0.9; ctx.fillStyle = ROCK_COLS[ss];
-      ctx.beginPath(); ctx.arc(sx, aNear.y, 7 + fl * 7, 0, Math.PI * 2); ctx.fill();
-      if (fl > 0) { ctx.globalAlpha = fl * 0.6; ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(sx, aNear.y, 5 + fl * 6, 0, Math.PI * 2); ctx.fill(); }
-      flashByString[ss] = Math.max(0, fl - 0.06);
-    }
-    ctx.globalAlpha = 1;
-    // 底部真實指板（顯示實際格位，Rocksmith 手位錨點）
-    drawRockAnchor(songTime);
-  }
-
-  // 底部擬真指板：水平 6 弦 + 真實格位間距 + 鑲嵌點 + 格號；高亮即將要按的音（加大加寬）
-  function drawRockAnchor(songTime) {
-    var top = rockAnchorTop(), bot = H - 6, h = bot - top;
-    if (h < 26) return;
-    var x0 = 10, x1 = W - 10, wNeck = x1 - x0, maxF = 12;                              // 少一點格數＝每格更寬
-    var denom = 1 - Math.pow(2, -maxF / 12);
-    function fx(f) { return x0 + wNeck * (1 - Math.pow(2, -f / 12)) / denom; }          // 真實琴格間距
-    function cellX(f) { return f <= 0 ? x0 + 8 : (fx(f - 1) + fx(f)) / 2; }
-    function strY(slot) { return bot - 9 - (slot + 0.5) * (h - 18) / 6; }               // slot0=低E 在下
-    var wg = ctx.createLinearGradient(0, top, 0, bot);
-    wg.addColorStop(0, "#442f1e"); wg.addColorStop(1, "#241a12");
-    ctx.fillStyle = wg; roundRect(x0, top, wNeck, h, 8); ctx.fill();
-    ctx.fillStyle = "#0d0d12"; ctx.fillRect(x0, top, 6, h);                             // 上弦枕
-    // 琴衍
-    ctx.strokeStyle = "rgba(205,207,220,0.6)"; ctx.lineWidth = 2.5;
-    for (var f = 1; f <= maxF; f++) { var x = fx(f); ctx.beginPath(); ctx.moveTo(x, top + 2); ctx.lineTo(x, bot - 2); ctx.stroke(); }
-    // 鑲嵌點（3/5/7/9 單，12 雙）
-    ctx.fillStyle = "rgba(234,234,246,0.55)";
-    [3, 5, 7, 9].forEach(function (f) { ctx.beginPath(); ctx.arc(cellX(f), (top + bot) / 2, 4.5, 0, Math.PI * 2); ctx.fill(); });
-    ctx.beginPath(); ctx.arc(cellX(12), top + h * 0.3, 4.5, 0, Math.PI * 2); ctx.arc(cellX(12), bot - h * 0.3, 4.5, 0, Math.PI * 2); ctx.fill();
-    // 6 條弦（低E在下、較粗）
-    for (var s = 0; s < 6; s++) {
-      ctx.strokeStyle = ROCK_COLS[s]; ctx.globalAlpha = 0.92; ctx.lineWidth = 2 + (5 - s) * 0.6;
-      var yy = strY(s); ctx.beginPath(); ctx.moveTo(x0 + 6, yy); ctx.lineTo(x1, yy); ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
-    // 格號
-    ctx.fillStyle = "rgba(255,255,255,0.6)"; ctx.font = "700 14px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
-    [3, 5, 7, 9, 12].forEach(function (f) { ctx.fillText(String(f), cellX(f), bot - 4); });
-    // 高亮：即將／正在按的音（該弦該格亮起，加大）
-    ctx.textBaseline = "middle";
-    for (var i = 0; i < items.length; i++) {
-      var it = items[i], rem = it.time - songTime;
-      if (rem > 0.4 || rem < -0.12) continue;
-      var glow = 1 - Math.min(1, Math.abs(rem) / 0.4), notes = it.notes || [];
-      for (var j = 0; j < notes.length; j++) {
-        var n = notes[j], slot = 5 - n.row, cxp = cellX(n.fret), yy2 = strY(slot);
-        ctx.globalAlpha = 0.4 + 0.6 * glow; ctx.fillStyle = ROCK_COLS[slot];
-        ctx.beginPath(); ctx.arc(cxp, yy2, 10 + glow * 4, 0, Math.PI * 2); ctx.fill();
-        ctx.lineWidth = 2; ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.stroke();
-        ctx.globalAlpha = 1; ctx.fillStyle = "#fff"; ctx.font = "800 14px system-ui, sans-serif";
-        ctx.fillText(String(n.fret), cxp, yy2);
-      }
-    }
-    ctx.globalAlpha = 1;
-  }
-
-  // --- 簡譜直向 ---
-  function renderJianpu(songTime) {
-    for (var l = 0; l < LANES; l++) {
-      var x = laneX(l), w = laneW();
-      ctx.fillStyle = (l % 2 === 0) ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.055)";
-      ctx.fillRect(x, 0, w, H);
-      if (laneFlash[l] > 0) {
-        ctx.fillStyle = "rgba(255,255,255," + (0.12 * laneFlash[l]) + ")";
-        ctx.fillRect(x, 0, w, H);
-        laneFlash[l] = Math.max(0, laneFlash[l] - 0.08);
-      }
-      ctx.strokeStyle = "rgba(255,255,255,0.08)";
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-    }
-    ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(0, judgeY); ctx.lineTo(W, judgeY); ctx.stroke(); ctx.lineWidth = 1;
-
-    drawKeypad(judgeY + 8, 74);
-
-    for (var i = 0; i < items.length; i++) {
-      var n = items[i];
-      if (n.deadOnly) continue;                                 // 純死音拍無簡譜級數，垂直簡譜模式不畫
-      if (n.judged && (n.hit || songTime - n.time > 0.4)) continue;
-      var remain = n.time - songTime;
-      if (remain > travel + 0.1 || remain < -0.5) continue;
-      var y = (1 - remain / travel) * judgeY;
-      drawJianpuNote(n, y);
-    }
-    drawPopupsVertical();
-  }
-
-  function drawJianpuNote(n, y) {
-    y = Math.round(y);                              // 對齊像素
-    var x = laneX(n.lane), w = laneW(), pad = 5, nh = 60, cx = x + w / 2;
-    ctx.fillStyle = LANE_COLORS[n.lane];            // 銳利填色（不用 shadowBlur，避免拖尾）
-    roundRect(x + pad, y - nh / 2, w - pad * 2, nh, 12); ctx.fill();
-    ctx.lineWidth = 2.5; ctx.strokeStyle = "rgba(0,0,0,0.28)";
-    roundRect(x + pad, y - nh / 2, w - pad * 2, nh, 12); ctx.stroke();
-    ctx.lineWidth = 1;
-    ctx.fillStyle = "#161616"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.font = "bold 34px system-ui, sans-serif";
-    ctx.fillText(n.symbol + String(n.degree), cx, y + 1);
-    if (n.dur != null) drawRhythmMarks(cx, y + 1, 15, rhythmMarks(n.dur), "#161616", false);  // 節奏底線＋附點
-    drawOctaveDots(n, cx, y, nh);
-  }
-  function drawOctaveDots(n, cx, y, nh) {
-    var off = n.octaveOffset; if (!off) return;
-    var count = Math.min(Math.abs(off), 3);
-    ctx.fillStyle = "#161616";
-    var spacing = 8, r = 2.6, startX = cx - (count - 1) * spacing / 2;
-    var dy = off > 0 ? (y - nh / 2 - 6) : (y + nh / 2 + 6);
-    for (var i = 0; i < count; i++) { ctx.beginPath(); ctx.arc(startX + i * spacing, dy, r, 0, Math.PI * 2); ctx.fill(); }
   }
 
   // --- 六線譜橫向 ---
@@ -3688,60 +3723,6 @@
     ctx.beginPath(); ctx.moveTo(hitX, jY - staffHalf - 10); ctx.lineTo(hitX, jY + staffHalf + 10); ctx.stroke(); ctx.lineWidth = 1;
   }
 
-  // 底部觸控鍵盤 = 吉他指板外觀（1–7 為琴格按鍵）；直向 / 橫向共用；記錄 pad 供觸控命中
-  function drawKeypad(y0, h) {
-    pad = { y0: y0, h: h };
-    var lw = laneW(), cy = y0 + h / 2, st = curFretStyle();
-    ctx.save();
-    roundRect(0, y0, W, h, 10); ctx.clip();
-
-    // 木紋底色（依選定樣式）
-    var wood = ctx.createLinearGradient(0, y0, 0, y0 + h);
-    wood.addColorStop(0, st.wood[0]); wood.addColorStop(1, st.wood[1]);
-    ctx.fillStyle = wood; ctx.fillRect(0, y0, W, h);
-
-    // 弦線（6 條，水平）
-    ctx.strokeStyle = st.string; ctx.lineWidth = 1;
-    for (var s = 0; s < 6; s++) {
-      var sy = y0 + h * (s + 0.5) / 6;
-      ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(W, sy); ctx.stroke();
-    }
-
-    // 指板記號點（第 3、5、7 格）
-    ctx.fillStyle = st.inlayColor;
-    [2, 4, 6].forEach(function (idx) {
-      ctx.beginPath(); ctx.arc(laneX(idx) + lw / 2, cy, 5, 0, Math.PI * 2); ctx.fill();
-    });
-
-    // 品絲（垂直）+ 上弦枕（左邊粗線）
-    for (var f = 1; f < LANES; f++) {
-      var fx = laneX(f);
-      ctx.strokeStyle = st.fretwire; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(fx, y0); ctx.lineTo(fx, y0 + h); ctx.stroke();
-    }
-    ctx.strokeStyle = st.nut; ctx.lineWidth = 5;
-    ctx.beginPath(); ctx.moveTo(2, y0); ctx.lineTo(2, y0 + h); ctx.stroke();
-    ctx.lineWidth = 1;
-
-    // 按到某格時，在該格顯示一個圓點（手指位置）
-    for (var k = 0; k < LANES; k++) {
-      var fl = padFlash[k] || 0;
-      if (fl <= 0) continue;
-      var cx = laneX(k) + lw / 2;
-      ctx.save();
-      ctx.globalAlpha = Math.min(1, fl);
-      ctx.shadowColor = "rgba(255,240,205,0.9)"; ctx.shadowBlur = 14;
-      ctx.fillStyle = "#f4ecd6";
-      ctx.beginPath(); ctx.arc(cx, cy, 15, 0, Math.PI * 2); ctx.fill();
-      ctx.shadowBlur = 0; ctx.lineWidth = 2; ctx.strokeStyle = "rgba(60,40,20,0.55)";
-      ctx.beginPath(); ctx.arc(cx, cy, 15, 0, Math.PI * 2); ctx.stroke();
-      ctx.restore();
-      padFlash[k] = Math.max(0, fl - 0.03);   // 慢一點淡出，看得清楚
-    }
-    ctx.lineWidth = 1;
-    ctx.restore();
-  }
-
   // 死音/悶音：六線譜上以灰色「✕」表示（無音高、不判定，純視覺參考）
   function drawDeadNote(x, y) {
     x = Math.round(x); y = Math.round(y);
@@ -3894,17 +3875,6 @@
     ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath();
   }
 
-  function drawPopupsVertical() {
-    var labels = { perfect: ["PERFECT", "#ffd93d"], great: ["GREAT", "#5ec26a"], good: ["GOOD", "#5b8def"], miss: ["MISS", "#ff5d6c"] };
-    for (var i = popups.length - 1; i >= 0; i--) {
-      var p = popups[i]; p.t += 1 / 60;
-      if (p.t > 0.6) { popups.splice(i, 1); continue; }
-      var alpha = 1 - p.t / 0.6, cx = laneX(p.lane) + laneW() / 2, yy = judgeY - 40 - p.t * 40, info = labels[p.tier];
-      ctx.globalAlpha = alpha; ctx.fillStyle = info[1];
-      ctx.font = "bold 18px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(info[0], cx, yy); ctx.globalAlpha = 1;
-    }
-  }
   function drawPopupsHorizontal(hitX, topPad) {
     var labels = { perfect: ["PERFECT", "#ffd93d"], great: ["GREAT", "#5ec26a"], good: ["GOOD", "#5b8def"], miss: ["MISS", "#ff5d6c"] };
     var shown = 0;

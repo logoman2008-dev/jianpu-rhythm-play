@@ -52,7 +52,7 @@
   }
   </script>
 
-  <link rel="stylesheet" href="css/style.css?v=20260731a" />
+  <link rel="stylesheet" href="css/style.css?v=20260731b" />
 </head>
 <body>
   <!-- 首次進站啟動畫：顯示海報＋讀取動畫，約 2 秒後自動淡出進選單（純 CSS，回選單不重載故不再出現） -->
@@ -63,7 +63,7 @@
     </div>
   </div>
   <div id="menuBg"></div>
-  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260731a" loop preload="auto"></audio>
+  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260731b" loop preload="none"></audio>
   <div class="app">
     <header class="topbar">
       <div class="logo">簡譜音遊 <span>Jianpu Rhythm</span></div>
@@ -324,6 +324,48 @@
             </div>
           </div>
 
+          <!-- LiteJam LED 吉他：把譜的音符即時亮在真吉他指板上（跟著遊戲播放） -->
+          <div class="litejam-box">
+            <label class="field checkbox">
+              <input type="checkbox" id="liteToggle" />
+              <span>🎸 連動 LiteJam LED 吉他（把譜亮在真吉他指板上，跟著遊戲播放）</span>
+            </label>
+            <div id="liteControls" class="hidden">
+              <div class="fx-row">
+                <button type="button" id="liteConnectBtn" class="btn small ghost">🔗 連接吉他</button>
+                <button type="button" id="liteTestBtn" class="btn small ghost" disabled>💡 測試亮燈</button>
+                <span class="lite-status" id="liteStatus">未連線</span>
+              </div>
+              <div class="lite-grid">
+                <label class="field">
+                  <span>正在彈的音（顏色）</span>
+                  <input type="color" id="liteColorMain" value="#00e0ff" />
+                </label>
+                <label class="field checkbox lite-next">
+                  <input type="checkbox" id="liteNextToggle" checked />
+                  <span>預告下一個音</span>
+                </label>
+                <label class="field">
+                  <span>下一個音（顏色）</span>
+                  <input type="color" id="liteColorNext" value="#ff9a3c" />
+                </label>
+              </div>
+              <label class="slider-field">
+                <span>亮度<b id="liteBrightVal">80%</b></span>
+                <input type="range" id="liteBright" min="10" max="100" step="5" value="80" />
+              </label>
+              <label class="slider-field">
+                <span>提前亮燈<b id="liteLeadVal">0 ms</b></span>
+                <input type="range" id="liteLead" min="0" max="400" step="20" value="0" />
+              </label>
+              <label class="field checkbox">
+                <input type="checkbox" id="liteReverse" />
+                <span>弦序反轉（若實機亮到的弦上下相反就勾這個）</span>
+              </label>
+              <div class="ms-tip" id="liteTip">需要<b>電腦版 Chrome / Edge</b> 與藍牙（Safari、iPhone 不支援）。先開琴、點「連接吉他」選到你的 LiteJam，再點「測試亮燈」確認弦序對不對（會依序亮第 1～6 弦），之後開始遊戲指板就跟著亮。「提前亮燈」讓燈比該彈的拍點早一點亮，方便手先移過去。</div>
+            </div>
+          </div>
+
           <button id="startBtn" class="btn primary" disabled>▶ 開始遊戲</button>
         </div>
       </div>
@@ -442,20 +484,20 @@
     <button type="button" id="tosOk" class="btn small">我已閱讀並同意</button>
   </div>
 
-  <!-- alphaTab：解析 Guitar Pro 檔（僅用匯入器，不繪譜） -->
-  <script src="lib/alphaTab.min.js"></script>
+  <!-- alphaTab（解析 Guitar Pro 檔，977KB）改為選歌時才動態載入 → 首頁不下載，見 game.js ensureAlphaTab() -->
   <!-- 登入 / 付費驗證（Supabase）。免費曲不需要這些也能玩；離線會自動略過。 -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/supabase-config.js?v=20260731a"></script>
-  <script src="js/auth.js?v=20260731a"></script>
+  <script src="js/supabase-config.js?v=20260731b"></script>
+  <script src="js/auth.js?v=20260731b"></script>
   <!-- 遊戲程式 -->
-  <script src="js/heic.js?v=20260731a"></script>
-  <script src="js/theory.js?v=20260731a"></script>
-  <script src="js/gp-loader.js?v=20260731a"></script>
-  <script src="js/audio.js?v=20260731a"></script>
-  <script src="js/pitch.js?v=20260731a"></script>
-  <script src="js/songs.js?v=20260731a"></script>
-  <script src="js/game.js?v=20260731a"></script>
-  <script src="js/library.js?v=20260731a"></script>
+  <script src="js/heic.js?v=20260731b"></script>
+  <script src="js/theory.js?v=20260731b"></script>
+  <script src="js/gp-loader.js?v=20260731b"></script>
+  <script src="js/audio.js?v=20260731b"></script>
+  <script src="js/pitch.js?v=20260731b"></script>
+  <script src="js/songs.js?v=20260731b"></script>
+  <script src="js/litejam.js?v=20260731b"></script>
+  <script src="js/game.js?v=20260731b"></script>
+  <script src="js/library.js?v=20260731b"></script>
 </body>
 </html>
