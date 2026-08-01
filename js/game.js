@@ -489,6 +489,29 @@
     }
     return out;
   }
+  // 推弦亮燈（做法參考 litejam-glowtab）：有推弦的音 → 同一格往鄰弦方向「掃」出去，
+  // 掃幾條看推弦幅度（bend 是 1/4 音為單位，半音數 = bend/2；半音掃1條、全音2條、1.5音3條）。
+  // 1~3 弦(細)往粗弦方向掃（弦號變大）、4~6 弦(粗)往細弦方向掃。動畫用「已在這拍上多久」推進，
+  // 每 85ms 多亮一條，換拍時自然重算（不需另開非同步迴圈）。
+  var LITE_BEND_STEP = 0.085;
+  function liteBendCount(bend) { return Math.max(1, Math.min(5, Math.round((bend || 0) / 2))); }
+  function liteBendStrings(item, elapsed) {
+    if (!item || !item.notes) return [];
+    var step = 1 + Math.floor(Math.max(0, elapsed) / LITE_BEND_STEP);   // 這拍上第幾步(至少 1)
+    var out = [];
+    for (var i = 0; i < item.notes.length; i++) {
+      var n = item.notes[i];
+      if (!(n.bend > 0) || n.string == null || n.fret == null || n.fret < 0) continue;
+      var gstr = 7 - n.string;                       // 吉他慣例弦號(1=最細)
+      var dir = gstr <= 3 ? 1 : -1;                  // 1~3弦往粗弦掃、4~6弦往細弦掃
+      var lim = Math.min(step, liteBendCount(n.bend));
+      for (var k = 1; k <= lim; k++) {
+        var gs = gstr + dir * k;
+        if (gs >= 1 && gs <= 6) out.push({ string: liteHwString(7 - gs), fret: n.fret });
+      }
+    }
+    return out;
+  }
   // 找出「時間 <= t 的最後一個有音符的拍」的索引（含快取，播放時多為順序前進）
   function liteBeatIndexAt(t) {
     if (!items || !items.length) return -1;
@@ -514,6 +537,10 @@
     var curRaw = liteBeatIndexAt(songTime);
     var curIdx = (curRaw >= 0 && items[curRaw].notes && items[curRaw].notes.length) ? curRaw : liteFirstWithNotes(curRaw, -1);
     var now = curIdx >= 0 ? liteNotesOf(items[curIdx]) : [];
+    if (curIdx >= 0) {                                  // 推弦：把被推向鄰弦的燈疊上來（同主色，一條條掃出）
+      var bendLeds = liteBendStrings(items[curIdx], songTime - items[curIdx].time);
+      for (var q = 0; q < bendLeds.length; q++) now.push(bendLeds[q]);
+    }
     if (now.length) groups.push({ leds: window.JianpuLite.packNotes(now), color: mainCol });
 
     if (els.liteNextToggle && els.liteNextToggle.checked) {
@@ -1289,7 +1316,7 @@
     if (_alphaTabPromise) return _alphaTabPromise;
     _alphaTabPromise = new Promise(function (resolve, reject) {
       var s = document.createElement("script");
-      s.src = "lib/alphaTab.min.js?v=20260731b";
+      s.src = "lib/alphaTab.min.js?v=20260801a";
       s.onload = function () { resolve(); };
       s.onerror = function () { _alphaTabPromise = null; reject(new Error("無法載入樂譜解析引擎（alphaTab）")); };
       document.head.appendChild(s);
