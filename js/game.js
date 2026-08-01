@@ -1,3957 +1,485 @@
-// ===================================================================
-// game.js — 簡譜音遊主程式
-// 顯示模式：簡譜下落(直向) / 六線譜(橫向)
-// 輸入模式：鍵盤 1–7 / 吉他收音(麥克風即時測音高)
-// ===================================================================
-(function () {
-  "use strict";
-
-  var T = window.Theory, GP = window.GPLoader, A = window.GameAudio, P = window.Pitch;
-
-  // ---- 設定 ----
-  var LANES = 7;
-  var LANE_KEYS = ["1", "2", "3", "4", "5", "6", "7"];
-  var LANE_COLORS = ["#ff5d6c", "#ff9f43", "#ffd93d", "#5ec26a", "#3fc7bb", "#5b8def", "#b06bff"];
-  var LANE_NAMES = ["Do", "Re", "Mi", "Fa", "Sol", "La", "Si"];
-  var NEUTRAL_NOTE = "#dfe3ea";   // 單音(無技巧)用的中性色
-
-  // 指板樣式（木色 / 鑲嵌 inlay 型式 / 弦與品絲色 / 音符點顏色）
-  var FRETBOARD_STYLES = {
-    rosewood: { label: "玫瑰木·圓點", wood: ["#5b3b25", "#38230f"], inlay: "dot",
-      inlayColor: "rgba(243,238,222,0.55)", fretwire: "rgba(205,210,218,0.5)", nut: "#e9e1cd",
-      string: "rgba(238,232,215,0.22)", noteBg: "#dfe3ea", noteFg: "#161616" },
-    ebony: { label: "黑檀·圓點", wood: ["#34343c", "#141416"], inlay: "dot",
-      inlayColor: "rgba(232,234,240,0.6)", fretwire: "rgba(200,205,215,0.6)", nut: "#d8d4c8",
-      string: "rgba(215,218,228,0.25)", noteBg: "#dfe3ea", noteFg: "#161616" },
-    maple: { label: "楓木·黑點", wood: ["#e2c286", "#c99f56"], inlay: "dot",
-      inlayColor: "rgba(30,22,10,0.6)", fretwire: "rgba(110,95,70,0.75)", nut: "#4a3418",
-      string: "rgba(70,52,28,0.32)", noteBg: "#2f2a20", noteFg: "#f2ede0" },
-    block: { label: "黑檀·方塊", wood: ["#34343c", "#141416"], inlay: "block",
-      inlayColor: "rgba(238,236,228,0.9)", fretwire: "rgba(200,205,215,0.6)", nut: "#d8d4c8",
-      string: "rgba(215,218,228,0.25)", noteBg: "#dfe3ea", noteFg: "#161616" },
-    shark: { label: "黑檀·鯊魚鰭", wood: ["#241f2c", "#100e18"], inlay: "shark",
-      inlayColor: "rgba(226,230,240,0.9)", fretwire: "rgba(200,205,215,0.6)", nut: "#d8d4c8",
-      string: "rgba(215,218,228,0.25)", noteBg: "#dfe3ea", noteFg: "#161616" },
-    vine: { label: "生命樹·藤蔓", wood: ["#3a2416", "#201004"], inlay: "vine",
-      inlayColor: "rgba(210,228,196,0.85)", fretwire: "rgba(210,190,120,0.55)", nut: "#e0c878",
-      string: "rgba(235,225,200,0.24)", noteBg: "#dfe3ea", noteFg: "#161616" }
-  };
-  var INLAY_SINGLE = [3, 5, 7, 9, 15, 17, 19, 21];
-  var INLAY_DOUBLE = [12, 24];
-  var NOTE_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
-
-  // 以「目標像素速度(px/s)」定義下落速度，與螢幕大小無關，鎖在人眼舒適追視範圍；
-  // lead = 最短預視秒數(小螢幕保底反應時間)。實際 travel = max(lead, 距離 / vel)。
-  var DIFFICULTY = {
-    easy:   { vel: 260, lead: 1.6, label: "簡單" },
-    normal: { vel: 360, lead: 1.2, label: "普通" },
-    hard:   { vel: 500, lead: 0.9, label: "困難" }
-  };
-  var W_PERFECT = 0.100, W_GREAT = 0.200, W_GOOD = 0.290, W_MISS = 0.350;   // Perfect ±100ms，Great/Good/Miss 維持寬鬆好命中；收音模式 windows() perfect 再 +30ms、其餘 +50ms slack
-  var JUDGE_OFFSET = 0.010;   // 各種判定全域延遲(秒)：命中甜蜜點往後 10ms（鍵盤＋收音都套用）；由「判定延遲微調」滑桿即時調整
-  var OFFSET_KEY = "jianpu_judge_offset";   // 判定延遲微調滑桿的記憶值(ms)
-  var MIC_PITCH_TOL = 1;   // 收音判定容許音準偏移(半音)：彈略走音/偵測誤差 ±1 半音內仍算命中
-  var SCORE = { perfect: 1000, great: 650, good: 300 };
-  var ACC = { perfect: 1, great: 0.65, good: 0.3, miss: 0 };
-  var STORE_KEY = "jianpu_mic_settings";
-  // 付費驗證已改到後端（Supabase）：見 js/auth.js。自己上傳的譜一律免費、不再有密碼閘門。
-
-  // ---- 狀態 ----
-  var state = "idle";            // idle | ready | playing | paused | result
-  var displayMode = "tab";       // tab（六線譜/公路透視） | rocksmith（直向公路）
-  var inputMode = "mic";         // 只保留收音（麥克風）模式（鍵盤模式已移除）
-  var score, current, stats, travel, tonicPc;
-  var timeline, tabTL, items, tabInfo = { tuning: [64,59,55,50,45,40], stringCount: 6 };
-  var speed = 1, melodyNotes = [], songDuration = 0;   // 倍速、縮放後旋律、實際播放長度
-  var barStartsScaled = [];   // 各小節起始秒(依倍速縮放)，六線譜指板檢視用
-  var beatTimes = [], beatAccents = [], beatInBar = [], beatDurs = [], beatsPerBar = [], _metroIdx = 0, _grooveIdx = 0;   // 節拍器/鼓拍點
-  var genre = "none";         // 曲風(鼓＋伴奏)
-  var GENRE_KEY = "jianpu_genre";
-  var TONE_KEY = "jianpu_tone";   // 吉他音色
-  var CAB_KEY = "jianpu_cab";     // 音箱模擬(IR)
-  var bgImage = null;         // 自訂背景圖／個人照(可選)
-  // 角色專屬鎖定背景（選到該角色時，背景固定用這張照片）
-  var CHAR_BG_SRC = { lulan: "assets/lulan-bg.jpg", family: "assets/family-bg.jpg" };
-  var charBg = {};
-  Object.keys(CHAR_BG_SRC).forEach(function (k) { var im = new Image(); im.src = CHAR_BG_SRC[k]; charBg[k] = im; });
-  var lulanBg = charBg.lulan;   // 舊名保留（drawGymBackdrop 的 fallback 判斷會用到）
-  var lulanSweat = [];        // 閃電嚕嚕安汗滴粒子
-  var bgOpacity = 0.55;       // 背景照透明度
-  var bigJudge = null;        // 右側大字評分動畫狀態
-  var charPulse = 0;          // 吉他手命中彈跳
-  var guitaristId = "beethoven";  // 目前選的 Q 版吉他手
-  var GUITARIST_KEY = "jianpu_guitarist";
-  var hypeShown = 0;          // 舞台熱度(隨連段上升、平滑過渡)：燈光/觀眾/站台
-  var comboBurst = { t: 999, level: 0 };   // 每達新連段段位(每10連段)的慶祝爆發動畫
-  var countBeat = 0.5;                      // 開場倒數每一拍的秒數(依曲速；4 拍倒數用)
-  var stageProcedural = false;             // 這幀是否在畫程序化舞台(無背景圖時才畫升降台/觀眾)
-  var stageOn = false;                     // 這幀是否要畫舞台道具(台面/追蹤燈/音箱牆/觀眾)。
-                                           //   專屬角色雖然背景鎖成照片，舞台照樣要有(跟其他角色一樣)；
-                                           //   只有玩家自己上傳的背景圖才整個不畫，免得蓋掉他的照片。
-  var pad = null, popups, dpr = 1;
-  var canvas, ctx, W = 0, H = 0, judgeY = 0;
-  var els = {};
-  // 收音 onset 狀態
-  var micCand = -1, micStable = 0, micLastPc = -1, micWasSilent = true, micDisp = { midi: null, rms: 0, t: 0 };
-  var micSmooth = 0, micPrevSmooth = 0, micOnsetT = -9, micLastHit = -9;   // 起音瞬態偵測：輕平滑後偵測「幀間能量突增(positive flux)」= 新一次撥弦 → 同音連撥/搥勾/連奏都能再判定，不會被 Miss
-  // 收音校正（可調 + 存 localStorage）
-  var micGate = 0.012, micLatencyMs = 50, micTesting = false;
-
-  function $(id) { return document.getElementById(id); }
-
-  function init() {
-    ["fileInput","dropZone","trackSelect","keySelect","difficultySelect","displaySelect","inputSelect",
-     "melodyToggle","startBtn","pauseBtn","restartBtn","backBtn","songInfo","status","setupPanel","gameWrap",
-     "hudScore","hudCombo","hudAcc","hudTitle","progressFill","result","resultBody","micHud","micNote","micLevel",
-     "micSettings","sensRange","sensVal","latRange","latVal","micTestBtn","testNote","testLevel",
-     "autoCalBtn","leaderboard","calibModal","calibDot","calibProg","calibResult","calibClose","calibCancel",
-     "speedRange","speedVal","bottomSelect","fretWindowSelect","fretStyleSelect","bgInput","bgTip","guitaristSelect","metronomeToggle","genreSelect","bgOpacityRange","bgOpacityVal","audioInSelect","audioInTip","audioInCount","audioInNow","audioInList","audioInRescan","audioInUnlock",
-     "ampToggle","ampControls","ampDrive","ampDriveVal","ampLevel","ampLevelVal","ampBuffer","ampLatNow",
-     "gateToggle","gateControls","gateThresh","gateThreshVal","gateAutoBtn","gateMeter","gateLed","gateTip",
-     "odToggle","odControls","odDrive","odDriveVal","odTone","odToneVal","odLevel","odLevelVal",
-     "toneBass","toneBassVal","toneMid","toneMidVal","toneTreble","toneTrebleVal","tonePresence","tonePresenceVal",
-     "dlyToggle","dlyControls","dlyTime","dlyTimeVal","dlyFb","dlyFbVal","dlyMix","dlyMixVal",
-     "tunerToggle","tunerDisplay","tunerNote","tunerNeedle","tunerCents",
-     "liteToggle","liteControls","liteConnectBtn","liteTestBtn","liteStatus","liteColorMain","liteNextToggle","liteColorNext","liteBright","liteBrightVal","liteLead","liteLeadVal","liteReverse","liteTip"
-    ].forEach(function (id) { els[id] = $(id); });
-    canvas = $("gameCanvas");
-    ctx = canvas.getContext("2d");
-
-    var opts = '<option value="auto">自動偵測</option>';
-    T.KEY_OPTIONS.forEach(function (k) { opts += '<option value="' + k.value + '">' + k.label + '</option>'; });
-    els.keySelect.innerHTML = opts;
-
-    els.fileInput.addEventListener("change", function (e) {
-      if (e.target.files && e.target.files[0]) loadFile(e.target.files[0]);
-    });
-    ["dragover", "dragenter"].forEach(function (ev) {
-      els.dropZone.addEventListener(ev, function (e) { e.preventDefault(); els.dropZone.classList.add("drag"); });
-    });
-    ["dragleave", "drop"].forEach(function (ev) {
-      els.dropZone.addEventListener(ev, function (e) { e.preventDefault(); els.dropZone.classList.remove("drag"); });
-    });
-    els.dropZone.addEventListener("drop", function (e) {
-      var f = e.dataTransfer.files && e.dataTransfer.files[0];
-      if (f) loadFile(f);
-    });
-    els.dropZone.addEventListener("click", function () { ensureAlphaTab().catch(function () {}); els.fileInput.click(); });   // 點選檔區＝要載歌，先暖身把 alphaTab 拉下來
-    els.dropZone.addEventListener("pointerenter", function () { ensureAlphaTab().catch(function () {}); }, { once: true });
-
-    // 範例曲快速載入（讓沒有 .gp 檔的訪客也能玩）
-    buildSampleList();
-    // 自己上傳的譜：每日免費次數提示；登入/開通狀態改變時即時更新
-    updateOwnGateTip();
-    if (window.JianpuAuth && window.JianpuAuth.onChange) window.JianpuAuth.onChange(updateOwnGateTip);
-
-    // UI 分工：【帳號】(記住角色) 在吉他手選單下方；【進階版】(自己上傳無限) 在「我的曲庫」；付費資料夾各自密碼在清單。
-    loadPaidFolders();          // 讀取後台的付費資料夾上鎖設定
-    renderLibUnlock();
-    renderAccountBox();
-    // 已登入帳號 → 開機時重新對一次後台（付款開通/被收回、別台新解的角色都會即時反映）
-    if (accountEmail()) {
-      refreshAccountState();
-      if (window.JianpuAuth && window.JianpuAuth.onChange) { var _p = false; window.JianpuAuth.onChange(function () { if (!_p) { _p = true; refreshAccountState(); } }); }
-    }
-    checkForUpdate();           // 版本自動檢查（避免拿到瀏覽器/CDN 快取的舊版）
-    setupAudioInputs();         // 輸入裝置清單（開機就掃、插拔自動更新）
-    setupTosBar();              // 首次進站的服務條款同意條
-    setupMenuBgm();             // 選單背景音樂
-    setupVirtualAmp();          // 虛擬音箱（收音→模擬音色→即時輸出）
-    setupTuner();               // 調音器
-
-    els.trackSelect.addEventListener("change", rebuildTimeline);
-    els.keySelect.addEventListener("change", rebuildTimeline);
-    els.displaySelect.addEventListener("change", rebuildTimeline);
-    els.inputSelect.addEventListener("change", onInputModeChange);
-    els.speedRange.addEventListener("input", function () {
-      speed = parseFloat(els.speedRange.value) || 1;
-      updateSpeedLabel();
-      if (window._score) { buildItems(); updateSongInfo(); }   // 便宜重算(不重新解析)
-    });
-    updateSpeedLabel();
-    els.bottomSelect.addEventListener("change", updateFretControls);
-    els.bgInput.addEventListener("change", function (e) {
-      var f = e.target.files && e.target.files[0]; if (!f) return;
-      loadBackgroundPhoto(f);
-    });
-    els.bgOpacityRange.addEventListener("input", function () {
-      bgOpacity = (parseInt(els.bgOpacityRange.value, 10) || 55) / 100;
-      els.bgOpacityVal.textContent = Math.round(bgOpacity * 100) + "%";
-    });
-    // 吉他手角色：記住上次選擇（鎖定中的角色會被 refreshGuitaristLocks 擋掉/退回）
-    try { var gv = localStorage.getItem(GUITARIST_KEY); if (gv && els.guitaristSelect.querySelector('option[value="' + gv + '"]')) els.guitaristSelect.value = gv; } catch (e) {}
-    guitaristId = els.guitaristSelect.value;
-    els.guitaristSelect.addEventListener("change", function () {
-      if (!charUnlocked(els.guitaristSelect.value)) {                 // 保險：選到鎖定角色→退回並提示
-        els.guitaristSelect.value = charUnlocked(guitaristId) ? guitaristId : "beethoven";
-        setStatus(els.guitaristSelect.value === "lulan" ? "" : "這個角色還沒解鎖喔。", true);
-        return;
-      }
-      guitaristId = els.guitaristSelect.value;
-      try { localStorage.setItem(GUITARIST_KEY, guitaristId); } catch (e) {}
-    });
-    refreshGuitaristLocks();                                          // 依解鎖狀態標示🔒/停用
-    // 音色固定：High Gain（重破音）＋ 合成音箱（內建 IR）；選單已移除、不再由使用者切換
-    A.setTone("high");
-    A.setCab("synth");
-    // 曲風伴奏：記住上次選擇
-    try { var gv2 = localStorage.getItem(GENRE_KEY); if (gv2 && els.genreSelect.querySelector('option[value="' + gv2 + '"]')) els.genreSelect.value = gv2; } catch (e) {}
-    genre = els.genreSelect.value;
-    els.genreSelect.addEventListener("change", function () {
-      genre = els.genreSelect.value;
-      try { localStorage.setItem(GENRE_KEY, genre); } catch (e) {}
-    });
-
-    // 判定延遲：手動微調已移除，改為固定預設＋「收音校正」自動量測(見 loadMicSettings / 自動校正)
-
-    initLiteJam();                                          // LiteJam LED 吉他連動
-
-    // 收音校正：載入設定並套用
-    loadMicSettings();
-    onInputModeChange();                                   // 只剩收音模式→開場就顯示收音校正面板
-    els.sensRange.addEventListener("input", function () { applySens(); saveMicSettings(); });
-    els.latRange.addEventListener("input", function () { applyLatency(); saveMicSettings(); });
-    els.micTestBtn.addEventListener("click", toggleMicTest);
-    els.autoCalBtn.addEventListener("click", autoCalibrate);
-    els.calibCancel.addEventListener("click", cancelCalib);
-    els.calibClose.addEventListener("click", cancelCalib);
-
-    // 觸控 / 滑鼠：點畫面底部的觸控鍵
-    canvas.addEventListener("pointerdown", onPointerDown);
-
-    els.startBtn.addEventListener("click", startGame);
-    els.pauseBtn.addEventListener("click", togglePause);
-    els.restartBtn.addEventListener("click", startGame);
-    els.backBtn.addEventListener("click", backToSetup);
-    $("resultRetry").addEventListener("click", startGame);
-    $("resultBack").addEventListener("click", backToSetup);
-
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("resize", resize);
-    document.addEventListener("visibilitychange", function () {
-      if (document.hidden && state === "playing") togglePause();
-    });
-
-    resize();
-    requestAnimationFrame(loop);
-    setStatus("請載入一個 Guitar Pro 檔（.gp / .gpx / .gp5 / .gp4 / .gp3）開始。");
-  }
-
-  function setStatus(msg, isError) {
-    els.status.textContent = msg || "";
-    els.status.className = "status" + (isError ? " error" : "");
-  }
-
-  // ---- 收音校正 ----
-  function onInputModeChange() {
-    var mic = els.inputSelect.value === "mic";
-    els.micSettings.classList.toggle("hidden", !mic);
-    if (mic) { refreshAudioInputs(); }   // 不再強制關閉旋律導引（使用者可自行勾選播放）
-    if (!mic && micTesting) toggleMicTest();
-  }
-  // 目前選的音訊輸入裝置 id（空＝預設）
-  function micDeviceId() { return (els.audioInSelect && els.audioInSelect.value) || ""; }
-  // 列出音訊輸入裝置到下拉。
-  //   注意瀏覽器規則：**沒給過麥克風權限時 enumerateDevices 的 label 是空字串**，
-  //   所以要嘛先授權、要嘛只能顯示「輸入裝置 1/2/3」。這裡兩種情況都處理，
-  //   並在已開麥克風時標出目前實際在用的那一個。
-  var _devPrev = null;
-  // 把裝置名稱修短好讀：去掉「預設 - 」前綴與尾端的 USB vendor id（如「(0499:170d)」）
-  function shortDevName(label) {
-    return String(label || "")
-      .replace(/^\s*(預設|默认|默認|Default)\s*-\s*/i, "")
-      .replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$/i, "")
-      .trim();
-  }
-  function refreshAudioInputs() {
-    if (!P.listInputs) return Promise.resolve();
-    var sel = els.audioInSelect; if (!sel) return Promise.resolve();
-    var prev = _devPrev || sel.value;
-    return P.listInputs().then(function (list) {
-      var act = P.activeInput ? P.activeInput() : null;
-      // 瀏覽器會多給「default」/「communications」這種**系統別名**，它指向的其實是下面某一台。
-      // 要把它濾掉，否則同一台會被算兩次（使用者看到「找到 4 個」但其實只有 3 台）。
-      var real = list.filter(function (d) { return d.id !== "default" && d.id !== "communications"; });
-      var aliasDef = null;
-      list.forEach(function (d) { if (d.id === "default" && d.label) aliasDef = d; });
-      var defName = aliasDef ? shortDevName(aliasDef.label) : "";
-
-      var named = 0;
-      var html = '<option value="">預設輸入裝置' +
-                 (defName ? '（系統目前：' + escapeHtml(defName) + '）' : '（系統設定）') + '</option>';
-      real.forEach(function (d, i) {
-        var nm = d.label ? shortDevName(d.label) : ("輸入裝置 " + (i + 1) + "（授權後顯示名稱）");
-        if (d.label) named++;
-        var using = act && act.id && d.id === act.id;
-        html += '<option value="' + escapeHtml(d.id) + '">' + (using ? "🎤 " : "") + escapeHtml(nm) + (using ? "（使用中）" : "") + '</option>';
-      });
-      sel.innerHTML = html;
-      if (prev && sel.querySelector('option[value="' + prev.replace(/"/g, '\\"') + '"]')) sel.value = prev;
-      _devPrev = sel.value;
-
-      if (els.audioInCount) els.audioInCount.textContent = real.length ? "（找到 " + real.length + " 個）" : "（找不到輸入裝置）";
-
-      // ★ 直接把偵測到的音源列出來，不用點開下拉就看得到；目前選中的那台標綠色
-      if (els.audioInList) {
-        if (!real.length) els.audioInList.innerHTML = "";
-        else if (!named) els.audioInList.innerHTML = "🎚 偵測到 <b>" + real.length + "</b> 個音源，但名稱要授權後才看得到（按下面的「顯示裝置名稱」）。";
-        else {
-          var picked = sel.value;
-          els.audioInList.innerHTML = "🎚 偵測到的音源：" + real.map(function (d) {
-            var nm = escapeHtml(shortDevName(d.label) || "未命名裝置");
-            var isPick = picked ? (d.id === picked) : (aliasDef && d.label === aliasDef.label.replace(/^\s*(預設|Default)\s*-\s*/i, ""));
-            return (d.id === picked) ? '<span class="dev-pick">✓ ' + nm + '</span>' : nm;
-          }).join('<span class="dev-dot">·</span>');
-        }
-      }
-
-      if (els.audioInNow) {
-        if (act) {
-          els.audioInNow.className = "ms-tip dev-now";
-          els.audioInNow.innerHTML = "🎤 目前收音：<b>" + escapeHtml(shortDevName(act.label) || "預設裝置") + "</b>　" +
-            (act.sampleRate ? (act.sampleRate / 1000).toFixed(1) + " kHz" : "") +
-            (act.channels ? " · " + act.channels + " ch" : "");
-        } else {
-          els.audioInNow.className = "ms-tip";
-          els.audioInNow.innerHTML = "尚未開始收音（按「測試麥克風」或開始遊戲後，這裡會顯示實際使用的裝置）。";
-        }
-      }
-
-      var needUnlock = real.length > 0 && named === 0;
-      if (els.audioInUnlock) els.audioInUnlock.style.display = needUnlock ? "" : "none";
-      if (els.audioInTip) {
-        if (!real.length) els.audioInTip.innerHTML = "⚠️ 沒偵測到任何音訊輸入裝置。請確認麥克風／錄音介面已接上，再按「重新掃描」。";
-        else if (needUnlock) els.audioInTip.innerHTML = "🔒 瀏覽器規定<b>授權麥克風後才能顯示裝置名稱</b>——按「顯示裝置名稱」授權一次即可（不會開始錄音）。";
-        else els.audioInTip.innerHTML = "💡 接錄音介面的話請在上面<b>直接選那一台</b>（音質與延遲最好）；選「預設」會跟著系統設定跑。插拔裝置會自動重新掃描。";
-      }
-      return real;
-    }).catch(function () { return []; });
-  }
-  // 「顯示裝置名稱」：只為解鎖名稱要一次權限，拿到就立刻關掉
-  function unlockDeviceNames() {
-    if (!P.unlockDeviceLabels) return;
-    els.audioInUnlock.disabled = true;
-    P.unlockDeviceLabels().then(function () {
-      return refreshAudioInputs();
-    }).catch(function (e) {
-      if (els.audioInTip) els.audioInTip.innerHTML = "❌ 沒有取得麥克風權限：" + escapeHtml((e && e.message) || String(e)) +
-        "（可到瀏覽器網址列左邊的鎖頭圖示重新允許）";
-    }).then(function () { els.audioInUnlock.disabled = false; });
-  }
-  // 換裝置：若正在收音就立刻用新裝置重開（原本要等下一次 start 才生效）
-  function onAudioInChange() {
-    _devPrev = els.audioInSelect.value;
-    if (!P.isActive()) { refreshAudioInputs(); return; }
-    if (els.audioInNow) els.audioInNow.innerHTML = "切換裝置中…";
-    P.restart(micDeviceId()).then(function () {
-      if (els.ampToggle && els.ampToggle.checked) P.setAmp(true);
-      refreshAudioInputs();
-    }).catch(function (e) {
-      if (els.audioInTip) els.audioInTip.innerHTML = "❌ 切換裝置失敗：" + escapeHtml((e && e.message) || String(e));
-    });
-  }
-  // 開機時就掃一次；已授權過的話直接看到真實名稱。插拔裝置也自動更新。
-  function setupAudioInputs() {
-    if (!els.audioInSelect) return;
-    els.audioInSelect.addEventListener("change", onAudioInChange);
-    if (els.audioInRescan) els.audioInRescan.addEventListener("click", function () { refreshAudioInputs(); });
-    if (els.audioInUnlock) els.audioInUnlock.addEventListener("click", unlockDeviceNames);
-    if (P.onDeviceChange) P.onDeviceChange(function () { refreshAudioInputs(); });
-    refreshAudioInputs();
-  }
-
-  function loadMicSettings() {
-    try {
-      var s = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
-      if (typeof s.sens === "number") els.sensRange.value = s.sens;
-      if (typeof s.lat === "number") els.latRange.value = s.lat;
-    } catch (e) {}
-    applySens(); applyLatency();
-  }
-  function saveMicSettings() {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify({ sens: +els.sensRange.value, lat: +els.latRange.value })); } catch (e) {}
-  }
-
-  // ===== LiteJam LED 吉他連動 =====
-  // 把譜面「正在彈的音」與「下一個音」即時亮在真吉他指板上，跟著遊戲播放同步。
-  var LITE_KEY = "jianpu_litejam";
-  var liteEnabled = false;                 // 使用者有沒有勾「連動」
-  var lite = (window.JianpuLite && window.JianpuLite.instance) || null;
-  var _liteCurIdx = -1;                     // updateLite 用的目前拍索引快取
-  var _liteTesting = false;                 // 測試亮燈序列進行中
-
-  function liteLoad() {
-    var s = {};
-    try { s = JSON.parse(localStorage.getItem(LITE_KEY) || "{}"); } catch (e) {}
-    if (typeof s.enabled === "boolean") liteEnabled = s.enabled;
-    if (els.liteColorMain && s.colorMain) els.liteColorMain.value = s.colorMain;
-    if (els.liteColorNext && s.colorNext) els.liteColorNext.value = s.colorNext;
-    if (els.liteNextToggle && typeof s.showNext === "boolean") els.liteNextToggle.checked = s.showNext;
-    if (els.liteBright && typeof s.bright === "number") els.liteBright.value = s.bright;
-    if (els.liteLead && typeof s.lead === "number") els.liteLead.value = s.lead;
-    if (els.liteReverse && typeof s.reverse === "boolean") els.liteReverse.checked = s.reverse;
-  }
-  function liteSave() {
-    try {
-      localStorage.setItem(LITE_KEY, JSON.stringify({
-        enabled: liteEnabled,
-        colorMain: els.liteColorMain ? els.liteColorMain.value : "#00e0ff",
-        colorNext: els.liteColorNext ? els.liteColorNext.value : "#ff9a3c",
-        showNext: els.liteNextToggle ? els.liteNextToggle.checked : true,
-        bright: els.liteBright ? +els.liteBright.value : 80,
-        lead: els.liteLead ? +els.liteLead.value : 0,
-        reverse: els.liteReverse ? els.liteReverse.checked : false,
-      }));
-    } catch (e) {}
-  }
-  function liteBrightVal() { return (els.liteBright ? +els.liteBright.value : 80) / 100; }
-  function liteSetStatus(text, cls) {
-    if (!els.liteStatus) return;
-    els.liteStatus.textContent = text;
-    els.liteStatus.className = "lite-status" + (cls ? " " + cls : "");
-  }
-  function liteRefreshStatus() {
-    if (!lite) return;
-    var connected = lite.status === "connected";
-    if (connected) {
-      var extra = (lite.battery != null ? "　🔋" + lite.battery + "%" : "");
-      liteSetStatus("已連線：" + (lite.deviceName || "LiteJam") + extra, "connected");
-      if (els.liteConnectBtn) els.liteConnectBtn.textContent = "✂ 中斷連線";
-    } else if (lite.status === "connecting") {
-      liteSetStatus("連線中…", "connecting");
-    } else {
-      liteSetStatus("未連線", "");
-      if (els.liteConnectBtn) els.liteConnectBtn.textContent = "🔗 連接吉他";
-    }
-    if (els.liteTestBtn) els.liteTestBtn.disabled = !connected || _liteTesting;   // 只有連上、且沒在測時可按
-  }
-  function initLiteJam() {
-    if (!els.liteToggle) return;
-    liteLoad();
-    // 沒有藍牙支援（Safari / iPhone）就直接把整塊停用，避免誤以為故障
-    if (!lite || !lite.supported()) {
-      liteEnabled = false;
-      els.liteToggle.checked = false;
-      els.liteToggle.disabled = true;
-      if (els.liteTip) els.liteTip.innerHTML = "⚠️ 這個瀏覽器不支援 Web Bluetooth，無法連動 LiteJam。請用<b>電腦版 Chrome / Edge</b>（Safari、iPhone 不支援）。";
-      return;
-    }
-    els.liteToggle.checked = liteEnabled;
-    els.liteControls.classList.toggle("hidden", !liteEnabled);
-    if (els.liteBrightVal) els.liteBrightVal.textContent = els.liteBright.value + "%";
-    if (els.liteLeadVal) els.liteLeadVal.textContent = els.liteLead.value + " ms";
-
-    els.liteToggle.addEventListener("change", function () {
-      liteEnabled = els.liteToggle.checked;
-      els.liteControls.classList.toggle("hidden", !liteEnabled);
-      liteSave();
-      if (!liteEnabled) liteClear();
-    });
-    els.liteConnectBtn.addEventListener("click", function () {
-      if (lite.status === "connected") { lite.disconnect(); return; }
-      liteSetStatus("連線中…", "connecting");
-      lite.connect().then(function (snap) {
-        if (snap) liteRefreshStatus(); else liteRefreshStatus();   // null = 使用者取消
-      }).catch(function (err) {
-        liteSetStatus((err && err.message) || "連線失敗", "error");
-      });
-    });
-    on(els.liteTestBtn, "click", liteTest);
-    on(els.liteColorMain, "input", liteSave);
-    on(els.liteColorNext, "input", liteSave);
-    on(els.liteNextToggle, "change", liteSave);
-    on(els.liteReverse, "change", liteSave);
-    on(els.liteBright, "input", function () { if (els.liteBrightVal) els.liteBrightVal.textContent = els.liteBright.value + "%"; liteSave(); });
-    on(els.liteLead, "input", function () { if (els.liteLeadVal) els.liteLeadVal.textContent = els.liteLead.value + " ms"; liteSave(); });
-
-    lite.on("state", liteRefreshStatus);
-    lite.on("status", liteRefreshStatus);
-    lite.on("error", function (d) { if (lite.status !== "connected") liteSetStatus((d && d.message) || "連線失敗", "error"); });
-    liteRefreshStatus();
-  }
-
-  // 事件綁定小工具（null-safe）
-  function on(el, type, fn) { if (el) el.addEventListener(type, fn); }
-
-  // alphaTab 的 string(1=最粗第六弦) → 送給琴的弦號(bit0=第1弦)。
-  // 先換成吉他慣例(1=最細第一弦)=7-string，再視「弦序反轉」決定要不要上下對調。
-  function liteHwString(atString) {
-    var guitar = 7 - atString;
-    return (els.liteReverse && els.liteReverse.checked) ? (7 - guitar) : guitar;
-  }
-  function liteNotesOf(item) {
-    if (!item || !item.notes || !item.notes.length) return [];
-    var out = [];
-    for (var i = 0; i < item.notes.length; i++) {
-      var n = item.notes[i];
-      if (n.string == null || n.fret == null || n.fret < 0) continue;
-      out.push({ string: liteHwString(n.string), fret: n.fret });
-    }
-    return out;
-  }
-  // 推弦亮燈（做法參考 litejam-glowtab）：有推弦的音 → 同一格往鄰弦方向「掃」出去，
-  // 掃幾條看推弦幅度（bend 是 1/4 音為單位，半音數 = bend/2；半音掃1條、全音2條、1.5音3條）。
-  // 1~3 弦(細)往粗弦方向掃（弦號變大）、4~6 弦(粗)往細弦方向掃。動畫用「已在這拍上多久」推進，
-  // 每 85ms 多亮一條，換拍時自然重算（不需另開非同步迴圈）。
-  var LITE_BEND_STEP = 0.085;
-  function liteBendCount(bend) { return Math.max(1, Math.min(5, Math.round((bend || 0) / 2))); }
-  function liteBendStrings(item, elapsed) {
-    if (!item || !item.notes) return [];
-    var step = 1 + Math.floor(Math.max(0, elapsed) / LITE_BEND_STEP);   // 這拍上第幾步(至少 1)
-    var out = [];
-    for (var i = 0; i < item.notes.length; i++) {
-      var n = item.notes[i];
-      if (!(n.bend > 0) || n.string == null || n.fret == null || n.fret < 0) continue;
-      var gstr = 7 - n.string;                       // 吉他慣例弦號(1=最細)
-      var dir = gstr <= 3 ? 1 : -1;                  // 1~3弦往粗弦掃、4~6弦往細弦掃
-      var lim = Math.min(step, liteBendCount(n.bend));
-      for (var k = 1; k <= lim; k++) {
-        var gs = gstr + dir * k;
-        if (gs >= 1 && gs <= 6) out.push({ string: liteHwString(7 - gs), fret: n.fret });
-      }
-    }
-    return out;
-  }
-  // 找出「時間 <= t 的最後一個有音符的拍」的索引（含快取，播放時多為順序前進）
-  function liteBeatIndexAt(t) {
-    if (!items || !items.length) return -1;
-    var i = _liteCurIdx;
-    if (i < 0 || i >= items.length || items[i].time > t) i = -1;   // 倒退/尋位→重找
-    while (i + 1 < items.length && items[i + 1].time <= t) i++;
-    _liteCurIdx = i;
-    return i;
-  }
-  function liteFirstWithNotes(from, dir) {
-    for (var i = from; i >= 0 && i < items.length; i += dir) if (items[i].notes && items[i].notes.length) return i;
-    return -1;
-  }
-  // 每幀呼叫：把目前該彈的音（＋預告下一個音）送到吉他。內容沒變時 sendSegment 會自動略過。
-  function updateLite(songTime) {
-    if (!lite || !liteEnabled || lite.status !== "connected" || _liteTesting) return;
-    var lead = (els.liteLead ? +els.liteLead.value : 0) / 1000;   // 提前亮燈：把時間軸往前挪，燈比拍點早亮
-    songTime += lead;
-    var b = liteBrightVal();
-    var mainCol = window.JianpuLite.scaleColor(window.JianpuLite.hexToRgb(els.liteColorMain ? els.liteColorMain.value : "#00e0ff"), b);
-    var groups = [];
-
-    var curRaw = liteBeatIndexAt(songTime);
-    var curIdx = (curRaw >= 0 && items[curRaw].notes && items[curRaw].notes.length) ? curRaw : liteFirstWithNotes(curRaw, -1);
-    var now = curIdx >= 0 ? liteNotesOf(items[curIdx]) : [];
-    if (curIdx >= 0) {                                  // 推弦：把被推向鄰弦的燈疊上來（同主色，一條條掃出）
-      var bendLeds = liteBendStrings(items[curIdx], songTime - items[curIdx].time);
-      for (var q = 0; q < bendLeds.length; q++) now.push(bendLeds[q]);
-    }
-    if (now.length) groups.push({ leds: window.JianpuLite.packNotes(now), color: mainCol });
-
-    if (els.liteNextToggle && els.liteNextToggle.checked) {
-      var nextIdx = liteFirstWithNotes((curRaw < 0 ? 0 : curRaw + 1), 1);
-      if (nextIdx >= 0) {
-        var next = liteNotesOf(items[nextIdx]);
-        var taken = {};
-        for (var t = 0; t < now.length; t++) taken[now[t].string + ":" + now[t].fret] = 1;
-        var preview = next.filter(function (n) { return !taken[n.string + ":" + n.fret]; });
-        if (preview.length) {
-          var nextCol = window.JianpuLite.scaleColor(window.JianpuLite.hexToRgb(els.liteColorNext ? els.liteColorNext.value : "#ff9a3c"), b * 0.45);
-          groups.push({ leds: window.JianpuLite.packNotes(preview), color: nextCol });
-        }
-      }
-    }
-    lite.sendSegment(groups);
-  }
-  // 測試亮燈：依序亮第 1～6 弦（都在第 3 格），用來確認實機弦序對不對——
-  // 若「第 1 弦」亮到的是最粗那條，就去勾「弦序反轉」再測一次。
-  function liteTest() {
-    if (!lite || lite.status !== "connected" || _liteTesting) return;
-    _liteTesting = true;
-    if (els.liteTestBtn) els.liteTestBtn.disabled = true;
-    var col = window.JianpuLite.scaleColor(window.JianpuLite.hexToRgb(els.liteColorMain ? els.liteColorMain.value : "#00e0ff"), liteBrightVal());
-    var k = 1;
-    (function step() {
-      if (k > 6) { lite.ledOff(); _liteTesting = false; liteRefreshStatus(); return; }
-      var hw = (els.liteReverse && els.liteReverse.checked) ? (7 - k) : k;   // 吉他慣例第 k 弦（1=最細）→ 送琴弦號
-      lite.sendNotes([{ string: hw, fret: 3 }], col);
-      liteSetStatus("測試亮燈：第 " + k + " 弦（1=最細高音弦）· 第 3 格", "connected");
-      k++;
-      setTimeout(step, 480);
-    })();
-  }
-  function liteClear() {
-    _liteCurIdx = -1;
-    if (lite && lite.status === "connected") lite.ledOff();
-  }
-  function applySens() {
-    var s = +els.sensRange.value;                 // 0..100
-    micGate = 0.03 - (s / 100) * 0.026;           // 0.03(需大聲) → 0.004(很靈敏)
-    P.setFloor(Math.min(micGate, 0.006));
-    els.sensVal.textContent = s < 34 ? "低" : s < 67 ? "中" : "高";
-  }
-  function applyLatency() {
-    micLatencyMs = +els.latRange.value;
-    els.latVal.textContent = micLatencyMs + " ms";
-  }
-  var _testRAF = 0;
-  function toggleMicTest() {
-    if (micTesting) {
-      micTesting = false;
-      els.micTestBtn.textContent = "▶ 測試麥克風";
-      if (_testRAF) cancelAnimationFrame(_testRAF);
-      stopMicIfIdle();
-      els.testNote.textContent = "—"; els.testLevel.style.width = "0%";
-      return;
-    }
-    if (!P.isSupported()) { setStatus("此環境無法取用麥克風（需 https 或 http://localhost）。", true); return; }
-    els.micTestBtn.textContent = "● 測試中…（點此停止）";
-    P.start(micDeviceId()).then(function () {
-        refreshAudioInputs();
-      refreshAudioInputs();            // 授權後才拿得到裝置名稱
-      micTesting = true;
-      var tick = function () {
-        if (!micTesting) return;
-        var p = P.read();
-        if (p.midi != null) {
-          var d = T.midiToDegree(p.midi, tonicPc != null ? tonicPc : 0);
-          els.testNote.textContent = noteName(p.midi) + " · " + T.accSymbol(d.alter) + d.degree;
-        } else els.testNote.textContent = "—";
-        els.testLevel.style.width = Math.max(0, Math.min(100, p.rms * 700)) + "%";
-        _testRAF = requestAnimationFrame(tick);
-      };
-      tick();
-    }).catch(function (err) {
-      els.micTestBtn.textContent = "▶ 測試麥克風";
-      setStatus("無法取用麥克風：" + (err && err.message ? err.message : err), true);
-    });
-  }
-
-  // ---- 自動延遲校正 ----
-  var calib = null;
-  function autoCalibrate() {
-    if (micTesting) toggleMicTest();
-    if (!P.isSupported()) { setStatus("需要麥克風（https 或 http://localhost）才能自動校正。", true); return; }
-    A.now(); // 確保音訊時鐘存在
-    if (A.ctx && A.ctx.state === "suspended") A.ctx.resume();
-    els.calibResult.textContent = "";
-    els.calibProg.textContent = "要求麥克風…";
-    els.calibClose.classList.add("hidden");
-    els.calibCancel.classList.remove("hidden");
-    els.calibModal.classList.remove("hidden");
-    P.start(micDeviceId()).then(startCalibRun).catch(function (err) {
-      els.calibProg.textContent = "無法取用麥克風";
-      els.calibResult.textContent = String(err && err.message ? err.message : err);
-      els.calibClose.classList.remove("hidden");
-      els.calibCancel.classList.add("hidden");
-    });
-  }
-  function startCalibRun() {
-    var interval = 0.6, count = 8, prep = 4, lead = 1.0;
-    var prepStart = A.now() + lead;                       // 第 1 個「預備拍」時間
-    var t0 = prepStart + prep * interval;                 // 量測拍從預備 4 拍之後開始
-    var beats = [];
-    for (var pp = 0; pp < prep; pp++) A.metroTick(prepStart + pp * interval);   // 4 拍預備(只打拍、不量測)
-    for (var i = 0; i < count; i++) { beats.push(t0 + i * interval); A.metroTick(t0 + i * interval); }
-    calib = { beats: beats, interval: interval, count: count, prep: prep, prepStart: prepStart,
-              offsets: [], matched: new Array(count).fill(false),
-              prevRms: 0, gate: Math.max(0.01, Math.min(micGate, 0.02)), lastPulse: -1, raf: 0 };
-    calibLoop();
-  }
-  function calibLoop() {
-    if (!calib) return;
-    var now = A.now(), p = P.read();
-    if (calib.prevRms < calib.gate && p.rms >= calib.gate) {   // 起音(上升緣)
-      var bi = -1, bd = 1e9;
-      for (var i = 0; i < calib.beats.length; i++) { var d = Math.abs(now - calib.beats[i]); if (d < bd) { bd = d; bi = i; } }
-      if (bi >= 0 && bd < calib.interval * 0.6 && !calib.matched[bi]) {
-        calib.matched[bi] = true; calib.offsets.push(now - calib.beats[bi]);
-      }
-    }
-    calib.prevRms = p.rms;
-    var passed = 0;
-    for (var j = 0; j < calib.count; j++) if (now >= calib.beats[j]) passed = j + 1;
-    // 每一拍(預備＋量測)都讓圓點閃一下＋出聲節奏感
-    var gi = (now >= calib.prepStart) ? (Math.floor((now - calib.prepStart) / calib.interval) + 1) : 0;
-    if (gi !== calib.lastPulse && gi > 0) {
-      calib.lastPulse = gi;
-      els.calibDot.classList.add("pulse");
-      setTimeout(function () { els.calibDot.classList.remove("pulse"); }, 120);
-    }
-    if (now < calib.beats[0]) {                            // 預備階段：顯示「預備 4-3-2-1」
-      if (now < calib.prepStart) els.calibProg.textContent = "準備…";
-      else els.calibProg.textContent = "預備 " + Math.max(1, calib.prep - Math.floor((now - calib.prepStart) / calib.interval));
-    } else {
-      els.calibProg.textContent = Math.min(passed, calib.count) + " / " + calib.count + "　已收到 " + calib.offsets.length + " 次";
-    }
-    if (now > calib.beats[calib.count - 1] + calib.interval * 0.8) { finishCalib(); return; }
-    calib.raf = requestAnimationFrame(calibLoop);
-  }
-  function finishCalib() {
-    var offs = calib.offsets.slice().sort(function (a, b) { return a - b; });
-    if (offs.length >= 3) {
-      var med = offs[Math.floor(offs.length / 2)];
-      var ms = Math.round(Math.max(0, Math.min(0.2, med)) * 1000);
-      els.latRange.value = ms; applyLatency(); saveMicSettings();
-      els.calibProg.textContent = "完成";
-      els.calibResult.textContent = "測得延遲 ≈ " + ms + " ms，已套用（收到 " + offs.length + "/" + calib.count + " 拍）";
-    } else {
-      els.calibProg.textContent = "資料不足";
-      els.calibResult.textContent = "只收到 " + offs.length + " 拍，未調整。請彈大聲些或把靈敏度調高再試。";
-    }
-    stopMicIfIdle();
-    els.calibClose.classList.remove("hidden");
-    els.calibCancel.classList.add("hidden");
-    calib = null;
-  }
-  function cancelCalib() {
-    if (calib && calib.raf) cancelAnimationFrame(calib.raf);
-    calib = null; stopMicIfIdle();
-    els.calibModal.classList.add("hidden");
-    els.calibDot.classList.remove("pulse");
-  }
-
-  // ---- 成績存檔 / 排行 ----
-  var SCORE_KEY = "jianpu_scores";
-  function loadAllScores() { try { return JSON.parse(localStorage.getItem(SCORE_KEY) || "{}"); } catch (e) { return {}; } }
-  function songKeyOf() { return ((timeline && timeline.title) || "?") + " ｜ " + ((timeline && timeline.trackName) || "?"); }
-  function modeLabel() { return dispName() + "/" + (inputMode === "mic" ? "收音" : "鍵盤") + "/" + DIFFICULTY[els.difficultySelect.value].label + (speed !== 1 ? " " + fmtSpeed(speed) : ""); }
-  function saveScoreRecord(rec) {
-    var all = loadAllScores(), list = all[rec.key] || [];
-    list.push(rec);
-    list.sort(function (a, b) { return b.score - a.score; });
-    list = list.slice(0, 20);
-    all[rec.key] = list;
-    try { localStorage.setItem(SCORE_KEY, JSON.stringify(all)); } catch (e) {}
-    return list;
-  }
-  function gradeColor(g) { return { S: "#ffd93d", A: "#5ec26a", B: "#3fc7bb", C: "#5b8def", D: "#ff5d6c" }[g] || "#fff"; }
-  function fmtDate(ts) { try { var d = new Date(ts); return (d.getMonth() + 1) + "/" + d.getDate(); } catch (e) { return ""; } }
-  function renderLeaderboard() {
-    if (!timeline) { els.leaderboard.classList.add("hidden"); return; }
-    var list = (loadAllScores()[songKeyOf()] || []).slice(0, 5);
-    var html = '<div class="lb-head">🏆 本曲最佳成績</div>';
-    if (!list.length) html += '<div class="lb-empty">還沒有紀錄，玩一場就會出現在這裡。</div>';
-    else list.forEach(function (r, i) {
-      html += '<div class="lb-row"><span class="lb-rank">' + (i + 1) + '</span>' +
-        '<span class="lb-grade" style="color:' + gradeColor(r.grade) + '">' + r.grade + '</span>' +
-        '<span class="lb-score">' + r.score.toLocaleString() + '</span>' +
-        '<span class="lb-meta">' + r.acc.toFixed(1) + '%・' + escapeHtml(r.mode) + '・' + fmtDate(r.date) + '</span></div>';
-    });
-    els.leaderboard.innerHTML = html;
-    els.leaderboard.classList.remove("hidden");
-  }
-
-  // ---- 觸控 / 滑鼠 ----
-  function onPointerDown(e) {
-    if (state !== "playing" || inputMode !== "keyboard" || !pad) return;
-    var rect = canvas.getBoundingClientRect();
-    var x = (e.clientX - rect.left), y = (e.clientY - rect.top);
-    if (y < pad.y0 || y > pad.y0 + pad.h) return;
-    var lane = Math.floor(x / (W / LANES));
-    if (lane < 0 || lane >= LANES) return;
-    e.preventDefault();
-    var deg = lane + 1;
-    attemptHit(function (it) { return it.degSet.indexOf(deg) >= 0; }, lane);
-  }
-
-  // ---- 載入與解析 ----
-  // 曲庫清單（來自 js/songs.js）：
-  //   window.FREE_GROUPS   — 免費示範曲：檔案放在網站本地 songs/ 底下，任何人可玩。
-  //   （嚕嚕安教材已下架，只保留角色與背景；付費內容改由後台上傳的資料夾提供。）
-  var FREE_GROUPS   = window.FREE_GROUPS   || [];
-  function countSongs(group) {
-    if (group.songs) return group.songs.length;
-    return (group.groups || []).reduce(function (n, g) { return n + countSongs(g); }, 0);
-  }
-  // 每首曲子帶一個 ctx 描述來源：
-  //   {local:true}                         → 本地免費檔（songs/ 底下）
-  //   {tier:'free', bucket:'free-songs'}   → 公開倉庫免費曲（管理後台上傳）
-  //   {tier:'paid', bucket:'paid-songs'}   → 私密倉庫付費教材（需登入+開通）
-  function renderSampleGroup(group, depth, ctx) {
-    ctx = ctx || {};
-    var det = document.createElement("details");
-    det.className = "sample-group" + (depth > 0 ? " sub" : "");
-    if (depth === 0) det.open = true;                   // 頂層預設展開，子課程收合
-    var sum = document.createElement("summary");
-    var isFolder = (ctx.tier === "paid" && depth === 0 && ctx.grp != null);    // 後台付費資料夾(各自密碼)
-    var locked = isFolder ? (folderIsLocked(ctx.grp) && !folderUnlocked(ctx.grp)) : false;
-    var lock = locked ? "🔒 " : "";
-    sum.innerHTML = lock + escapeHtml(group.title) + ' <span class="sample-count">' + countSongs(group) + '</span>';
-    det.appendChild(sum);
-    if (isFolder && locked) {                                    // 上鎖資料夾→放各自的密碼欄
-      var fw = document.createElement("div"); fw.innerHTML = folderUnlockHtml(ctx.grp); det.appendChild(fw.firstChild);
-    }
-    if (group.groups) {
-      group.groups.forEach(function (sub) { det.appendChild(renderSampleGroup(sub, depth + 1, ctx)); });
-    } else if (group.songs) {
-      var inner = document.createElement("div");
-      inner.className = "sample-list-inner";
-      group.songs.forEach(function (song) {
-        var b = document.createElement("button");
-        b.type = "button"; b.className = "btn small ghost sample-btn";
-        b.textContent = song.label; b.title = song.label;
-        b.addEventListener("click", function () { loadSample(song.path, song.label, ctx); });
-        inner.appendChild(b);
-      });
-      det.appendChild(inner);
-    }
-    return det;
-  }
-  function buildSampleList() {
-    var box = $("sampleList"); if (!box) return;
-    box.innerHTML = "";
-    // 免費示範曲是本地檔，用 file:// 直接開會抓不到 → 提示（倉庫曲走網路不受此限）
-    if (FREE_GROUPS.length && location.protocol === "file:") {
-      var warn = document.createElement("div");
-      warn.className = "lib-empty";
-      warn.style.color = "#ffb454";
-      warn.innerHTML = "⚠ 你是用「檔案(file://)」直接開啟的，本地免費示範曲無法載入。<br>請改用資料夾裡的「啟動遊戲.command」（會用本機伺服器開）。<br>（「我的曲庫」自己上傳的曲子不受影響。）";
-      box.appendChild(warn);
-    }
-    var tok = ++_buildTok;                            // 防重複：非同步追加前先取號，過期就不追加
-    FREE_GROUPS.forEach(function (group)   { box.appendChild(renderSampleGroup(group, 0, { local: true, tier: "free" })); });
-    // 嚕嚕安教材已移除(只保留角色與背景)；付費內容改由後台上傳的資料夾(各自密碼)提供
-    appendDbCatalog(box, tok);
-  }
-  // 從 Supabase「songs」清單表載入管理後台新增的自訂曲（免費／付費），追加到清單
-  var _buildTok = 0;
-  function appendDbCatalog(box, tok) {
-    var A = window.JianpuAuth;
-    if (!A || !A.fetchCatalog || !box) return;
-    A.fetchCatalog().then(function (rows) {
-      if (tok !== _buildTok) return;                  // 已被較新的重建取代→不追加(避免重複)
-      if (!rows || !rows.length) return;
-      function toSong(r) { return { label: r.title, path: r.path }; }
-      var free = rows.filter(function (r) { return r.tier === "free"; });
-      var paid = rows.filter(function (r) { return r.tier !== "free"; });
-      if (free.length) box.appendChild(renderSampleGroup({ title: "自訂免費曲", songs: free.map(toSong) }, 0, { tier: "free", bucket: "free-songs" }));
-      // 付費：依 grp 分成各自的資料夾，每個資料夾可獨立上鎖＋獨立密碼（後台設定）
-      var byGrp = {};
-      paid.forEach(function (r) { var g = r.grp || "自訂教材"; (byGrp[g] = byGrp[g] || []).push(r); });
-      // 版權說明：這些資料夾是「老師自己創作的教學練習譜例」，不是第三方流行歌曲的改編／轉錄
-      if (Object.keys(byGrp).length) {
-        var note = document.createElement("div");
-        note.className = "lib-empty";
-        note.style.cssText = "color:#9aa3b2;font-size:12px;line-height:1.6;margin:6px 0";
-        note.innerHTML = "📘 以下為<b>老師原創之教學練習譜例</b>（音階／和弦／指法／節奏練習），非第三方歌曲之改編或轉錄，僅供購課學員個人練習使用。";
-        box.appendChild(note);
-      }
-      Object.keys(byGrp).forEach(function (g) {
-        box.appendChild(renderSampleGroup({ title: g, songs: byGrp[g].map(toSong) }, 0, { tier: "paid", bucket: "paid-songs", grp: g }));
-      });
-      wireFolderUnlock(box);
-    });
-  }
-  function encodePath(p) { return String(p).split("/").map(encodeURIComponent).join("/"); }
-  function loadSample(path, label, ctx) {
-    ensureAlphaTab().catch(function () {});   // 與抓譜的 fetch 平行下載解析引擎，縮短等待
-    ctx = ctx || {};
-    var base = String(path).split("/").pop();
-    var name = label || base.replace(/\.gp\d?$/i, "");
-    if (ctx.local) {   // 本地免費檔
-      var url = "songs/" + encodePath(path);
-      setStatus("載入範例：" + name + " …");
-      fetch(url, { cache: "no-store" })
-        .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.arrayBuffer(); })
-        .then(function (buf) { loadArrayBuffer(buf, base); })
-        .catch(function (e) { setStatus("載入範例失敗（" + decodeURIComponent(url) + "）：" + (e && e.message ? e.message : e), true); });
-      return;
-    }
-    loadBucketSong(path, name, base, ctx);   // 倉庫曲（免費公開或付費私密）
-  }
-  function loadBucketSong(path, name, base, ctx) {
-    var A = window.JianpuAuth, paid = ctx.tier === "paid";
-    if (!A || !A.isReady()) { setStatus("需要連線後端才能載入這首；但服務尚未設定或無法連線。", true); return; }
-    if (paid && ctx.grp != null && folderIsLocked(ctx.grp) && !folderUnlocked(ctx.grp)) {   // 後台付費資料夾→各自的密碼
-      setStatus("這個資料夾需要密碼 🔒 請在「" + ctx.grp + "」上方輸入該資料夾的解鎖密碼。", true);
-      var fi = document.querySelector('.paid-unlock[data-grp] .fu-input'); if (fi) { try { fi.focus(); fi.scrollIntoView({ block: "center" }); } catch (e) {} }
-      return;
-    }
-    setStatus((paid ? "載入教材：" : "載入：") + name + " …");
-    A.downloadSong(ctx.bucket || "paid-songs", path)
-      .then(function (buf) { loadArrayBuffer(buf, base); })
-      .catch(function (e) {
-        var code = e && e.code;
-        if (code === "NOT_ENTITLED" && paid) setStatus("教材檔讀取失敗：請確認後台已把 paid-songs 設為可讀取（見設定指南），稍後再試 🙂", true);
-        else setStatus("載入失敗：" + (e && e.message ? e.message : e), true);
-      });
-  }
-
-  // ---- 服務條款同意條：首次進站顯示一次，按過就記在本機不再出現 ----
-  var TOS_KEY = "jianpu_tos_agreed_v1";
-  function setupTosBar() {
-    var bar = document.getElementById("tosBar"), ok = document.getElementById("tosOk");
-    if (!bar || !ok) return;
-    var agreed = false; try { agreed = localStorage.getItem(TOS_KEY) === "1"; } catch (e) {}
-    if (agreed) return;                                   // 已同意過→保持 hidden
-    bar.classList.remove("hidden");
-    ok.addEventListener("click", function () {
-      try { localStorage.setItem(TOS_KEY, "1"); } catch (e) {}
-      bar.classList.add("hidden");
-    });
-  }
-
-  // ---- 工具使用額度（本機樂譜解析次數）----
-  //   ⚠️ 文案原則：付費賣的是「工具功能／使用額度」，不是音樂內容。
-  //      本站不提供任何樂曲，額度指的是「你自己提供的檔案，在本機被解析成譜面的次數」。
-  //   額度會記憶在瀏覽器：每過一天自動加 DAILY_FREE 次(可累積到 FREE_CAP)，解析一次扣 1；沒用不會歸零。
-  var DAILY_FREE = 5, FREE_CAP = 30, CREDIT_KEY = "jianpu_free_credits";
-  // 自己上傳的譜「無限使用」條件：Email 解鎖 或 後端已開通。（嚕嚕安角色密碼只解角色、不影響這裡）
-  function isPaid() { return isEmailUnlocked() || (function () { var A = window.JianpuAuth; return !!(A && A.isEntitled && A.isEntitled()); })(); }
-  function epochDay() { var d = new Date(); return Math.floor((d.getTime() - d.getTimezoneOffset() * 60000) / 86400000); }  // 依本地時區的「天」序號
-  function saveCredits(st) { try { localStorage.setItem(CREDIT_KEY, JSON.stringify(st)); } catch (e) {} }
-  function readCredits() {
-    var st; try { st = JSON.parse(localStorage.getItem(CREDIT_KEY) || "null"); } catch (e) { st = null; }
-    var today = epochDay();
-    if (!st || typeof st.bal !== "number" || typeof st.day !== "number") { st = { bal: DAILY_FREE, day: today }; saveCredits(st); }
-    else if (today > st.day) { st.bal = Math.min(FREE_CAP, st.bal + (today - st.day) * DAILY_FREE); st.day = today; saveCredits(st); }  // 補發累加
-    return st;
-  }
-  function remainFree() { return readCredits().bal; }
-  function bumpUsage() { var st = readCredits(); if (st.bal > 0) { st.bal--; saveCredits(st); } }
-  function ownGateBlockedMsg() { return "今天的樂譜解析額度已用完。每天自動 +" + DAILY_FREE + " 次（可累積到 " + FREE_CAP + " 次）；升級進階版可解除每日次數上限與曲庫容量限制。"; }
-  // 可用回傳 true（未解鎖者扣一點額度），用完回傳 false
-  function gateOwnUse() {
-    if (isPaid()) return true;
-    var st = readCredits();
-    if (st.bal > 0) { st.bal--; saveCredits(st); updateOwnGateTip(); return true; }
-    updateOwnGateTip();
-    return false;
-  }
-  function updateOwnGateTip() {
-    var el = document.getElementById("ownGateTip"); if (!el) return;
-    if (isPaid()) el.innerHTML = "樂譜解析額度：<b style='color:#7CFC9B'>進階版 ✓ 無次數上限</b>";
-    else el.innerHTML = "樂譜解析額度：剩 <b>" + remainFree() + "</b> 次（每天自動 +" + DAILY_FREE + "、可累積到 " + FREE_CAP + "；升級進階版無上限）";
-  }
-
-  // ===================================================================
-  // 帳號（記住角色解鎖）＋ 角色解鎖進度（S 級）
-  //   ★ 兩件事完全分開，互不影響：
-  //     (A)【帳號】任何人都能用 Email 免費建立 → 只用來「跨裝置記住已解鎖的角色」。
-  //         不含任何曲庫權限。資料存 Supabase char_unlocks（RPC 對 anon 開放）。
-  //     (B)【進階版】付費 → 自己上傳的譜無限解析（我的曲庫那一欄，走 allowed_emails）。
-  //   ★ 嚕嚕安角色：前台看得到但鎖著，**只能由老師在管理後台「角色開通」把該 Email 開通**
-  //     （寫入 char_unlocks.data.lulan）。已無密碼解鎖這條路。
-  //   ★ 其他吉他手角色 → 累積幾首歌拿到 S 級才逐一解鎖（存本機，登入帳號後跟著帳號跑）。
-  // ===================================================================
-  var UNLOCK_KEY = "jianpu_unlocked_v1";          // 本機快取：這台是否已取得「嚕嚕安角色」
-  var EMAIL_UNLOCK_KEY = "jianpu_email_unlocked"; // 本機快取：進階版（自己上傳的譜無限）
-  var FAMILY_KEY = "jianpu_family_unlocked";      // 本機快取：這台是否已取得「太太＆女兒」
-  var ACCOUNT_KEY = "jianpu_account_email";       // 目前登入的帳號 Email（只管角色記憶）
-  function isUnlocked() { try { return localStorage.getItem(UNLOCK_KEY) === "1"; } catch (e) { return false; } }
-  function setUnlocked(v) { try { if (v) localStorage.setItem(UNLOCK_KEY, "1"); else localStorage.removeItem(UNLOCK_KEY); } catch (e) {} }
-  function isFamilyUnlocked() { try { return localStorage.getItem(FAMILY_KEY) === "1"; } catch (e) { return false; } }
-  function setFamilyUnlocked(v) { try { if (v) localStorage.setItem(FAMILY_KEY, "1"); else localStorage.removeItem(FAMILY_KEY); } catch (e) {} }
-  function isEmailUnlocked() { try { return localStorage.getItem(EMAIL_UNLOCK_KEY) === "1"; } catch (e) { return false; } }
-  function setEmailUnlocked(v) { try { if (v) localStorage.setItem(EMAIL_UNLOCK_KEY, "1"); else localStorage.removeItem(EMAIL_UNLOCK_KEY); } catch (e) {} }
-  function accountEmail() { try { return localStorage.getItem(ACCOUNT_KEY) || ""; } catch (e) { return ""; } }
-  function setAccountEmail(e) { try { if (e) localStorage.setItem(ACCOUNT_KEY, e); else localStorage.removeItem(ACCOUNT_KEY); } catch (x) {} }
-  function sha256hex(str) {                       // 仍供「付費資料夾各自密碼」使用
-    try {
-      var buf = new TextEncoder().encode(str);
-      return crypto.subtle.digest("SHA-256", buf).then(function (h) {
-        return [].map.call(new Uint8Array(h), function (b) { return b.toString(16).padStart(2, "0"); }).join("");
-      });
-    } catch (e) { return Promise.reject(e); }
-  }
-
-  // ---- 角色解鎖 ----
-  // LOCKED_CHARS[i] 需要 (i+1) 首不同歌曲拿到 S 級；未列的(slash/none)一開始就有；lulan＝密碼解鎖
-  var LOCKED_CHARS = ["einstein", "mozart", "bach", "newton", "napoleon", "lincoln", "vangogh", "davinci", "shakespeare", "tesla", "paganini", "confucius"];
-  var SCLEAR_KEY = "jianpu_s_songs";
-  function sClears() { try { var a = JSON.parse(localStorage.getItem(SCLEAR_KEY) || "[]"); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
-  function sClearCount() { return sClears().length; }
-  function addSClear(key) { var a = sClears(); if (a.indexOf(key) < 0) { a.push(key); try { localStorage.setItem(SCLEAR_KEY, JSON.stringify(a)); } catch (e) {} pushCharUnlocks(); } return a.length; }
-  function charNeed(id) { var i = LOCKED_CHARS.indexOf(id); return i < 0 ? 0 : (i + 1); }
-  function charUnlocked(id) {
-    if (id === "none" || id === "beethoven") return true;
-    if (id === "lulan") return isUnlocked();                    // 由老師在管理後台開通該帳號後才可用
-    if (id === "family") return isFamilyUnlocked();             // 同上（太太＆女兒）
-    var i = LOCKED_CHARS.indexOf(id);
-    return i < 0 ? true : sClearCount() >= (i + 1);
-  }
-  function refreshGuitaristLocks() {
-    var sel = els.guitaristSelect; if (!sel) return;
-    [].forEach.call(sel.options, function (op) {
-      if (!op.getAttribute("data-base")) op.setAttribute("data-base", op.textContent);
-      var id = op.value, base = op.getAttribute("data-base");
-      if (charUnlocked(id)) { op.textContent = base; op.disabled = false; }
-      else {
-        op.disabled = true;
-        op.textContent = "🔒 " + base + ((id === "lulan" || id === "family") ? "｜需老師開通帳號" : "｜需 " + charNeed(id) + " 首 S 級");
-      }
-    });
-    if (sel.value && !charUnlocked(sel.value)) { sel.value = "beethoven"; guitaristId = "beethoven"; try { localStorage.setItem(GUITARIST_KEY, "beethoven"); } catch (e) {} }
-  }
-  function charName(id) { var sel = els.guitaristSelect; if (!sel) return id; var op = sel.querySelector('option[value="' + id + '"]'); return op ? (op.getAttribute("data-base") || op.textContent) : id; }
-
-  // 帳號被開通「嚕嚕安」：開放該角色並自動選上（只影響角色，不影響曲庫權限）
-  function applyLulanGrant(autoSelect) { applyCharGrant("lulan", autoSelect); }
-  // 帳號被開通某個專屬角色：開放它並（可選）自動選上
-  function applyCharGrant(id, autoSelect) {
-    if (id === "lulan") setUnlocked(true);
-    else if (id === "family") setFamilyUnlocked(true);
-    pushCharUnlocks();
-    refreshGuitaristLocks(); renderAccountBox();
-    if (autoSelect && els.guitaristSelect) {
-      els.guitaristSelect.value = id; guitaristId = id;
-      try { localStorage.setItem(GUITARIST_KEY, id); } catch (e) {}
-    }
-  }
-  // Email 解鎖成功：只讓「自己上傳的譜」無限（不開放付費教材/角色）
-  function applyEmailUnlock() {
-    setEmailUnlocked(true);
-    updateOwnGateTip(); renderLibUnlock();
-  }
-
-  // ---- 角色解鎖「跟著 Email 帳號跨裝置記住」----
-  //   本機解鎖狀態＝哪些歌拿過 S(jianpu_s_songs)＋嚕嚕安密碼(jianpu_unlocked_v1)。
-  //   Email 登入時：從帳號拉回雲端解鎖 → 與本機「聯集」→ 更新 UI → 回推聯集(讓雲端也含本機新解的)。
-  //   之後每次多解一個角色，就自動推上帳號。後端未建 RPC 時全部靜默略過(照舊只存本機)。
-  function pushCharUnlocks() {
-    var email = accountEmail(); if (!email) return;        // 沒登入帳號就只存本機
-    var A = window.JianpuAuth; if (!A || !A.saveCharUnlocks) return;
-    A.saveCharUnlocks(email, { s: sClears(), lulan: isUnlocked(), family: isFamilyUnlocked() });
-  }
-  function pullCharUnlocks(email) {
-    email = (email || accountEmail()).trim().toLowerCase(); if (!email) return;
-    var A = window.JianpuAuth; if (!A || !A.getCharUnlocks) return;
-    A.getCharUnlocks(email).then(function (remote) {
-      if (!remote) { pushCharUnlocks(); return; }          // 雲端還沒有 → 直接把本機推上去
-      var changed = false, set = {};
-      sClears().forEach(function (k) { set[k] = 1; });
-      var before = Object.keys(set).length;
-      (remote.s || []).forEach(function (k) { if (k) set[k] = 1; });   // 聯集「拿過 S 的歌」
-      var merged = Object.keys(set);
-      if (merged.length !== before) { try { localStorage.setItem(SCLEAR_KEY, JSON.stringify(merged)); } catch (e) {} changed = true; }
-      if (remote.lulan && !isUnlocked()) { setUnlocked(true); changed = true; }   // 帳號已被開通嚕嚕安 → 這台也開
-      if (!remote.lulan && isUnlocked()) { setUnlocked(false); changed = true; }  // 帳號被老師收回 → 這台也關
-      if (remote.family && !isFamilyUnlocked()) { setFamilyUnlocked(true); changed = true; }
-      if (!remote.family && isFamilyUnlocked()) { setFamilyUnlocked(false); changed = true; }
-      if (remote.all) unlockAllChars();
-      if (changed) { refreshGuitaristLocks(); }
-      renderAccountBox();
-      pushCharUnlocks();                                   // 回推聯集(雲端補上本機獨有的)
-    });
-  }
-  // 指定帳號(Email) → 直接解鎖「全部角色」(角色為造型/技巧解鎖、非付費核心)。用清單方便日後加帳號。
-  var ALL_UNLOCK_EMAILS = ["logoman2015@gmail.com"];
-  function isAllUnlockEmail(email) { return ALL_UNLOCK_EMAILS.indexOf((email || "").trim().toLowerCase()) >= 0; }
-  function unlockAllChars() {
-    var a = sClears(), need = LOCKED_CHARS.length + 2;                 // 補滿 S 級歌數 → 解鎖全部樂手
-    for (var i = 0; a.length < need && i < 100; i++) { var k = "vip_all_" + i; if (a.indexOf(k) < 0) a.push(k); }
-    try { localStorage.setItem(SCLEAR_KEY, JSON.stringify(a)); } catch (e) {}
-    setUnlocked(true); setFamilyUnlocked(true);                        // 開嚕嚕安＋太太女兒
-    refreshGuitaristLocks(); renderAccountBox();
-    pushCharUnlocks();                                                 // 若後端 char_unlocks 已建，順便存回帳號
-  }
-  // 購買解鎖的 Google 訂購表單（學生填完→老師收款→回傳解鎖密碼）
-  var ORDER_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLScwb4iexfUwKLuf5AHumcz0NpPJfcYM6W5V7fJDw5_1sxqrXQ/viewform";
-  // ---- 帳號區塊（吉他手選單下方）----
-  //   任何人都能用 Email 免費建立帳號，唯一用途＝跨裝置記住「已解鎖的角色」。
-  //   ★ 帳號不含任何曲庫權限（自己上傳的譜要無限，得另外升級進階版，在「我的曲庫」那一欄）。
-  //   ★ 嚕嚕安角色只能由老師在管理後台「角色開通」把該 Email 開通後才會出現在這個帳號上。
-  // 吉他手選單下方：只顯示「角色記憶」狀態，登入統一在「我的曲庫」那一個帳號欄
-  function renderAccountBox() {
-    var box = document.getElementById("accountBox"); if (!box) return;
-    var mail = accountEmail();
-    if (!mail) {
-      box.innerHTML = '<div class="paid-unlock">' +
-        '<div class="pu-tip">👤 <b>尚未登入</b>：在左邊「我的曲庫」用 Email 登入後（免費），' +
-        '你解鎖的角色就會<b>跟著帳號跨裝置記住</b>。' +
-        '<br><span style="opacity:.8">「閃電嚕嚕安」需老師在後台開通你的 Email。</span></div></div>';
-      return;
-    }
-    var chars = [];
-    if (isUnlocked()) chars.push("閃電嚕嚕安");
-    if (isFamilyUnlocked()) chars.push("太太＆女兒");
-    var extra = Math.min(sClearCount(), LOCKED_CHARS.length);
-    if (extra > 0) chars.push("樂手 +" + extra + " 位");
-    box.innerHTML = '<div class="paid-unlock unlocked">' +
-      '<div>👤 <b>' + escapeHtml(mail) + '</b>　<span style="opacity:.8;font-size:12px">角色解鎖會自動記住</span></div>' +
-      '<div class="pu-tip" style="margin-top:4px">已記住的角色：<b>' + (chars.length ? escapeHtml(chars.join("、")) : "尚無") + '</b>' +
-      '　<span style="opacity:.75">（換裝置用同一 Email 登入就會帶過去）</span></div>' +
-      ((isUnlocked() && isFamilyUnlocked()) ? "" : '<div class="pu-tip" style="margin-top:2px">🔒 專屬角色（閃電嚕嚕安／太太＆女兒）需老師開通這個 Email，開通後按一下右邊按鈕即可。' +
-        '<button type="button" class="btn small ghost acct-sync" style="margin-left:6px">重新同步</button></div>') +
-      '</div>';
-    var sync = box.querySelector(".acct-sync");
-    if (sync) sync.addEventListener("click", function () {
-      sync.disabled = true; setStatus("同步中…", false);
-      pullCharUnlocks(mail);
-      setTimeout(function () { sync.disabled = false; }, 1200);
-    });
-  }
-
-  // 每台瀏覽器一組固定裝置碼（限制一個 Email 最多 4 台用）
-  function deviceId() {
-    var k = "jianpu_device_id", v;
-    try { v = localStorage.getItem(k); } catch (e) {}
-    if (!v) { v = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now() + "-" + Math.random().toString(36).slice(2)); try { localStorage.setItem(k, v); } catch (e) {} }
-    return v;
-  }
-  // 限時倒數活動：8/31 前 優惠價 NT$590（原價 990、現折 400）＋即時倒數碼錶
-  //   ⚠️ 文案原則（版權切割）：這裡賣的是「工具的功能與使用額度」，
-  //      絕對不可出現「解鎖歌曲／暢玩流行歌、動漫音樂」之類暗示販售音樂內容的字眼。
-  var PROMO_DEADLINE = new Date("2026-08-31T23:59:59+08:00").getTime();   // 台北時間 8/31 結束
-  var _promoTimer = null;
-  function promoBoxHtml() {
-    return '<div class="promo">' +
-      '<div class="promo-h">⏰ 限時優惠．8/31 前</div>' +
-      '<div class="promo-price">進階版（工具解鎖） <b>NT$590</b> <s>原價 990</s> <span class="promo-off">現折 400 元</span></div>' +
-      '<div class="promo-feat">解除每日<b>樂譜解析次數</b>上限 · 本機<b>曲庫容量</b>不限 · <b>進階譜面檢視</b>功能 · 最多 4 台裝置</div>' +
-      '<div class="promo-cd-wrap">倒數計時 <span class="promo-cd">—</span></div>' +
-      '<a class="pu-buy pu-buy-promo" href="' + ORDER_FORM_URL + '" target="_blank" rel="noopener">🔓 升級進階版（填訂購單）</a>' +   // 活動中：購買連結放框內；結束移回原位
-      '<div class="promo-legal">※ 本站為<b>樂譜解析工具</b>，付費項目<b>不包含任何音樂內容或樂曲授權</b>；樂譜請自行提供並確認你有合法權利。</div>' +
-      '</div>';
-  }
-  function promoLeftStr() {
-    var ms = PROMO_DEADLINE - Date.now();
-    if (ms <= 0) return null;
-    var s = Math.floor(ms / 1000), d = Math.floor(s / 86400); s -= d * 86400;
-    var h = Math.floor(s / 3600); s -= h * 3600;
-    var m = Math.floor(s / 60); s -= m * 60;
-    function p(n) { return (n < 10 ? "0" : "") + n; }
-    return d + " 天 " + p(h) + ":" + p(m) + ":" + p(s);
-  }
-  function updatePromoUI() {
-    var list = document.querySelectorAll(".promo-cd"); if (!list.length) return;
-    var t = promoLeftStr(), active = !!t, i;
-    for (i = 0; i < list.length; i++) {
-      list[i].textContent = active ? t : "優惠已結束";
-      var pb = list[i].closest(".promo"); if (pb) pb.classList.toggle("ended", !active);
-    }
-    // 購買連結：活動中放優惠框內(.pu-buy-promo)、結束移回原位(.pu-buy-orig)
-    var pro = document.querySelectorAll(".pu-buy-promo"), org = document.querySelectorAll(".pu-buy-orig");
-    for (i = 0; i < pro.length; i++) pro[i].style.display = active ? "" : "none";
-    for (i = 0; i < org.length; i++) org[i].style.display = active ? "none" : "";
-  }
-  function startPromoTimer() { if (!_promoTimer) _promoTimer = setInterval(updatePromoUI, 1000); }
-
-  // 「我的曲庫」欄位上的解鎖：用 Email（每信箱限 4 台，超過需重置）＋購買連結
-  // ===================================================================
-  // 單一帳號登入（★ 只需要輸入一次 Email）
-  //   登入後同時處理兩件事：
-  //     ① 曲譜權限 —— 後台有開通(付款) → 進階版無限；沒開通 → 免費帳號(保留每日額度)
-  //     ② 角色記憶 —— **不管有沒有付費都會記住**（跨裝置同步，走 char_unlocks）
-  //   換句話說：沒付款也可以登入，帳號一樣會記住你解鎖的角色。
-  // ===================================================================
-  function accountLogin(email, ui) {
-    email = (email || "").trim().toLowerCase();
-    var A = window.JianpuAuth;
-    var setMsg = (ui && ui.setMsg) || function () {};
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { setMsg("請輸入正確的 Email。", "#ff9a9a"); return; }
-
-    setAccountEmail(email);            // ★ 帳號一律建立（免費帳號也算帳號）
-    setMsg("登入中…");
-
-    // ── ② 角色記憶：不管付不付費都做 ──
-    if (isAllUnlockEmail(email)) unlockAllChars();          // 管理者帳號→全部角色
-    else if (A && A.getCharUnlocks) {
-      A.getCharUnlocks(email).then(function (remote) {
-        if (remote && remote.all) unlockAllChars();
-        else if (remote && (remote.lulan || remote.family)) {
-          if (remote.lulan) applyCharGrant("lulan", false);
-          if (remote.family) applyCharGrant("family", false);
-          applyCharGrant(remote.family ? "family" : "lulan", true);   // 自動選上其中一個
-        }
-        else pullCharUnlocks(email);                          // 同步 S 級進度並回推本機
-        renderAccountBox();
-      }).catch(function () { renderAccountBox(); });
-    } else renderAccountBox();
-
-    // ── ① 曲譜權限：查後台有沒有開通（沒開通就是免費帳號，不算失敗）──
-    function freeAccount(note) {
-      setEmailUnlocked(false);
-      updateOwnGateTip(); renderLibUnlock();
-      setStatus("已登入 " + email + "（免費帳號）" + (note ? "：" + note : "") + "。角色解鎖會記在這個帳號。", false);
-    }
-    function paidAccount() {
-      try { localStorage.setItem("jianpu_unlock_email", email); } catch (e) {}
-      applyEmailUnlock(); renderLibUnlock();
-      setStatus("已登入 " + email + "：進階版已啟用，樂譜解析無上限 ✓", false);
-    }
-    if (!A || !A.registerDevice) { freeAccount("目前連不到伺服器"); return; }
-    A.registerDevice(email, deviceId()).then(function (r) {
-      if (r === "ok") { paidAccount(); return; }
-      if (r === "limit") {
-        if (confirm("這個 Email 已在 4 台裝置登入（已滿）。\n是否要「清除全部裝置」後，用這台重新登入？\n\n（會把先前登入的裝置全部登出）")) {
-          setMsg("重置裝置中…");
-          A.resetDevices(email).then(function (n) {
-            if (typeof n === "number" && n >= 0) {
-              A.registerDevice(email, deviceId()).then(function (r2) {
-                if (r2 === "ok") paidAccount();
-                else freeAccount("已重置裝置，請再按一次「登入」");
-              });
-            } else freeAccount("重置失敗，請洽老師 LINE：paul780516");
-          });
-        } else freeAccount("已取消裝置重置");
-        return;
-      }
-      if (r === "not_entitled") { freeAccount("尚未升級進階版，仍可用每日免費額度"); return; }
-      // r === null：後端沒有裝置限制 RPC → 退回單純開通檢查
-      if (!A.checkEmailUnlock) { freeAccount("後端尚未設定進階版驗證"); return; }
-      A.checkEmailUnlock(email).then(function (ok) {
-        if (ok === true) paidAccount();
-        else freeAccount(ok === false ? "尚未升級進階版，仍可用每日免費額度" : "後端尚未設定進階版驗證");
-      }).catch(function () { freeAccount("驗證失敗"); });
-    }).catch(function () { freeAccount("連線失敗"); });
-  }
-
-  // 開機時：已登入就重新對一次後台（付款開通／被收回、角色新解鎖都會即時反映）
-  function refreshAccountState() {
-    var email = accountEmail(); if (!email) return;
-    var A = window.JianpuAuth; if (!A) return;
-    if (A.getCharUnlocks) pullCharUnlocks(email);
-    if (!A.registerDevice) return;
-    A.registerDevice(email, deviceId()).then(function (r) {
-      if (r === "ok") { if (!isEmailUnlocked()) { applyEmailUnlock(); renderLibUnlock(); } }
-      else if (r === "not_entitled") { if (isEmailUnlocked()) { setEmailUnlocked(false); updateOwnGateTip(); renderLibUnlock(); } }
-    }).catch(function () {});
-  }
-
-  // 「我的曲庫」欄位：唯一的帳號登入處（曲譜權限＋角色記憶都靠這一次登入）
-  function renderLibUnlock() {
-    var box = document.getElementById("libUnlock"); if (!box) return;
-    var mail = accountEmail();
-
-    if (mail) {   // 已登入：顯示帳號＋兩項狀態
-      var paid = isPaid();
-      box.innerHTML = '<div class="paid-unlock unlocked">' +
-        '<div>👤 <b>' + escapeHtml(mail) + '</b>' +
-        '<button type="button" class="btn small ghost lu-logout" style="margin-left:8px">登出</button></div>' +
-        '<div class="acct-stat">' +
-          '<div>' + (paid ? '🔓 <b>樂譜</b>：進階版，解析次數與曲庫容量<b>無上限</b>'
-                          : '🔒 <b>樂譜</b>：免費帳號，每天有解析次數額度') + '</div>' +
-          '<div>🎭 <b>角色</b>：解鎖狀態會記在這個帳號（<b>不管有沒有付費</b>都會記住）</div>' +
-        '</div>' +
-        (paid ? '' : promoBoxHtml() +
-          '<a class="pu-buy pu-buy-orig" href="' + ORDER_FORM_URL + '" target="_blank" rel="noopener">🔓 升級進階版（填訂購單）</a>') +
-        '<div class="lu-msg"></div>' +
-        '</div>';
-      if (!paid) { updatePromoUI(); startPromoTimer(); }
-      var lo = box.querySelector(".lu-logout");
-      if (lo) lo.addEventListener("click", function () {
-        if (!confirm("登出後：\n・樂譜會回到每日免費額度\n・角色解鎖仍留在這台裝置，但不再與帳號同步\n・會釋放這個 Email 的一個裝置名額\n\n確定要登出嗎？")) return;
-        var A = window.JianpuAuth;
-        if (A && A.unregisterDevice) { try { A.unregisterDevice(mail, deviceId()); } catch (e) {} }
-        setEmailUnlocked(false); setAccountEmail("");
-        try { localStorage.removeItem("jianpu_unlock_email"); } catch (e) {}
-        if (A && A.signOut) { try { A.signOut(); } catch (e) {} }
-        updateOwnGateTip(); renderLibUnlock(); renderAccountBox();
-        setStatus("已登出帳號（已釋放這台的裝置名額）。", false);
-      });
-      return;
-    }
-
-    // 未登入：一個 Email 欄位就好
-    box.innerHTML = '<div class="paid-unlock">' +
-      promoBoxHtml() +
-      '<div class="pu-tip">👤 <b>用 Email 登入（只需輸入一次）</b>——同一個帳號同時管兩件事：' +
-      '<div class="acct-stat" style="margin-top:4px">' +
-        '<div>🎼 <b>樂譜</b>：已付款開通 → 解析次數無上限；<b>沒付款也可以登入</b>，就是免費帳號（保留每日額度）</div>' +
-        '<div>🎭 <b>角色</b>：解鎖的角色<b>一律記在帳號裡</b>，換裝置用同一 Email 登入就帶過去</div>' +
-      '</div>' +
-      '<span style="opacity:.8">※ 一個 Email 最多 4 台裝置。解鎖的是工具功能，<b>不含任何音樂內容</b>。</span></div>' +
-      '<div class="pu-row"><input type="email" class="lu-email" placeholder="輸入 Email 登入" autocomplete="email" />' +
-      '<button type="button" class="btn small lu-btn">登入</button></div>' +
-      '<div class="lu-msg"></div>' +
-      '<a class="pu-buy pu-buy-orig" href="' + ORDER_FORM_URL + '" target="_blank" rel="noopener">🔓 升級進階版（填訂購單）</a>' +
-      '</div>';
-    updatePromoUI(); startPromoTimer();
-    var inp = box.querySelector(".lu-email"), btn = box.querySelector(".lu-btn"), msg = box.querySelector(".lu-msg");
-    function setMsg(t, c) { msg.textContent = t; msg.style.color = c || "#d7c9ac"; }
-    function go() { accountLogin(inp.value, { setMsg: setMsg }); }
-    btn.addEventListener("click", go);
-    inp.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
-  }
-
-  // ---- 付費資料夾：每個資料夾(grp)可各自上鎖＋各自密碼（後台設定，存 Supabase paid_folders）----
-  var _paidFolders = {};   // {grp:{locked,pw_hash}}
-  function loadPaidFolders() {
-    var A = window.JianpuAuth;
-    if (A && A.fetchFolders) A.fetchFolders().then(function (m) { _paidFolders = m || {}; buildSampleList(); }).catch(function () {});
-  }
-  function folderIsLocked(grp) { var f = _paidFolders[grp]; return !!(f && f.locked); }   // 沒設定=不上鎖(開放)
-  function folderUnlocked(grp) {                                                          // 只認該資料夾自己的密碼（無萬能主密碼）
-    try { return localStorage.getItem("jianpu_folder_" + grp) === "1"; } catch (e) { return false; }
-  }
-  function setFolderUnlocked(grp) { try { localStorage.setItem("jianpu_folder_" + grp, "1"); } catch (e) {} }
-  function verifyFolderPw(grp, pw) {
-    var f = _paidFolders[grp];
-    if (!f || !f.pw_hash) return Promise.resolve(false);
-    return sha256hex((pw || "").trim()).then(function (h) { return h === String(f.pw_hash).toLowerCase(); }).catch(function () { return false; });
-  }
-  // 每個上鎖資料夾標題下方的解鎖控制
-  function folderUnlockHtml(grp) {
-    return '<div class="paid-unlock" data-grp="' + escapeHtml(grp) + '">' +
-      '<div class="pu-tip">🔒 這個資料夾需要密碼才能玩。輸入本資料夾的解鎖密碼：</div>' +
-      '<div class="pu-row"><input type="password" class="fu-input" placeholder="輸入密碼" autocomplete="off" />' +
-      '<button type="button" class="btn small fu-btn">解鎖</button></div>' +
-      '<div class="fu-msg"></div></div>';
-  }
-  function wireFolderUnlock(root) {
-    (root || document).querySelectorAll(".paid-unlock[data-grp] .fu-btn").forEach(function (btn) {
-      var wrap = btn.closest(".paid-unlock"), grp = wrap.getAttribute("data-grp");
-      var inp = wrap.querySelector(".fu-input"), msg = wrap.querySelector(".fu-msg");
-      function go() {
-        verifyFolderPw(grp, inp.value).then(function (ok) {
-          if (ok) { setFolderUnlocked(grp); buildSampleList(); }
-          else { msg.textContent = "密碼不對，再確認一下～"; msg.style.color = "#ff9a9a"; }
-        });
-      }
-      btn.addEventListener("click", go);
-      inp.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
-    });
-  }
-
-  function loadFile(file) {
-    if (!gateOwnUse()) { setStatus(ownGateBlockedMsg(), true); return; }
-    setStatus("解析中：" + file.name + " …");
-    var reader = new FileReader();
-    reader.onload = function () { loadArrayBuffer(reader.result, file.name); };
-    reader.onerror = function () { setStatus("讀取檔案失敗。", true); };
-    reader.readAsArrayBuffer(file);
-  }
-
-  // alphaTab（977KB）延遲載入：首頁不下載，第一次要解析 GP 檔時才注入。只載一次。
-  var _alphaTabPromise = null;
-  function ensureAlphaTab() {
-    if (window.alphaTab && window.alphaTab.importer) return Promise.resolve();
-    if (_alphaTabPromise) return _alphaTabPromise;
-    _alphaTabPromise = new Promise(function (resolve, reject) {
-      var s = document.createElement("script");
-      s.src = "lib/alphaTab.min.js?v=20260801a";
-      s.onload = function () { resolve(); };
-      s.onerror = function () { _alphaTabPromise = null; reject(new Error("無法載入樂譜解析引擎（alphaTab）")); };
-      document.head.appendChild(s);
-    });
-    return _alphaTabPromise;
-  }
-
-  function loadArrayBuffer(arrayBuffer, name) {
-    setStatus("載入樂譜解析引擎中…");
-    ensureAlphaTab().then(function () { parseLoadedBuffer(arrayBuffer, name); }).catch(function (err) {
-      setStatus("解析失敗：" + (err && err.message ? err.message : err), true);
-      els.startBtn.disabled = true;
-    });
-  }
-
-  function parseLoadedBuffer(arrayBuffer, name) {
-    try {
-      var scoreObj = GP.parseBytes(arrayBuffer);
-      window._score = scoreObj;
-      var tracks = GP.listTracks(scoreObj);
-      var best = -1, bestCount = -1, html = "";
-      tracks.forEach(function (tr) {
-        var tag = tr.isPercussion ? "（打擊）" : "";
-        html += '<option value="' + tr.index + '">' + escapeHtml(tr.name) + tag + '｜' + tr.noteCount + ' 音</option>';
-        if (!tr.isPercussion && tr.noteCount > bestCount) { bestCount = tr.noteCount; best = tr.index; }
-      });
-      els.trackSelect.innerHTML = html;
-      if (best >= 0) els.trackSelect.value = String(best);
-      els.keySelect.value = "auto";
-      rebuildTimeline();
-      setStatus("已載入「" + (scoreObj.title || name || "") + "」，可調整設定後開始。");
-      els.startBtn.disabled = false;
-      state = "ready";
-    } catch (err) {
-      console.error(err);
-      setStatus("解析失敗：" + (err && err.message ? err.message : err), true);
-      els.startBtn.disabled = true;
-    }
-  }
-
-  function rebuildTimeline() {
-    if (!window._score) return;
-    displayMode = els.displaySelect.value;
-    var ti = parseInt(els.trackSelect.value, 10) || 0;
-    timeline = GP.buildTimeline(window._score, ti);                                  // 旋律(頂音) + 中繼資料
-    tabTL = GP.buildTabTimeline(window._score, ti);       // 一律建立(六線譜/Rocksmith 逐拍＋節拍器拍點皆需要)
-    if (tabTL) tabInfo = { tuning: tabTL.tuning, stringCount: tabTL.stringCount };
-    tonicPc = (els.keySelect.value === "auto") ? timeline.tonicPc : T.keyValueToPc(els.keySelect.value);
-    speed = parseFloat(els.speedRange.value) || 1;
-    buildItems();
-    updateSongInfo();
-    renderLeaderboard();
-  }
-
-  // 只做縮放與映射（不重新解析），供換設定與拖倍速時便宜重算
-  function buildItems() {
-    var inv = 1 / speed;
-    melodyNotes = timeline.notes.map(function (n) { return { time: n.time * inv, dur: n.dur * inv, midi: n.midi, bend: n.bend || 0 }; });
-    songDuration = timeline.durationSec * inv;
-    if (usesTabData()) {
-      items = tabTL.beats.map(function (beat) {
-        var deadNotes = (beat.dead || []).map(function (dn) {         // 死音/悶音(X)：無音高，只算弦位供顯示
-          var drow = Math.max(0, Math.min(tabTL.stringCount - 1, tabTL.stringCount - dn.string));
-          return { string: dn.string, fret: dn.fret, row: drow };
-        });
-        var isGraceBeat = !!beat.grace;                              // 裝飾音(GP 上的小字音符)
-        var notes = beat.notes.map(function (n) {
-          var d = T.midiToDegree(n.midi, tonicPc);
-          var row = tabTL.tuning.indexOf(n.midi - n.fret);
-          if (row < 0) row = tabTL.stringCount - n.string;
-          row = Math.max(0, Math.min(tabTL.stringCount - 1, row));
-          var linkRow = null, linkTime = null, linkFret = null;
-          if (n.link) {
-            var lr = tabTL.tuning.indexOf(n.link.midi - n.link.fret);
-            if (lr < 0) lr = tabTL.stringCount - n.link.string;
-            linkRow = Math.max(0, Math.min(tabTL.stringCount - 1, lr));
-            linkTime = n.link.time * inv; linkFret = n.link.fret;
-          }
-          return { string: n.string, fret: n.fret, midi: n.midi, pc: pc(n.midi), degree: d.degree, alter: d.alter, row: row,
-                   bend: n.bend || 0, hammerOrigin: n.hammerOrigin, hammerDest: n.hammerDest, slideOut: n.slideOut || 0, slideIn: n.slideIn || 0,
-                   vibrato: n.vibrato || 0, palmMute: n.palmMute, harmonic: n.harmonic || 0,
-                   trill: !!n.trill, letRing: !!n.letRing, staccato: !!n.staccato,
-                   tap: !!(n.tapLH || beat.tap), tremolo: !!beat.tremolo, slap: !!beat.slap, pop: !!beat.pop,
-                   chordNote: !!beat.chord,                                  // 屬於和弦的單音→六線譜上特別標注
-                   grace: isGraceBeat,                                       // 裝飾音→畫成小顆音符
-                   linkRow: linkRow, linkTime: linkTime, linkFret: linkFret };
-        });
-        if (!notes.length) {                                         // 純死音/悶音拍：只在六線譜顯示 X，不進判定（judged 直接為 true）
-          return { time: beat.time * inv, dur: beat.dur * inv, notes: [], deadNotes: deadNotes, deadOnly: true,
-                   pcs: [], degSet: [], lane: -1, midi: null, bend: 0, topTech: false, bar: beat.bar,
-                   nv: beat.nv, dots: beat.dots || 0, tuplet: beat.tuplet || null,
-                   judged: true, hit: false, missed: false, tier: null };
-        }
-        var pcs = [], degs = [], top = notes[0];
-        notes.forEach(function (n) {
-          if (pcs.indexOf(n.pc) < 0) pcs.push(n.pc);
-          if (degs.indexOf(n.degree) < 0) degs.push(n.degree);
-          if (n.midi > top.midi) top = n;
-        });
-        // 裝飾音(小字)：顯示＋發聲，但不列入判定與計分（judged 直接為 true，同死音拍的作法）。
-        //   原因是裝飾音與主音只差幾十毫秒，遠小於判定窗與收音不反應期，若要求分開命中會變成必定 Miss。
-        return { time: beat.time * inv, dur: beat.dur * inv, notes: notes, deadNotes: deadNotes, pcs: pcs, degSet: degs,
-                 lane: top.degree - 1, midi: top.midi, bend: top.bend || 0, topTech: noteHasTech(top), bar: beat.bar,
-                 chord: beat.chord || "", chordFrets: beat.chordFrets || null, chordFirst: beat.chordFirst || 0,
-                 nv: beat.nv, dots: beat.dots || 0, tuplet: beat.tuplet || null, grace: isGraceBeat,
-                 judged: isGraceBeat, hit: false, missed: false, tier: null };
-      });
-      var topMidis = items.filter(function (it) { return !it.deadOnly; }).map(function (it) { return it.midi; });
-      var octFn2 = T.makeOctaveOffsetFn(topMidis, tonicPc);
-      items.forEach(function (it) {
-        if (it.deadOnly) return;                                     // 純死音拍無音高，跳過簡譜級數計算
-        var d = T.midiToDegree(it.midi, tonicPc);
-        it.jianpu = { degree: d.degree, alter: d.alter, symbol: T.accSymbol(d.alter), octaveOffset: octFn2(it.midi), tech: it.topTech };   // 簡譜用發聲八度(五線譜才 +12 高八度)
-      });
-      // 和弦上色(每個不同和弦一個顏色，頻繁換和弦時互相區分) + 「同上」重複註記
-      var _chordCol = {}, _pal = ["#e0a44b", "#5ec26a", "#5b8def", "#c06cff", "#ff7aa2", "#3fc7bb", "#ffd23d", "#ff9a3c"], _ci = 0, _lastChord = null;
-      items.forEach(function (it) {
-        if (!it.chord) return;
-        if (!_chordCol[it.chord]) { _chordCol[it.chord] = _pal[_ci % _pal.length]; _ci++; }
-        it.chordColor = _chordCol[it.chord];
-        it.chordRepeat = (it.chord === _lastChord);                  // 與前一個和弦相同→畫「同上」記號
-        _lastChord = it.chord;
-        if (it.notes) it.notes.forEach(function (nn) { nn.chordColor = it.chordColor; });   // 和弦音外環用同色
-      });
-    } else {
-      var midis = timeline.notes.map(function (n) { return n.midi; });
-      var octFn = T.makeOctaveOffsetFn(midis, tonicPc);
-      items = timeline.notes.map(function (n) {
-        var d = T.midiToDegree(n.midi, tonicPc);
-        return { time: n.time * inv, dur: n.dur * inv, midi: n.midi, degree: d.degree, alter: d.alter,
-                 octaveOffset: octFn(n.midi), lane: d.degree - 1, symbol: T.accSymbol(d.alter),
-                 pc: pc(n.midi), pcs: [pc(n.midi)], degSet: [d.degree], bend: n.bend || 0,
-                 judged: false, hit: false, missed: false, tier: null };
-      });
-    }
-    barStartsScaled = (tabTL.barStarts || []).map(function (t) { return t * inv; });
-    buildBeatGrid();
-  }
-
-  // 依小節起點細分出每一拍（供節拍器/鼓；自動吻合變速與拍號）
-  function buildBeatGrid() {
-    beatTimes = []; beatAccents = []; beatInBar = []; beatDurs = []; beatsPerBar = [];
-    var spb = 60 / (timeline.tempo || 120) / speed;           // 一拍約幾秒(已含倍速)
-    if (spb <= 0) return;
-    var bars = barStartsScaled, end = songDuration || (bars.length ? bars[bars.length - 1] + spb * 4 : 0);
-    for (var i = 0; i < bars.length; i++) {
-      var start = bars[i], next = (i + 1 < bars.length) ? bars[i + 1] : end;
-      var nb = Math.max(1, Math.round((next - start) / spb)), bd = (next - start) / nb;
-      for (var b = 0; b < nb; b++) { beatTimes.push(start + b * bd); beatAccents.push(b === 0); beatInBar.push(b); beatDurs.push(bd); beatsPerBar.push(nb); }
-    }
-    if (!beatTimes.length && end > 0) {                        // 沒有小節資訊時退回等距 4/4
-      for (var t = 0, k = 0; t < end; t += spb, k++) { beatTimes.push(t); beatAccents.push(k % 4 === 0); beatInBar.push(k % 4); beatDurs.push(spb); beatsPerBar.push(4); }
-    }
-  }
-
-  // 各曲風鼓組 pattern：給小節內第 b 拍，回傳該拍要打的 [{f:拍內比例, v:聲部, g:音量}]
-  var GROOVES = {
-    rock: function (b) {
-      var h = [{ f: 0, v: "hat" }, { f: 0.5, v: "hat" }];
-      h.push({ f: 0, v: (b % 2 === 0) ? "kick" : "snare" });
-      return h;
-    },
-    metal: function (b) {
-      var h = [{ f: 0, v: "hat" }, { f: 0.5, v: "hat" }, { f: 0, v: "kick" }, { f: 0.5, v: "kick" }];
-      if (b % 2 === 1) h.push({ f: 0, v: "snare" });
-      return h;
-    },
-    folk: function (b) {
-      var h = [{ f: 0, v: "hat", g: 0.7 }];
-      h.push({ f: 0, v: (b % 2 === 0) ? "kick" : "snare", g: 0.8 });
-      return h;
-    },
-    funk: function (b) {
-      var h = [{ f: 0, v: "hat" }, { f: 0.25, v: "hat", g: 0.55 }, { f: 0.5, v: "hat" }, { f: 0.75, v: "hat", g: 0.55 }];
-      if (b % 2 === 1) h.push({ f: 0, v: "snare" });                       // 2 & 4
-      if (b === 0) h.push({ f: 0, v: "kick" });
-      if (b === 1) h.push({ f: 0.75, v: "kick", g: 0.8 });                 // 切分
-      if (b === 2) { h.push({ f: 0, v: "kick" }); h.push({ f: 0.5, v: "kick", g: 0.7 }); }
-      if (b === 3) h.push({ f: 0.25, v: "kick", g: 0.75 });
-      return h;
-    }
-  };
-
-  // 排程第 idx 拍的鼓＋伴奏
-  function scheduleGroove(idx) {
-    var bt = beatTimes[idx], bd = beatDurs[idx] || 0.5, b = beatInBar[idx] || 0;
-    var fn = GROOVES[genre]; if (!fn) return;
-    // ★「曲風」只出鼓組音色 —— 不加貝斯、不加和弦鋪底。
-    //   （原本會在每個 kick 疊 A.bassNote、在小節首疊 A.chordPad；
-    //     那些是有音高的持續音，聽起來像汽笛，而且本來就不屬於鼓組。
-    //     audio.js 的 bassNote/chordPad 保留但不再被呼叫，日後要加回來只需在這裡呼叫。）
-    var hits = fn(b);
-    for (var i = 0; i < hits.length; i++) {
-      var hh = hits[i], at = A.songTimeToCtx(bt + hh.f * bd), g = hh.g || 1;
-      if (hh.v === "kick") A.kick(at, g);
-      else if (hh.v === "snare") A.snare(at, g);
-      else if (hh.v === "hat") A.hat(at, g);
-      else if (hh.v === "crash") A.crash(at, g);
-    }
-  }
-
-  function fmtSpeed(s) { return (Math.round(s * 100) / 100) + "×"; }
-  function updateSpeedLabel() { els.speedVal.textContent = (speed === 1) ? "1×（正常）" : fmtSpeed(speed); }
-  function updateSongInfo() {
-    var keyName = keyDisplay(tonicPc);
-    var playable = items.filter(function (it) { return !it.grace; }).length;   // 裝飾音只顯示不判定，不計入拍數
-    var countLabel = usesTabData() ? (playable + " 拍（" + dispName() + "）") : (playable + " 音（簡譜）");
-    var speedTxt = (speed === 1) ? "" : ('　｜　倍速：' + fmtSpeed(speed) + '（實際 ' + fmtTime(songDuration) + '）');
-    els.songInfo.innerHTML =
-      '<div class="si-title">' + escapeHtml(timeline.title) +
-      (timeline.artist ? ' <span class="si-artist">— ' + escapeHtml(timeline.artist) + '</span>' : '') + '</div>' +
-      '<div class="si-meta">軌道：' + escapeHtml(timeline.trackName) +
-      '　｜　調性：' + keyName + ' 大調（1=' + keyName + '）' +
-      '　｜　速度：' + Math.round(timeline.tempo) + ' BPM' +
-      '　｜　' + countLabel +
-      '　｜　長度：' + fmtTime(timeline.durationSec) + speedTxt + '</div>';
-  }
-
-  function pc(midi) { return ((midi % 12) + 12) % 12; }
-  // 是否帶技巧（推弦/搥勾/滑音/揉弦/悶音/泛音/點弦/顫音/震音/延音/斷奏）→ 決定是否上色
-  function noteHasTech(n) {
-    return !!(n && (n.bend > 0 || n.hammerOrigin || n.hammerDest || n.slideOut || n.slideIn || n.vibrato ||
-                    n.palmMute || n.harmonic || n.trill || n.tremolo || n.tap || n.letRing || n.staccato));
-  }
-  function keyDisplay(p) { return T.tonicPcToKeyValue(p).replace("#", "♯").replace("b", "♭"); }
-  function noteName(midi) { return NOTE_NAMES[pc(midi)] + (Math.floor(midi / 12) - 1); }
-  function windows() {
-    var slack = inputMode === "mic" ? 0.05 : 0;
-    return { perfect: W_PERFECT + slack * 0.6, great: W_GREAT + slack, good: W_GOOD + slack };
-  }
-
-  // ---- 遊戲流程 ----
-  function startGame() {
-    if (!items || !items.length) { setStatus("這個軌道／模式沒有可玩的音符，換一軌試試。", true); return; }
-    if (micTesting) toggleMicTest();
-    inputMode = els.inputSelect.value;
-    displayMode = els.displaySelect.value;
-
-    if (inputMode === "mic") {
-      if (!P.isSupported()) {
-        setStatus("此環境無法取用麥克風（需 https 或 http://localhost）。請改用鍵盤，或用本機伺服器開啟頁面。", true);
-        return;
-      }
-      setStatus("正在要求麥克風權限…");
-      P.start(micDeviceId()).then(function () { beginGame(); }).catch(function (err) {
-        setStatus("無法取用麥克風：" + (err && err.message ? err.message : err), true);
-      });
-    } else {
-      stopMicIfIdle();
-      beginGame();
-    }
-  }
-
-  function beginGame() {
-    items.forEach(function (n) {
-      n.hit = false; n.missed = false; n.tier = null;
-      n.judged = !!(n.deadOnly || n.grace);          // 純死音拍與裝飾音永遠 judged(只顯示不判定)，其餘重置為未判定
-    });
-    score = 0; current = { combo: 0, maxCombo: 0 };
-    comboBurst = { t: 999, level: 0 }; hypeShown = 0;
-    stats = { perfect: 0, great: 0, good: 0, miss: 0 };
-    popups = [];
-    micCand = -1; micStable = 0; micLastPc = -1; micWasSilent = true; micDisp = { midi: null, rms: 0, t: 0 };
-    micSmooth = 0; micPrevSmooth = 0; micOnsetT = -9; micLastHit = -9;
-    _metroIdx = 0; _grooveIdx = 0;
-
-    els.setupPanel.classList.add("hidden");
-    els.gameWrap.classList.remove("hidden");
-    els.result.classList.add("hidden");
-    els.micHud.classList.toggle("hidden", inputMode !== "mic");
-    updateFretControls();
-    resize();
-    layoutPad();
-
-    var melodyOn = els.melodyToggle.checked;         // 依勾選播放旋律導引（收音時建議戴耳機避免回授）
-    // 依曲速決定倒數每拍秒數；開場先顯示「準備」，再倒數 4 拍(4-3-2-1)
-    var bp = (beatTimes && beatTimes.length >= 2) ? (beatTimes[1] - beatTimes[0]) : 0.5;
-    countBeat = Math.min(1.1, Math.max(0.34, bp || 0.5));
-    var countIn = 4 * countBeat;
-    var leadIn = Math.max(travel + 0.3, countIn + 1.3);   // 前置留「準備」時間，再接 4 拍倒數
-    A.start(melodyNotes, leadIn, melodyOn);         // 已依倍速縮放
-    A.setMelodyOn(melodyOn);
-
-    var modeTxt = dispName() + "／" + (inputMode === "mic" ? "收音" : "鍵盤");
-    els.hudTitle.textContent = timeline.title + "（1=" + keyDisplay(tonicPc) + "・" + modeTxt + "）";
-    els.pauseBtn.textContent = "⏸ 暫停";
-    state = "playing";
-    _lastBeep = 99;
-  }
-
-  function backToSetup() {
-    state = "ready";
-    A.pause();
-    liteClear();           // 關掉吉他指板燈
-    stopMicIfIdle();       // 虛擬音箱/調音器有開就不關麥克風 → 回選單自動延續
-    els.gameWrap.classList.add("hidden");
-    els.result.classList.add("hidden");
-    els.setupPanel.classList.remove("hidden");
-    setStatus("已載入「" + (timeline ? timeline.title : "") + "」，可調整設定後開始。");
-    renderLeaderboard();
-  }
-
-  function togglePause() {
-    if (state === "playing") { state = "paused"; A.pause(); liteClear(); els.pauseBtn.textContent = "▶ 繼續"; }
-    else if (state === "paused") { state = "playing"; A.resume(); els.pauseBtn.textContent = "⏸ 暫停"; }
-  }
-
-  // ---- 輸入 ----
-  function onKeyDown(e) {
-    if (e.repeat) return;
-    if (e.code === "Space") {
-      if (state === "playing" || state === "paused") { e.preventDefault(); togglePause(); }
-      return;
-    }
-    if (e.code === "Escape") { if (state === "playing" || state === "paused") backToSetup(); return; }
-    if (state !== "playing") return;
-    var lane = LANE_KEYS.indexOf(e.key);
-    if (lane < 0) { var m = e.code.match(/^(?:Digit|Numpad)([1-7])$/); if (m) lane = parseInt(m[1], 10) - 1; }
-    if (lane < 0) return;
-    e.preventDefault();
-    var deg = lane + 1;
-    attemptHit(function (it) { return it.degSet.indexOf(deg) >= 0; }, lane);
-  }
-
-  // 泛用命中：找最接近、在窗內、且符合 matchFn 的未判定項目
-  function attemptHit(matchFn, flashLane) {
-    var win = windows();
-    var songTime = A.getSongTime() - (inputMode === "mic" ? micLatencyMs / 1000 : 0) - JUDGE_OFFSET;
-    var best = null, bestDelta = 1e9;
-    for (var i = 0; i < items.length; i++) {
-      var it = items[i];
-      if (it.judged || !matchFn(it)) continue;
-      var d = Math.abs(it.time - songTime);
-      if (d < bestDelta) { bestDelta = d; best = it; }
-    }
-    if (best && bestDelta <= win.good) { judge(best, bestDelta, win); return true; }
-    if (inputMode !== "mic") A.click(false);   // 收音時不發空擊「喀」音效（彈真吉他只聽自己的聲音）
-    return false;
-  }
-
-  // 連段倍數：每 10 連段升 1 級，最高 ×5（貼近 Trombone Champ 的倍數感）
-  function comboMult(c) { return Math.min(5, 1 + Math.floor(c / 10)); }
-
-  function judge(n, delta, win) {
-    var tier = delta <= win.perfect ? "perfect" : delta <= win.great ? "great" : "good";
-    n.judged = true; n.hit = true; n.tier = tier;
-    stats[tier]++;
-    var prevMult = comboMult(current.combo);
-    current.combo++;
-    if (current.combo > current.maxCombo) current.maxCombo = current.combo;
-    if (comboMult(current.combo) > prevMult) {           // 升上新連段段位(每10連段)→觸發慶祝爆發動畫
-      comboBurst = { t: 0, level: comboMult(current.combo) };
-      if (inputMode !== "mic") A.crash(A.now());          // 一記鈸聲慶祝(收音時不疊合成音)
-    }
-    score += Math.round(SCORE[tier] * comboMult(current.combo));
-    if (inputMode !== "mic") A.click(true);   // 收音時不發命中「喀」音效（彈真吉他只聽自己的聲音）
-    if (inputMode !== "mic" && !els.melodyToggle.checked) A.playNote(n.midi, n.dur || 0.25, (n.bend || 0) / 2);   // 收音時不播回饋音（彈真吉他不需疊合成音）
-    popups.push({ lane: n.lane, tier: tier, t: 0 });
-    bigJudge = { tier: tier, t: 0, combo: current.combo }; charPulse = 1;   // 右側大字動畫 + 吉他手彈跳
-  }
-
-  // ---- 迴圈 ----
-  var _lastBeep = 99;
-  var _loopErrLogged = false;
-  function loop() {
-    try { loopBody(); }
-    catch (e) { if (!_loopErrLogged) { _loopErrLogged = true; try { console.error("[loop error]", e); } catch (_) {} } }   // 任何錯誤都不讓遊戲卡死
-    requestAnimationFrame(loop);
-  }
-  function loopBody() {
-    if (state === "playing") {
-      A.update();
-      var songTime = A.getSongTime();
-
-      // 收音輸入
-      if (inputMode === "mic" && P.isActive()) micTick(songTime);
-
-      // LiteJam LED 吉他：把正在彈的音（＋預告）亮在真吉他指板上
-      updateLite(songTime);
-
-      // 倒數嗶聲
-      if (songTime < 0) {
-        var countIn = 4 * countBeat;
-        if (songTime >= -countIn) {                                  // 進入 4 拍倒數才逐拍嗶
-          var c = Math.min(4, Math.ceil(-songTime / countBeat));
-          if (c !== _lastBeep) { A.beep(false); _lastBeep = c; }
-        }
-      } else if (_lastBeep !== 0) { A.beep(true); _lastBeep = 0; }
-
-      // 節拍器（依拍點排程，稍微提前排程以求準時）；選了曲風伴奏時自動內含節拍器click，與伴奏結合成一體
-      var metroOn = true;   // 節拍器固定開啟（開關選項已移除）
-      if (metroOn) {
-        while (_metroIdx < beatTimes.length && beatTimes[_metroIdx] <= songTime + 0.12) {
-          var bt = beatTimes[_metroIdx];
-          if (bt >= songTime - 0.05) A.metronomeAt(A.songTimeToCtx(bt), beatAccents[_metroIdx]);
-          _metroIdx++;
-        }
-      } else {
-        while (_metroIdx < beatTimes.length && beatTimes[_metroIdx] <= songTime + 0.12) _metroIdx++;   // 關閉時仍推進索引
-      }
-
-      // 曲風鼓組＋伴奏（依拍點提前排程）
-      if (genre !== "none") {
-        while (_grooveIdx < beatTimes.length && beatTimes[_grooveIdx] <= songTime + 0.25) {
-          if (beatTimes[_grooveIdx] >= songTime - 0.05) scheduleGroove(_grooveIdx);
-          _grooveIdx++;
-        }
-      } else {
-        while (_grooveIdx < beatTimes.length && beatTimes[_grooveIdx] <= songTime + 0.25) _grooveIdx++;
-      }
-
-      // 漏接判定
-      for (var i = 0; i < items.length; i++) {
-        var n = items[i];
-        if (!n.judged && (songTime - JUDGE_OFFSET) - n.time > W_MISS) {
-          n.judged = true; n.missed = true; n.tier = "miss";
-          stats.miss++; current.combo = 0;
-          popups.push({ lane: n.lane, tier: "miss", t: 0 });
-          bigJudge = { tier: "miss", t: 0, combo: 0 };
-        }
-      }
-
-      if (songTime > songDuration + 1.2) {
-        var pending = false;
-        for (var j = 0; j < items.length; j++) if (!items[j].judged) { pending = true; break; }
-        if (!pending) endGame();
-      }
-    }
-    render();
-  }
-
-  function micTick(songTime) {
-    var p = P.read();
-    micDisp = { midi: p.midi, rms: p.rms, t: 0 };
-    updateMicHud(p);
-    var rms = p.rms || 0;
-    // 輕平滑去毛刺 → 偵測「幀間能量突增(positive flux)」：撥弦的起音是一次陡升，用「這一幀明顯
-    // 大於前一幀」判斷新一次撥弦。不受同音連撥把移動平均頂高的影響，是抓「同音連撥」最可靠的訊號。
-    micSmooth = (micSmooth <= 0) ? rms : (micSmooth * 0.35 + rms * 0.65);
-    var ONSET_RATIO = 1.25;                                          // 幀間放大 ≥25% 視為起音(撥弦攻擊>50%；抖音/漸強/雜訊<20% 不觸發)
-    if (rms > micGate && micSmooth > micPrevSmooth * ONSET_RATIO && (songTime - micOnsetT) > 0.05) micOnsetT = songTime;
-    micPrevSmooth = micSmooth;
-    if (p.midi != null && rms > micGate) {
-      if (p.pc === micCand) micStable++; else { micCand = p.pc; micStable = 1; }
-      var pitchChanged = (p.pc !== micLastPc);
-      var freshOnset = (songTime - micOnsetT) < 0.08;              // 80ms 內剛偵測到起音(留給音高 2~3 幀穩定的時間)
-      // 觸發新命中：音高穩定 ≥2 幀，且(換了音高 或 剛偵測到起音)，並過了 60ms 不反應期(避免一次撥弦被拆成兩下)
-      if (micStable >= 2 && (pitchChanged || freshOnset) && (songTime - micLastHit) > 0.06) {
-        micLastPc = p.pc; micWasSilent = false; micLastHit = songTime; micOnsetT = -9;   // 消耗掉這次起音
-        var detectedPc = p.pc;
-        attemptHit(function (it) {                                  // 容許音準 ±MIC_PITCH_TOL 半音偏移(circular)
-          return it.pcs.some(function (pc) { var dd = Math.abs(pc - detectedPc); return Math.min(dd, 12 - dd) <= MIC_PITCH_TOL; });
-        }, T.midiToDegree(p.midi, tonicPc).degree - 1);
-      }
-    } else {
-      micCand = -1; micStable = 0; micWasSilent = true; micLastPc = -1;
-    }
-  }
-
-  function updateMicHud(p) {
-    if (p && p.midi != null) {
-      var d = T.midiToDegree(p.midi, tonicPc);
-      els.micNote.textContent = noteName(p.midi) + " · " + T.accSymbol(d.alter) + d.degree;
-    } else {
-      els.micNote.textContent = "—";
-    }
-    var lvl = Math.max(0, Math.min(100, (p ? p.rms : 0) * 700));
-    els.micLevel.style.width = lvl + "%";
-  }
-
-  function endGame() {
-    state = "result";
-    A.pause();
-    liteClear();           // 關掉吉他指板燈
-    stopMicIfIdle();       // 虛擬音箱/調音器有開就不關麥克風 → 遊戲結束自動延續、不用重新點開
-    var total = stats.perfect + stats.great + stats.good + stats.miss;
-    var accSum = stats.perfect * ACC.perfect + stats.great * ACC.great + stats.good * ACC.good;
-    var acc = total ? (accSum / total * 100) : 0;
-    var grade = acc >= 95 ? "S" : acc >= 88 ? "A" : acc >= 78 ? "B" : acc >= 65 ? "C" : "D";
-    var gc = gradeColor(grade);
-    // 存檔 + 判斷是否破紀錄
-    var prevList = loadAllScores()[songKeyOf()] || [];
-    var prevBest = prevList.length ? prevList[0].score : 0;
-    var rec = { key: songKeyOf(), song: timeline.title, track: timeline.trackName, mode: modeLabel(),
-                score: score, acc: acc, grade: grade, combo: current.maxCombo, date: Date.now() };
-    var list = saveScoreRecord(rec);
-    var isNew = score > prevBest;
-    var rank = list.indexOf(rec) + 1;
-    // S 級 → 記錄該曲，達門檻就解鎖新角色並提示
-    var unlockMsg = "";
-    if (grade === "S") {
-      var before = sClearCount();
-      var after = addSClear(songKeyOf());
-      if (after > before) {
-        refreshGuitaristLocks();
-        if (after >= 1 && after <= LOCKED_CHARS.length) {
-          var newId = LOCKED_CHARS[after - 1];
-          unlockMsg = '<div class="new-record" style="color:#ffd93d">🎉 累積 ' + after + ' 首 S 級，解鎖新角色：' + escapeHtml(charName(newId)) + '！</div>';
-        }
-        var nextNeed = after + 1;
-        if (!unlockMsg && nextNeed <= LOCKED_CHARS.length)
-          unlockMsg = '<div class="racc">已 ' + after + ' 首 S 級 · 再 1 首解鎖「' + escapeHtml(charName(LOCKED_CHARS[nextNeed - 1])) + '」</div>';
-      }
-    }
-    els.resultBody.innerHTML =
-      '<div class="grade" style="color:' + gc + '">' + grade + '</div>' +
-      (isNew ? '<div class="new-record">🎉 新紀錄！</div>' : '') +
-      unlockMsg +
-      '<div class="rscore">' + score.toLocaleString() + ' 分</div>' +
-      '<div class="racc">準確率 ' + acc.toFixed(2) + '%　｜　最大連段 ' + current.maxCombo + '</div>' +
-      (!isNew && prevBest ? '<div class="racc">本曲最佳 ' + prevBest.toLocaleString() + '　｜　本次排名第 ' + rank + '</div>' : '') +
-      '<div class="rjudge">' +
-        chip("Perfect", stats.perfect, "#ffd93d") + chip("Great", stats.great, "#5ec26a") +
-        chip("Good", stats.good, "#5b8def") + chip("Miss", stats.miss, "#ff5d6c") + '</div>';
-    els.result.classList.remove("hidden");
-  }
-  function chip(name, n, color) { return '<div class="chip"><span style="color:' + color + '">' + name + '</span><b>' + n + '</b></div>'; }
-
-  // ---- 選單背景音樂(BGM)：只在設定頁(選單)播、遊玩時暫停；🎵 鈕可開關(記憶) ----
-  var BGM_OFF_KEY = "jianpu_bgm_off";
-  function setupMenuBgm() {
-    var bgm = document.getElementById("menuBgm"), btn = document.getElementById("bgmToggle"), panel = document.getElementById("setupPanel");
-    if (!bgm || !panel) return;
-    bgm.volume = 0.45;
-    var off = false; try { off = localStorage.getItem(BGM_OFF_KEY) === "1"; } catch (e) {}
-    function inMenu() { return !panel.classList.contains("hidden"); }
-    function want() { return !off && inMenu(); }
-    function syncBtn() { if (btn) { btn.textContent = off ? "🔇" : "🎵"; btn.classList.toggle("off", off); } }
-    function apply() { if (want()) { var p = bgm.play(); if (p && p.catch) p.catch(function () {}); } else { bgm.pause(); } syncBtn(); }
-    // 使用者手勢後才能出聲：每次互動都試著補播(直到成功)
-    ["pointerdown", "keydown", "touchstart"].forEach(function (ev) { document.addEventListener(ev, function () { if (want() && bgm.paused) apply(); }, { passive: true }); });
-    // 設定頁顯示/隱藏切換時自動播/停
-    new MutationObserver(apply).observe(panel, { attributes: true, attributeFilter: ["class"] });
-    if (btn) btn.addEventListener("click", function () { off = !off; try { localStorage.setItem(BGM_OFF_KEY, off ? "1" : "0"); } catch (e) {} apply(); });
-    // 開場不主動 play()：preload=none 下，play() 會立刻抓整首 2.87MB。等使用者第一次互動
-    //（上面的 pointerdown/keydown/touchstart）再補播，音檔就只在真的要出聲時才下載。
-    syncBtn(); if (off) bgm.pause();
-  }
-
-  // 麥克風生命週期：虛擬音箱/調音器/收音測試/遊玩 任一需要就開著，全都不需要才關
-  function micNeeded() {
-    return (els.ampToggle && els.ampToggle.checked) || (els.tunerToggle && els.tunerToggle.checked) || micTesting || state === "playing";
-  }
-  function ensureMic() { return P.isActive() ? Promise.resolve() : P.start(micDeviceId()); }
-  function stopMicIfIdle() { if (!micNeeded()) P.stop(); }
-
-  // 虛擬音箱：勾選→開麥克風把收音經模擬音色(破音+cab+delay+-3dB限幅)即時輸出；可調 I/O 緩衝
-  // ---- 版本自動檢查 ----
-  //   GitHub Pages 會快取 index.html（約 10 分鐘），而 _headers / netlify.toml 對它無效，
-  //   所以更新後使用者可能拿到舊的 HTML → 連帶載到舊的 js（?v= 也是舊的）。
-  //   解法：抓一份不快取的 version.json 比對；不一樣就帶上新版號重載一次（同一版只重載一次，不會鬼打牆）。
-  function currentAppVersion() {
-    try {
-      var sc = document.querySelector('script[src*="game.js"]');
-      var m = sc && sc.src.match(/[?&]v=([^&]+)/);
-      return m ? m[1] : "";
-    } catch (e) { return ""; }
-  }
-  function checkForUpdate() {
-    var cur = currentAppVersion(); if (!cur) return;
-    fetch("version.json", { cache: "no-store" })
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (j) {
-        var latest = j && j.v;
-        if (!latest || latest === cur) return;
-        var key = "jianpu_reloaded_for";
-        var tried = "";
-        try { tried = sessionStorage.getItem(key) || ""; } catch (e) {}
-        if (tried === latest) {                                  // 已經為這一版重載過還是舊的→不再重試
-          setStatus("有新版本（" + latest + "）但瀏覽器仍在用快取，請手動強制重新整理（⌘⇧R）。", true);
-          return;
-        }
-        try { sessionStorage.setItem(key, latest); } catch (e) {}
-        var base = location.href.split("?")[0].split("#")[0];
-        location.replace(base + "?u=" + encodeURIComponent(latest));   // 帶版號→一定拿到新的 HTML
-      })
-      .catch(function () {});
-  }
-
-  // ---- 背景照載入（支援 HEIC）----
-  //   瀏覽器現況：Chrome / Edge / Firefox **不能**解 HEIC，只有 Safari 可以。
-  //   所以流程是：
-  //     ① 先試瀏覽器原生解碼（Safari 直接過；一般 jpg/png 也走這條）
-  //     ② 失敗且看起來是 HEIC → 用 js/heic.js（自己解 HEIF 容器 ＋ 交給瀏覽器內建的 HEVC 解碼器）
-  //     ③ 都不行 → 給明確的替代方案提示
-  //   另外照片通常很大（iPhone 4032×3024），一律縮到 MAX_BG_PX 以內，省記憶體也畫得比較快。
-  var MAX_BG_PX = 2560;
-  function setBgTip(html, isErr) {
-    if (!els.bgTip) return;
-    els.bgTip.innerHTML = html || "";
-    els.bgTip.style.color = isErr ? "#ff9a9a" : "";
-  }
-  // 把來源縮到上限內，回傳 canvas（已在上限內就原樣回傳）
-  function shrinkForBg(src, w, h) {
-    var m = Math.max(w, h);
-    if (m <= MAX_BG_PX) return src;
-    var k = MAX_BG_PX / m;
-    var cv = document.createElement("canvas");
-    cv.width = Math.max(1, Math.round(w * k));
-    cv.height = Math.max(1, Math.round(h * k));
-    cv.getContext("2d").drawImage(src, 0, 0, cv.width, cv.height);
-    return cv;
-  }
-  function applyBg(src, w, h, note) {
-    bgImage = shrinkForBg(src, w, h);
-    setBgTip("🖼 已套用背景照：<b>" + w + "×" + h + "</b>" +
-             (bgImage !== src ? "（已縮到 " + bgImage.width + "×" + bgImage.height + " 以省資源）" : "") +
-             (note ? "　" + note : ""));
-  }
-  function loadBackgroundPhoto(file) {
-    var isHeic = window.HeicDecoder && window.HeicDecoder.looksLikeHeic(file);
-    setBgTip(isHeic ? "🖼 正在解 HEIC 照片…" : "🖼 讀取中…");
-    // ① 原生解碼（jpg/png/webp/avif 都走這條；Safari 連 HEIC 也可以）
-    var native = (typeof createImageBitmap === "function")
-      ? createImageBitmap(file, { imageOrientation: "from-image" })
-      : Promise.reject(new Error("no createImageBitmap"));
-    native.then(function (bmp) {
-      applyBg(bmp, bmp.width, bmp.height);
-    }).catch(function () {
-      // ② HEIC → 自己解
-      if (isHeic && window.HeicDecoder) {
-        window.HeicDecoder.isSupported().then(function (ok) {
-          if (!ok) throw new Error("unsupported");
-          return window.HeicDecoder.decode(file);
-        }).then(function (cv) {
-          applyBg(cv, cv.width, cv.height, "（HEIC）");
-        }).catch(function (err) {
-          setBgTip("❌ 這台瀏覽器沒辦法解這張 HEIC" +
-            (err && err.message && err.message !== "unsupported" ? "（" + escapeHtml(err.message) + "）" : "") +
-            "。<br>替代做法：用 <b>Safari</b> 開這個網頁，或在 Mac 上對照片按右鍵 →「快速動作」→「轉換影像」→ JPEG。", true);
-        });
-        return;
-      }
-      // ③ 不是 HEIC 也解不了 → 退回舊的 dataURL 方式再試一次
-      var r = new FileReader();
-      r.onload = function () {
-        var im = new Image();
-        im.onload = function () { applyBg(im, im.naturalWidth, im.naturalHeight); };
-        im.onerror = function () { setBgTip("❌ 這個圖片格式沒辦法讀取，請改用 JPG / PNG。", true); };
-        im.src = r.result;
-      };
-      r.onerror = function () { setBgTip("❌ 檔案讀取失敗。", true); };
-      r.readAsDataURL(file);
-    });
-  }
-
-  // dB ↔ 線性 RMS（Noise Gate 門檻用 dB 顯示，內部用線性值）
-  function dbToLin(db) { return Math.pow(10, db / 20); }
-  function linToDb(v) { return 20 * Math.log10(Math.max(1e-6, v)); }
-
-  function setupVirtualAmp() {
-    var t = els.ampToggle; if (!t) return;
-    function driveV() { return (parseInt(els.ampDrive.value, 10) || 0) / 100; }
-    function levelV() { return (parseInt(els.ampLevel.value, 10) || 0) / 100; }
-    function pct(el) { return (parseInt(el.value, 10) || 0) / 100; }
-
-    // ── Noise Gate ──
-    function gateThreshLin() { return dbToLin(parseInt(els.gateThresh.value, 10) || -38); }
-    function showGateThresh() { els.gateThreshVal.textContent = (parseInt(els.gateThresh.value, 10) || -38) + " dB"; }
-    els.gateToggle.addEventListener("change", function () {
-      P.setGateOn(els.gateToggle.checked);
-      els.gateControls.classList.toggle("hidden", !els.gateToggle.checked);
-    });
-    els.gateThresh.addEventListener("input", function () { P.setGateThreshold(gateThreshLin()); showGateThresh(); });
-    els.gateAutoBtn.addEventListener("click", function () {
-      if (!P.isActive()) { els.gateTip.innerHTML = "⚠️ 請先勾選上面的「虛擬音箱」把麥克風打開，再按自動偵測。"; return; }
-      els.gateAutoBtn.disabled = true;
-      els.gateTip.innerHTML = "🎧 偵測中…請<b>手離開弦、保持安靜</b>（1.2 秒）";
-      P.autoDetectGate(1200).then(function (r) {
-        els.gateAutoBtn.disabled = false;
-        if (!r) { els.gateTip.innerHTML = "偵測失敗，請確認麥克風已開啟。"; return; }
-        var db = Math.round(linToDb(r.threshold));
-        els.gateThresh.value = Math.max(-70, Math.min(-15, db));
-        showGateThresh();
-        P.setGateThreshold(dbToLin(parseInt(els.gateThresh.value, 10)));
-        if (!els.gateToggle.checked) { els.gateToggle.checked = true; P.setGateOn(true); els.gateControls.classList.remove("hidden"); }
-        els.gateTip.innerHTML = "✅ 偵測完成：底噪約 <b>" + Math.round(linToDb(r.noise)) + " dB</b>，門檻已設為 <b>" +
-          els.gateThresh.value + " dB</b>（已自動開啟雜訊閘）。若彈輕音被切掉，就把門檻往左調低一點。";
-      });
-    });
-
-    // ── 綠推 Overdrive ──
-    els.odToggle.addEventListener("change", function () {
-      P.setOdOn(els.odToggle.checked);
-      els.odControls.classList.toggle("hidden", !els.odToggle.checked);
-    });
-    els.odDrive.addEventListener("input", function () { P.setOdDrive(pct(els.odDrive)); els.odDriveVal.textContent = els.odDrive.value + "%"; });
-    els.odTone.addEventListener("input", function () { P.setOdTone(pct(els.odTone)); els.odToneVal.textContent = els.odTone.value + "%"; });
-    els.odLevel.addEventListener("input", function () { P.setOdLevel(pct(els.odLevel)); els.odLevelVal.textContent = els.odLevel.value + "%"; });
-
-    // ── 英倫疊音 tone stack ──
-    [["toneBass","bass"],["toneMid","mid"],["toneTreble","treble"],["tonePresence","presence"]].forEach(function (pair) {
-      var el = els[pair[0]], lab = els[pair[0] + "Val"];
-      el.addEventListener("input", function () { P.setTone(pair[1], pct(el)); lab.textContent = el.value + "%"; });
-    });
-
-    // ── 輸入音量表＋閘門指示燈（開著虛擬音箱時每 60ms 更新一次）──
-    var fxMeterTimer = null;
-    function startFxMeter() {
-      if (fxMeterTimer) return;
-      fxMeterTimer = setInterval(function () {
-        if (!P.isActive() || !P.isAmpOn()) { els.gateMeter.style.width = "0%"; els.gateLed.classList.remove("open"); return; }
-        var rms = P.getInputRms ? P.getInputRms() : 0;
-        var db = linToDb(rms);                                      // -70..0 dB → 0..100%
-        els.gateMeter.style.width = Math.max(0, Math.min(100, (db + 70) / 70 * 100)) + "%";
-        els.gateLed.classList.toggle("open", !!(P.isGateOpen && P.isGateOpen()));
-      }, 60);
-    }
-    function stopFxMeter() { if (fxMeterTimer) { clearInterval(fxMeterTimer); fxMeterTimer = null; } els.gateMeter.style.width = "0%"; els.gateLed.classList.remove("open"); }
-
-    // 開音箱時把目前所有旋鈕值套進去（buildAmp 之後才有節點）
-    function pushAllFx() {
-      P.setAmpDrive(driveV()); P.setAmpLevel(levelV());
-      P.setGateThreshold(gateThreshLin()); P.setGateOn(els.gateToggle.checked);
-      P.setOdDrive(pct(els.odDrive)); P.setOdTone(pct(els.odTone)); P.setOdLevel(pct(els.odLevel)); P.setOdOn(els.odToggle.checked);
-      P.setTone("bass", pct(els.toneBass)); P.setTone("mid", pct(els.toneMid));
-      P.setTone("treble", pct(els.toneTreble)); P.setTone("presence", pct(els.tonePresence));
-      P.setDelayOn(els.dlyToggle.checked); P.setDelayTime(dlyTimeV()); P.setDelayFb(dlyFbV()); P.setDelayMix(dlyMixV());
-    }
-    showGateThresh();
-    function dlyTimeV() { return parseInt(els.dlyTime.value, 10) || 0; }
-    function dlyFbV() { return (parseInt(els.dlyFb.value, 10) || 0) / 100; }
-    function dlyMixV() { return (parseInt(els.dlyMix.value, 10) || 0) / 100; }
-    function showLat() { if (els.ampLatNow) els.ampLatNow.textContent = "目前延遲：" + (P.isActive() ? (P.getLatencyMs() + " ms") : "—"); }
-    function showCtl(on) { if (els.ampControls) els.ampControls.classList.toggle("hidden", !on); }
-    els.ampDrive.addEventListener("input", function () { P.setAmpDrive(driveV()); els.ampDriveVal.textContent = Math.round(driveV() * 100) + "%"; });
-    els.ampLevel.addEventListener("input", function () { P.setAmpLevel(levelV()); els.ampLevelVal.textContent = Math.round(levelV() * 100) + "%"; });
-    // Delay 效果器
-    els.dlyToggle.addEventListener("change", function () { P.setDelayOn(els.dlyToggle.checked); els.dlyControls.classList.toggle("hidden", !els.dlyToggle.checked); });
-    els.dlyTime.addEventListener("input", function () { P.setDelayTime(dlyTimeV()); els.dlyTimeVal.textContent = dlyTimeV() + " ms"; });
-    els.dlyFb.addEventListener("input", function () { P.setDelayFb(dlyFbV()); els.dlyFbVal.textContent = Math.round(dlyFbV() * 100) + "%"; });
-    els.dlyMix.addEventListener("input", function () { P.setDelayMix(dlyMixV()); els.dlyMixVal.textContent = Math.round(dlyMixV() * 100) + "%"; });
-    // I/O 緩衝(換值需重建 AudioContext)
-    els.ampBuffer.addEventListener("change", function () {
-      P.setBuffer(els.ampBuffer.value);
-      if (P.isActive()) P.restart().then(function () { pushAllFx(); showLat(); }); else showLat();
-    });
-    t.addEventListener("change", function () {
-      if (t.checked) {
-        P.setBuffer(els.ampBuffer.value);
-        ensureMic().then(function () {
-          pushAllFx();                      // 麥克風開起來、效果器鏈建好後才套旋鈕值
-          P.setAmp(true); showCtl(true); showLat(); startFxMeter();
-        }).catch(function (e) { t.checked = false; showCtl(false); setStatus("無法開啟麥克風（虛擬音箱）：" + ((e && e.message) || e), true); });
-      } else {
-        P.setAmp(false); showCtl(false); stopFxMeter(); stopMicIfIdle();
-      }
-    });
-  }
-
-  // 調音器：勾選→開麥克風，即時顯示彈到的音名＋音準(cents 指針)
-  var tunerRAF = null;
-  function setupTuner() {
-    var t = els.tunerToggle; if (!t) return;
-    t.addEventListener("change", function () {
-      if (t.checked) {
-        ensureMic().then(function () { els.tunerDisplay.classList.remove("hidden"); if (!tunerRAF) tunerTick(); })
-          .catch(function (e) { t.checked = false; setStatus("無法開啟麥克風（調音器）：" + ((e && e.message) || e), true); });
-      } else {
-        if (tunerRAF) { cancelAnimationFrame(tunerRAF); tunerRAF = null; }
-        els.tunerDisplay.classList.add("hidden"); stopMicIfIdle();
-      }
-    });
-  }
-  function tunerTick() {
-    var p = P.read(), f = p.freq || 0;
-    if (f > 0) {
-      var midiF = 69 + 12 * Math.log2(f / 440), near = Math.round(midiF), cents = Math.round((midiF - near) * 100);
-      els.tunerNote.textContent = noteName(near);
-      els.tunerCents.textContent = (cents > 0 ? "+" : "") + cents + " ¢";
-      els.tunerNeedle.style.left = (50 + Math.max(-50, Math.min(50, cents))) + "%";
-      var intune = Math.abs(cents) <= 5;
-      els.tunerNeedle.classList.toggle("intune", intune); els.tunerNote.classList.toggle("intune", intune);
-    } else {
-      els.tunerNote.textContent = "—"; els.tunerCents.textContent = "—";
-      els.tunerNeedle.classList.remove("intune"); els.tunerNote.classList.remove("intune");
-    }
-    tunerRAF = requestAnimationFrame(tunerTick);
-  }
-
-  // HUD 指板相關下拉的顯示切換（只在六線譜顯示；範圍/樣式只在指板檢視顯示）
-  function updateFretControls() {
-    var tab = (displayMode === "tab");
-    els.bottomSelect.style.display = tab ? "" : "none";
-    var showFret = tab && els.bottomSelect.value === "fretboard";
-    els.fretWindowSelect.style.display = showFret ? "" : "none";
-    els.fretStyleSelect.style.display = showFret ? "" : "none";
-  }
-
-  // ---- 繪圖 ----
-  function resize() {
-    dpr = window.devicePixelRatio || 1;
-    var rect = canvas.getBoundingClientRect();
-    W = rect.width; H = rect.height;
-    canvas.width = Math.round(W * dpr);
-    canvas.height = Math.round(H * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    judgeY = H - 96;
-    layoutPad();
-    travel = computeTravel();   // 依實際畫面尺寸換算，鎖定舒適的像素速度
-  }
-
-  // 下落所需秒數：距離 / 目標速度，但不短於最短預視秒數
-  function computeTravel() {
-    var f = DIFFICULTY[els.difficultySelect.value] || DIFFICULTY.normal;
-    var dist;
-    if (displayMode === "tab") { var hitX = 54 + (W - 54) * 0.18; dist = W - hitX; }
-    else dist = judgeY;
-    if (!dist || dist <= 0) return f.lead;
-    return Math.max(f.lead, dist / f.vel);
-  }
-
-  // 底部觸控鍵盤幾何（不依賴繪製，開場即可用於觸控命中判定）
-  function layoutPad() {
-    pad = { y0: H - 64, h: 56 };
-  }
-  function laneX(l) { return l * (W / LANES); }
-  function laneW() { return W / LANES; }
-  function usesTabData() { return displayMode === "tab"; }  // 六線譜與 Rocksmith 皆用弦/格資料
-  function dispName() { return "六線譜"; }
-
-  // 舞台背景（或自訂背景圖）
-  function drawBackground() {
-    var g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, "#1b1030"); g.addColorStop(0.55, "#120a1e"); g.addColorStop(1, "#0a0710");
-    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-    var st = (state === "playing") ? A.getSongTime() : 0;
-    // 選閃電嚕嚕安 → 綁定他的專屬照片(滿版背景，優先於上傳圖與程序舞台)
-    var cbg = charBg[guitaristId];
-    var lockBg = (cbg && cbg.complete && cbg.naturalWidth) ? cbg : null;
-    var bg = lockBg || bgImage;
-    stageProcedural = !bg;                         // 無背景圖時才畫程序化舞台(升降台/背景聚光燈)
-    stageOn = !bg || !!lockBg;                     // 專屬角色(照片背景)也要有舞台
-    if (bg) {
-      var alpha = lockBg ? 1.0 : bgOpacity;
-      var ir = bg.width / bg.height, cr = W / H, dw, dh;
-      if (ir > cr) { dh = H; dw = H * ir; } else { dw = W; dh = W / ir; }
-      ctx.save(); ctx.globalAlpha = alpha; ctx.drawImage(bg, (W - dw) / 2, (H - dh) / 2, dw, dh); ctx.restore();
-    } else {
-      var hy = hypeShown;
-      // 基本兩盞聚光燈（越嗨越亮）
-      drawSpotlight(W * 0.28 + Math.sin(st * 0.7) * 45, "255,150,70", 1 + hy * 0.6);
-      drawSpotlight(W * 0.72 + Math.sin(st * 0.9 + 1) * 45, "90,150,255", 1 + hy * 0.6);
-      // 連段越高→加開更多彩色聚光燈、掃動更大
-      var extra = Math.round(hy * 4);              // 0..4 盞
-      var cols = ["255,80,120", "120,255,150", "255,220,80", "180,120,255"];
-      for (var i = 0; i < extra; i++) {
-        var bx = W * (0.12 + 0.76 * ((i + 0.5) / 4)) + Math.sin(st * (1.1 + i * 0.35) + i) * 80;
-        drawSpotlight(bx, cols[i % cols.length], 0.55 + hy * 0.9);
-      }
-      // 閃電嚕嚕安→舞台後方擺各種重訓設備(深色剪影)，人物照常站在舞台上
-      if (guitaristId === "lulan") drawGymBackdrop(st, hy);
-      // 舞台地板(較明顯)：漸層地面＋前緣亮線，讓「舞台」更清楚
-      var fY = H * 0.82;
-      var fg = ctx.createLinearGradient(0, fY, 0, H);
-      fg.addColorStop(0, "rgba(255,255,255," + (0.05 + hy * 0.05) + ")"); fg.addColorStop(1, "rgba(255,255,255,0.01)");
-      ctx.fillStyle = fg; ctx.fillRect(0, fY, W, H - fY);
-      ctx.fillStyle = "rgba(150,180,255," + (0.15 + hy * 0.25) + ")"; ctx.fillRect(0, fY, W, 2);   // 舞台前緣線
-    }
-    ctx.fillStyle = "rgba(8,8,14,0.42)"; ctx.fillRect(0, 0, W, H);   // scrim 提升可讀性
-    var v = ctx.createRadialGradient(W / 2, H / 2, H * 0.28, W / 2, H / 2, H * 0.78);
-    v.addColorStop(0, "rgba(0,0,0,0)"); v.addColorStop(1, "rgba(0,0,0,0.5)");
-    ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
-    // 台下觀眾改到 drawGuitarist 之後畫(前景)，才會在舞台前面/下面，不被舞台蓋住
-  }
-  function drawSpotlight(topX, rgb, k) {
-    k = (k == null) ? 1 : k;
-    var grad = ctx.createLinearGradient(topX, 0, W / 2, H);
-    grad.addColorStop(0, "rgba(" + rgb + "," + (0.18 * k) + ")"); grad.addColorStop(1, "rgba(" + rgb + ",0)");
-    ctx.fillStyle = grad;
-    ctx.beginPath(); ctx.moveTo(topX, -10); ctx.lineTo(topX - 170, H); ctx.lineTo(topX + 170, H); ctx.closePath(); ctx.fill();
-  }
-
-  // 重訓設備背景牆（閃電嚕嚕安專屬）：深藍鋼鐵剪影＋微弱邊光，擺在舞台後方
-  function drawGymBackdrop(st, hy) {
-    var baseY = H * 0.80;                                   // 設備底線(貼近舞台地板)
-    var u = Math.min(W, H) * 0.11;                          // 尺寸單位
-    var fill = "rgba(14,16,26,0.94)", edge = "rgba(120,150,255," + (0.22 + hy * 0.25) + ")";
-    ctx.save(); ctx.lineCap = "round"; ctx.lineJoin = "round";
-    function bar(x, y, w, h, r) { ctx.fillStyle = fill; roundRect(x, y, w, h, r || 3); ctx.fill(); ctx.strokeStyle = edge; ctx.lineWidth = 1.5; roundRect(x, y, w, h, r || 3); ctx.stroke(); }
-    function plate(cx, cy, rw, rh) { ctx.fillStyle = fill; ctx.beginPath(); ctx.ellipse(cx, cy, rw, rh, 0, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = edge; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.ellipse(cx, cy, rw, rh, 0, 0, Math.PI * 2); ctx.stroke(); }
-
-    // 深蹲架（左側）：兩根立柱＋橫桿＋掛著的槓片
-    (function () {
-      var x = W * 0.06, w = u * 1.7, top = baseY - u * 2.6;
-      bar(x, top, u * 0.16, u * 2.6, 4); bar(x + w, top, u * 0.16, u * 2.6, 4);      // 立柱
-      bar(x - u * 0.1, top + u * 0.2, w + u * 0.36, u * 0.16, 4);                     // 頂橫桿
-      var by = top + u * 1.0;                                                          // 架上槓鈴
-      bar(x - u * 0.5, by, w + u * 1.16, u * 0.12, 6);
-      plate(x + u * 0.05, by + u * 0.06, u * 0.12, u * 0.5); plate(x - u * 0.15, by + u * 0.06, u * 0.1, u * 0.42);
-      plate(x + w + u * 0.11, by + u * 0.06, u * 0.12, u * 0.5); plate(x + w + u * 0.31, by + u * 0.06, u * 0.1, u * 0.42);
-    })();
-
-    // 啞鈴架（中偏右）：斜台上兩層小啞鈴
-    (function () {
-      var x = W * 0.62, w = u * 2.2, top = baseY - u * 1.0;
-      bar(x, top, w, u * 0.14, 4); bar(x, top + u * 0.5, w, u * 0.14, 4);             // 兩層架板
-      bar(x - u * 0.05, top - u * 0.05, u * 0.1, u * 1.1, 3); bar(x + w - u * 0.05, top - u * 0.05, u * 0.1, u * 1.1, 3);
-      for (var i = 0; i < 4; i++) {                                                    // 一排小啞鈴(球端)
-        var dx = x + u * 0.35 + i * u * 0.5;
-        plate(dx - u * 0.14, top - u * 0.02, u * 0.12, u * 0.16); plate(dx + u * 0.14, top - u * 0.02, u * 0.12, u * 0.16);
-        bar(dx - u * 0.12, top - u * 0.06, u * 0.24, u * 0.08, 3);
-        plate(dx - u * 0.13, top + u * 0.48, u * 0.11, u * 0.14); plate(dx + u * 0.13, top + u * 0.48, u * 0.11, u * 0.14);
-      }
-    })();
-
-    // 臥推長凳（右下角）：座墊＋斜腳
-    (function () {
-      var x = W * 0.86, w = u * 1.4, y = baseY - u * 0.35;
-      bar(x, y, w, u * 0.2, 5);
-      ctx.strokeStyle = edge; ctx.lineWidth = Math.max(2, u * 0.08); ctx.fillStyle = fill;
-      ctx.beginPath(); ctx.moveTo(x + u * 0.15, y + u * 0.2); ctx.lineTo(x, baseY + u * 0.15); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x + w - u * 0.15, y + u * 0.2); ctx.lineTo(x + w, baseY + u * 0.15); ctx.stroke();
-    })();
-
-    // 壺鈴兩顆（左下）
-    (function () {
-      var kx = W * 0.30, ky = baseY - u * 0.1;
-      for (var i = 0; i < 2; i++) {
-        var x = kx + i * u * 0.7, r = u * (0.28 - i * 0.05);
-        ctx.fillStyle = fill; ctx.beginPath(); ctx.arc(x, ky, r, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = edge; ctx.lineWidth = Math.max(2, u * 0.06);
-        ctx.beginPath(); ctx.arc(x, ky - r * 0.9, r * 0.55, Math.PI, 0); ctx.stroke();      // 提把
-        ctx.beginPath(); ctx.arc(x, ky, r, 0, Math.PI * 2); ctx.stroke();
-      }
-    })();
-    ctx.restore();
-  }
-
-  // 史密斯機(閃電嚕嚕安專屬)：黑鋼外框＋雙 chrome 導軌＋槓鈴＋側邊掛片樁，
-  // 畫在角色「後方」框住人物(不論真人照或程序舞台都會疊上)。cx=角色中心、baseY=腳底、h=總高。
-  function drawSmithMachine(cx, baseY, h) {
-    var w = h * 0.62, x0 = cx - w / 2, x1 = cx + w / 2, topY = baseY - h, pw = w * 0.075;
-    ctx.save();
-    ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.globalAlpha = 0.93;
-    var steel = "#12141c", edge = "rgba(150,172,220,0.55)", chrome = "rgba(222,230,242,0.92)";
-    function slab(x, y, ww, hh, r) {
-      ctx.fillStyle = steel; roundRect(x, y, ww, hh, r || 3); ctx.fill();
-      ctx.strokeStyle = edge; ctx.lineWidth = 1.5; roundRect(x, y, ww, hh, r || 3); ctx.stroke();
-      ctx.fillStyle = "rgba(255,255,255,0.05)"; ctx.fillRect(x + 1.5, y + 1.5, Math.max(2, ww * 0.22), Math.max(2, hh - 3));  // 內側高光
-    }
-    // 前撐斜腳 + 平腳橫桿(底座)
-    ctx.strokeStyle = steel; ctx.lineWidth = Math.max(6, pw * 0.95);
-    ctx.beginPath(); ctx.moveTo(x0 + pw * 0.5, topY + h * 0.14); ctx.lineTo(x0 - w * 0.11, baseY); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(x1 - pw * 0.5, topY + h * 0.14); ctx.lineTo(x1 + w * 0.11, baseY); ctx.stroke();
-    slab(x0 - w * 0.17, baseY - h * 0.035, w * 0.36, h * 0.045, 4);
-    slab(x1 - w * 0.19, baseY - h * 0.035, w * 0.36, h * 0.045, 4);
-    // 主雙立柱
-    slab(x0, topY, pw, h, 3); slab(x1 - pw, topY, pw, h, 3);
-    // 頂橫樑 + 頂部兩吊耳(對應照片最上方黑色小片)
-    slab(x0 - 2, topY - h * 0.02, w + 4, h * 0.05, 3);
-    slab(cx - w * 0.17, topY - h * 0.055, w * 0.075, h * 0.035, 2);
-    slab(cx + w * 0.095, topY - h * 0.055, w * 0.075, h * 0.035, 2);
-    // 內側雙導軌(chrome 亮線)
-    var gL = cx - w * 0.13, gR = cx + w * 0.13, gTop = topY + h * 0.05, gBot = baseY - h * 0.05;
-    ctx.strokeStyle = chrome; ctx.lineWidth = Math.max(2, w * 0.013);
-    ctx.beginPath(); ctx.moveTo(gL, gTop); ctx.lineTo(gL, gBot); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(gR, gTop); ctx.lineTo(gR, gBot); ctx.stroke();
-    // 槓鈴(橫桿)＋兩端槓片，落在角色胸口高度
-    var by = topY + h * 0.44;
-    ctx.strokeStyle = chrome; ctx.lineWidth = Math.max(3, w * 0.021);
-    ctx.beginPath(); ctx.moveTo(x0 + pw * 0.4, by); ctx.lineTo(x1 - pw * 0.4, by); ctx.stroke();
-    function barPlate(px, ph, pww) { ctx.fillStyle = steel; roundRect(px - pww / 2, by - ph / 2, pww, ph, 3); ctx.fill(); ctx.strokeStyle = edge; ctx.lineWidth = 1.4; roundRect(px - pww / 2, by - ph / 2, pww, ph, 3); ctx.stroke(); }
-    barPlate(gL - w * 0.02, h * 0.21, w * 0.055); barPlate(gL - w * 0.08, h * 0.16, w * 0.04);
-    barPlate(gR + w * 0.02, h * 0.21, w * 0.055); barPlate(gR + w * 0.08, h * 0.16, w * 0.04);
-    // 右側掛片樁(weight horns)：3 根水平樁＋掛著的槓片
-    for (var i = 0; i < 3; i++) {
-      var hy2 = topY + h * (0.30 + i * 0.17);
-      slab(x1 + pw * 0.2, hy2, w * 0.15, h * 0.02, 2);
-      ctx.fillStyle = steel; ctx.beginPath(); ctx.ellipse(x1 + w * 0.14, hy2 + h * 0.01, w * 0.032, h * 0.058, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = edge; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.ellipse(x1 + w * 0.14, hy2 + h * 0.01, w * 0.032, h * 0.058, 0, 0, Math.PI * 2); ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  // 樂手身高(觀眾尺寸依此換算)
-  function guitaristHeight() { return Math.min(H * 0.72, W * 0.82, 470); }
-
-  // 台下觀眾剪影：每人約樂手 1/4 高，前後多排交錯排列(後排較小較暗較高做景深)，隨熱度加排/舉手
-  function drawCrowd(hy, st, ghgt) {
-    if (hy <= 0.001) return;
-    var unit = (ghgt || 320) / 2.3;                 // 觀眾放大(約樂手身高的 0.43)
-    var rows = 1 + Math.round(hy * 5);              // 由少變多：1..6 排(連段越高排數越多)
-    ctx.save(); ctx.lineCap = "round";
-    for (var r = rows - 1; r >= 0; r--) {           // 後排先畫
-      var depth = rows > 1 ? r / (rows - 1) : 0;    // 0=前排 .. 1=最後排
-      var sc = 1 - depth * 0.5;                     // 後排縮小
-      var dark = 0.96 - depth * 0.32;
-      var pH = unit * sc;                            // 此排每個人高度
-      var hr = pH * 0.3;                             // 頭半徑
-      var sp = pH * 0.62;                            // 人與人間距(略重疊=密)
-      var baseB = (H - 4) - depth * (unit * 0.55);  // 此排底線(後排往上=較遠)
-      var headY0 = baseB - pH * 0.5;                // 頭中心 Y
-      var offset = (r % 2) * sp * 0.5;              // 前後交錯：奇數排水平位移半格
-      var n = Math.min(60, Math.ceil((W + sp * 2) / sp));   // 安全上限，避免極端情況畫太多人拖慢
-      for (var i = 0; i < n; i++) {
-        var x = i * sp - sp + offset;
-        var bounce = (Math.sin(st * 4.0 + i * 1.3 + r * 0.9) * 0.5 + 0.5) * (hr * 0.5) * (0.4 + hy);
-        var y = headY0 - bounce;
-        ctx.fillStyle = "rgba(10,8,15," + dark + ")";
-        ctx.beginPath(); ctx.ellipse(x, y + hr * 1.5, hr * 1.35, hr * 1.7, 0, Math.PI, 0); ctx.fill();  // 肩身
-        ctx.beginPath(); ctx.arc(x, y, hr, 0, Math.PI * 2); ctx.fill();                                  // 頭
-        ctx.strokeStyle = (i % 2 ? "rgba(120,150,255," + (0.4 * dark) + ")" : "rgba(255,120,160," + (0.4 * dark) + ")");  // 舞台邊光描邊
-        ctx.lineWidth = Math.max(1, hr * 0.16); ctx.beginPath(); ctx.arc(x, y, hr, Math.PI * 1.1, Math.PI * 2); ctx.stroke();
-        if (hy > 0.4 && i % 3 === 0) {                                                                    // 高段舉手歡呼
-          ctx.strokeStyle = "rgba(10,8,15," + dark + ")"; ctx.lineWidth = hr * 0.34;
-          ctx.beginPath(); ctx.moveTo(x - hr * 0.6, y + hr * 0.3); ctx.lineTo(x - hr * 1.1, y - hr * 1.9 - bounce); ctx.stroke();
-          ctx.beginPath(); ctx.moveTo(x + hr * 0.6, y + hr * 0.3); ctx.lineTo(x + hr * 1.1, y - hr * 1.9 - bounce); ctx.stroke();
-        }
-      }
-    }
-    ctx.restore();
-  }
-
-  // 舞台升降台：吉他手腳下的台子，連段(熱度 hy)越高台越高，人明顯站上舞台。畫在螢幕座標。
-  // 舞台左邊界(右側寬台，容納樂手＋音箱backline)
-  function stageLeftX() { return W * 0.46; }
-
-  // 大舞台台面：右側一整塊寬台(連段越高越高)，含霓虹台緣＋桁架＋LED
-  function drawStageDeck(topY, floorY, hy, st) {
-    var L = stageLeftX(), R = W + 6, bodyBot = floorY + 64;
-    ctx.save();
-    // 台身
-    ctx.fillStyle = "rgba(13,10,19,0.98)"; ctx.fillRect(L, topY + 12, R - L, bodyBot - (topY + 12));
-    var sg = ctx.createLinearGradient(L, 0, R, 0);
-    sg.addColorStop(0, "rgba(255,255,255,0.06)"); sg.addColorStop(0.5, "rgba(255,255,255,0)"); sg.addColorStop(1, "rgba(0,0,0,0.3)");
-    ctx.fillStyle = sg; ctx.fillRect(L, topY + 12, R - L, bodyBot - (topY + 12));
-    // 桁架直紋
-    ctx.strokeStyle = "rgba(255,255,255,0.05)"; ctx.lineWidth = 2;
-    for (var v = L + 30; v < R; v += 44) { ctx.beginPath(); ctx.moveTo(v, topY + 18); ctx.lineTo(v, bodyBot); ctx.stroke(); }
-    // 台面板(厚度＋高光)
-    ctx.fillStyle = "rgba(46,41,60,0.98)"; roundRect(L - 6, topY - 6, (R - L) + 12, 24, 7); ctx.fill();
-    ctx.fillStyle = "rgba(255,255,255,0.07)"; roundRect(L - 6, topY - 6, (R - L) + 12, 6, 4); ctx.fill();
-    // 霓虹台緣＋外暈
-    var pulse = 0.5 + 0.5 * Math.sin(st * 6);
-    var neon = hy > 0.66 ? "120,200,255" : hy > 0.33 ? "255,180,90" : "255,120,160";
-    ctx.fillStyle = "rgba(" + neon + "," + (0.55 + pulse * 0.4 * hy) + ")"; ctx.fillRect(L - 6, topY - 8, (R - L) + 12, 4);
-    ctx.shadowColor = "rgba(" + neon + ",0.9)"; ctx.shadowBlur = 16 + hy * 18;
-    ctx.fillRect(L - 6, topY - 8, (R - L) + 12, 3); ctx.shadowBlur = 0;
-    // 台前 LED 點
-    ctx.fillStyle = "rgba(" + neon + ",0.9)";
-    for (var x = L + 16; x < R; x += 30) { ctx.beginPath(); ctx.arc(x, topY + 15, 2.6, 0, Math.PI * 2); ctx.fill(); }
-    ctx.restore();
-  }
-
-  // 舞台音箱(cabinet)：依風格配色，含控制面板/喇叭網/標牌（皆為原創配色，非任何品牌之重製）
-  var AMP_STYLE = {
-    british: { body: "#0b0b0d", grille: "#1b1b20", accent: "#d9b24a", panel: "#d9b24a" },  // 黑箱金牌白字
-    amber:    { body: "#d5641b", grille: "#0c0c0c", accent: "#f2f2f2", panel: "#f4f4f4" },  // 橘箱
-    tweed:    { body: "#111319", grille: "#3a4150", accent: "#c7ccd6", panel: "#c7ccd6" },  // 黑箱銀網
-    retro:    { body: "#14110d", grille: "#c9bfa6", accent: "#8a6a2a", panel: "#e9dcc0" },  // 鑽石網米色
-    boutique: { body: "#0c0c0e", grille: "#161616", accent: "#7a1414", panel: "#7a1414" }   // 黑箱紅標
-  };
-  function drawAmp(x, baseY, w, h, brand, hy, st) {
-    var s = AMP_STYLE[brand] || AMP_STYLE.british, top = baseY - h;
-    hy = hy || 0; st = st || 0;
-    var puls = 0.5 + 0.5 * Math.sin(st * 9 + x * 0.05);            // 低頻脈動(像喇叭在推空氣)
-    ctx.save();
-    ctx.fillStyle = s.body; roundRect(x - w / 2, top, w, h, 7); ctx.fill();                 // 箱體(深色剪影)
-    ctx.fillStyle = "rgba(255,255,255,0.05)"; roundRect(x - w / 2, top, w, 6, 4); ctx.fill(); // 上緣高光
-    ctx.fillStyle = s.panel; ctx.fillRect(x - w / 2 + 7, top + 8, w - 14, Math.max(4, h * 0.08)); // 控制面板
-    ctx.fillStyle = s.grille; roundRect(x - w / 2 + 7, top + h * 0.22, w - 14, h * 0.7, 5); ctx.fill(); // 喇叭網
-    ctx.strokeStyle = "rgba(255,255,255,0.05)"; ctx.lineWidth = 1;                          // 網布紋
-    for (var gy = top + h * 0.3; gy < top + h * 0.88; gy += 6) { ctx.beginPath(); ctx.moveTo(x - w / 2 + 9, gy); ctx.lineTo(x + w / 2 - 9, gy); ctx.stroke(); }
-    ctx.fillStyle = s.accent; roundRect(x - w * 0.19, top + h * 0.45, w * 0.38, h * 0.1, 3); ctx.fill(); // logo 板
-    // 「喇叭在播放」的低調特效：錐盆隨脈動微微亮一點(不外溢、不蓋到音符)
-    var coneY = top + h * 0.58, coneR = w * 0.2;
-    ctx.fillStyle = "rgba(255,180,90," + (0.06 + 0.08 * puls) + ")";
-    ctx.beginPath(); ctx.arc(x, coneY, coneR, 0, Math.PI * 2); ctx.fill();
-    // 電源指示燈(紅點，隨脈動微亮)
-    ctx.fillStyle = "rgba(255,70,60," + (0.5 + 0.4 * puls) + ")";
-    ctx.beginPath(); ctx.arc(x + w / 2 - 12, top + 8 + Math.max(4, h * 0.08) / 2, 2.4, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-  }
-  // 音箱 backline：舞台後方一整排音箱(在樂手左後方)，數量隨熱度變多
-  function drawAmpBackline(cx, deckTopY, hgt, hy, st) {
-    var styles = ["british", "amber", "tweed", "retro", "boutique"];   // 配色風格名（非品牌）
-    var n = 4 + (hy > 0.5 ? 1 : 0);                       // 4~5 座
-    var ah = hgt * 0.46, aw = hgt * 0.38, baseY = deckTopY + 4;   // 音箱加寬(0.26→0.38)
-    var startX = stageLeftX() + aw * 0.55, endX = W - aw * 0.55;  // 沿整個舞台後方鋪開(樂手站前方中央)
-    var gap = n > 1 ? (endX - startX) / (n - 1) : 0;
-    for (var i = 0; i < n; i++) drawAmp(startX + gap * i, baseY, aw, ah, styles[i % styles.length], hy, st || 0);
-  }
-
-  // 其他團員(黑色剪影)共用身體：腿＋身＋頭＋舞台邊光；回傳肩/頭座標供加樂器
-  function bandBody(cx, footY, h, st, phase) {
-    var bob = Math.sin(st * 6.3 + phase) * (h * 0.02);
-    var hipY = footY - h * 0.42, shY = footY - h * 0.80 - bob, hr = h * 0.12, headY = shY - hr * 1.15;
-    ctx.fillStyle = "rgba(9,9,13,0.98)";
-    ctx.fillRect(cx - h * 0.11, hipY, h * 0.08, footY - hipY);              // 腿
-    ctx.fillRect(cx + h * 0.03, hipY, h * 0.08, footY - hipY);
-    roundRect(cx - h * 0.15, shY, h * 0.30, hipY - shY + h * 0.05, h * 0.06); ctx.fill();   // 身
-    ctx.beginPath(); ctx.arc(cx, headY, hr, 0, Math.PI * 2); ctx.fill();   // 頭
-    ctx.strokeStyle = (phase % 2 ? "rgba(150,175,255,0.32)" : "rgba(255,140,175,0.30)"); ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(cx, headY, hr, Math.PI * 1.08, Math.PI * 1.95); ctx.stroke();  // 邊光
-    return { shY: shY, headY: headY, hr: hr, hipY: hipY, bob: bob };
-  }
-  // 鼓手/貝斯手/KB手（黑色剪影，陪主吉他手站台）
-  function drawBandMembers(gcx, groundY, hgt, hy, st) {
-    var dark = "rgba(9,9,13,0.98)";
-    ctx.save(); ctx.lineCap = "round"; ctx.lineJoin = "round";
-    // 鼓手：後方(高一點)＋鼓組＋雙棒隨拍
-    (function () {
-      var h = hgt * 0.5, cx = gcx - hgt * 0.26, footY = groundY - hgt * 0.28;
-      var b = bandBody(cx, footY, h, st, 0);
-      ctx.fillStyle = dark; ctx.beginPath(); ctx.ellipse(cx, footY + h * 0.02, h * 0.28, h * 0.24, 0, 0, Math.PI * 2); ctx.fill();   // 大鼓
-      ctx.strokeStyle = "rgba(150,175,255,0.28)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(cx, footY + h * 0.02, h * 0.28, h * 0.24, 0, 0, Math.PI * 2); ctx.stroke();
-      ctx.fillStyle = dark;                                                                                       // 兩片鈸
-      ctx.beginPath(); ctx.ellipse(cx - h * 0.4, b.shY - h * 0.02, h * 0.16, h * 0.035, -0.25, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.ellipse(cx + h * 0.4, b.shY + h * 0.05, h * 0.16, h * 0.035, 0.25, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = dark; ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.moveTo(cx - h * 0.4, b.shY); ctx.lineTo(cx - h * 0.3, footY); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx + h * 0.4, b.shY + h * 0.07); ctx.lineTo(cx + h * 0.3, footY); ctx.stroke();
-      var hit = Math.abs(Math.sin(st * 8));                                                                       // 鼓棒交替敲
-      ctx.lineWidth = Math.max(2, h * 0.04);
-      ctx.beginPath(); ctx.moveTo(cx - h * 0.06, b.shY + h * 0.12); ctx.lineTo(cx - h * 0.36, b.shY - h * 0.04 - hit * h * 0.12); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx + h * 0.06, b.shY + h * 0.12); ctx.lineTo(cx + h * 0.36, b.shY + h * 0.03 - (1 - hit) * h * 0.12); ctx.stroke();
-    })();
-    // 貝斯手：舞台左，長頸貝斯斜跨
-    (function () {
-      var h = hgt * 0.76, cx = gcx - hgt * 0.62, footY = groundY;
-      var b = bandBody(cx, footY, h, st, 1);
-      ctx.save(); ctx.translate(cx + h * 0.02, b.shY + h * 0.22); ctx.rotate(-0.5);
-      ctx.fillStyle = dark; roundRect(-h * 0.07, -h * 0.11, h * 0.17, h * 0.22, h * 0.05); ctx.fill();            // 琴身
-      ctx.fillRect(-h * 0.02, -h * 0.52, h * 0.05, h * 0.44);                                                      // 長琴頸
-      ctx.strokeStyle = "rgba(150,175,255,0.3)"; ctx.lineWidth = 1.5; roundRect(-h * 0.07, -h * 0.11, h * 0.17, h * 0.22, h * 0.05); ctx.stroke();
-      ctx.restore();
-      ctx.strokeStyle = dark; ctx.lineWidth = Math.max(2, h * 0.05);                                              // 撥弦手
-      ctx.beginPath(); ctx.moveTo(cx + h * 0.07, b.shY + h * 0.06); ctx.lineTo(cx + h * 0.04 + Math.sin(st * 7) * h * 0.03, b.shY + h * 0.26); ctx.stroke();
-    })();
-    // KB手：舞台右，站在鍵盤後
-    (function () {
-      var h = hgt * 0.68, cx = gcx + hgt * 0.55, footY = groundY;
-      var b = bandBody(cx, footY, h, st, 2);
-      var kw = h * 0.54, ky = b.hipY + h * 0.02;
-      ctx.fillStyle = dark; roundRect(cx - kw / 2, ky, kw, h * 0.09, 4); ctx.fill();                              // 鍵盤板
-      ctx.strokeStyle = "rgba(150,175,255,0.3)"; ctx.lineWidth = 1.5; roundRect(cx - kw / 2, ky, kw, h * 0.09, 4); ctx.stroke();
-      ctx.fillStyle = "rgba(210,215,230,0.45)";                                                                    // 白鍵提示
-      for (var kx = cx - kw / 2 + h * 0.03; kx < cx + kw / 2 - h * 0.02; kx += h * 0.05) ctx.fillRect(kx, ky + 3, h * 0.01, h * 0.05);
-      ctx.strokeStyle = dark; ctx.lineWidth = 2.5;                                                                 // 腳架
-      ctx.beginPath(); ctx.moveTo(cx - kw * 0.32, ky + h * 0.09); ctx.lineTo(cx - kw * 0.28, footY); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx + kw * 0.32, ky + h * 0.09); ctx.lineTo(cx + kw * 0.28, footY); ctx.stroke();
-      ctx.lineWidth = Math.max(2, h * 0.05);                                                                       // 雙手在鍵上
-      ctx.beginPath(); ctx.moveTo(cx - h * 0.05, b.shY + h * 0.12); ctx.lineTo(cx - h * 0.09 + Math.sin(st * 9) * h * 0.02, ky); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx + h * 0.05, b.shY + h * 0.12); ctx.lineTo(cx + h * 0.09 + Math.cos(st * 9) * h * 0.02, ky); ctx.stroke();
-    })();
-    ctx.restore();
-  }
-
-  // 追蹤聚光燈：從舞台頂燈架打光在樂手身上(連段越高越亮)。螢幕座標、加色疊光。
-  function drawFollowSpot(cx, headY, footY, hy, st, hgt) {
-    var k = 0.5 + hy * 0.9;
-    var aimX = cx + Math.sin(st * 1.15) * (hgt * 0.045);          // 光束輕微擺動(像真的在追蹤)
-    ctx.save();
-    ctx.globalCompositeOperation = "lighter";
-    var beams = [[cx - hgt * 0.52, "255,236,196"], [cx + hgt * 0.44, "202,224,255"]];   // 上方兩束交叉光
-    for (var i = 0; i < beams.length; i++) {
-      var sx = beams[i][0], rgb = beams[i][1];
-      var g = ctx.createLinearGradient(sx, -20, aimX, footY);
-      g.addColorStop(0, "rgba(" + rgb + "," + (0.17 * k) + ")");
-      g.addColorStop(0.8, "rgba(" + rgb + "," + (0.05 * k) + ")");
-      g.addColorStop(1, "rgba(" + rgb + ",0)");
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.moveTo(sx - 12, -20); ctx.lineTo(sx + 12, -20);
-      ctx.lineTo(aimX + hgt * 0.3, footY + 6); ctx.lineTo(aimX - hgt * 0.3, footY + 6);
-      ctx.closePath(); ctx.fill();
-    }
-    var midY = (headY + footY) / 2;                                // 打在樂手身上的暖光池
-    var pool = ctx.createRadialGradient(aimX, midY, 8, aimX, midY, hgt * 0.6);
-    pool.addColorStop(0, "rgba(255,248,224," + (0.16 * k) + ")"); pool.addColorStop(1, "rgba(255,248,224,0)");
-    ctx.fillStyle = pool; ctx.beginPath(); ctx.ellipse(aimX, midY, hgt * 0.42, hgt * 0.66, 0, 0, Math.PI * 2); ctx.fill();
-    var fl = ctx.createRadialGradient(cx, footY + 6, 4, cx, footY + 6, hgt * 0.5);   // 腳下地面光斑
-    fl.addColorStop(0, "rgba(255,240,196," + (0.24 * k) + ")"); fl.addColorStop(1, "rgba(255,240,196,0)");
-    ctx.fillStyle = fl; ctx.beginPath(); ctx.ellipse(cx, footY + 6, hgt * 0.42, hgt * 0.1, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-  }
-
-  // ---- Q 版知名吉他手 ----
-  // 一叢圓球（爆炸頭 / 捲毛）
-  function curlCluster(spec, color) {
-    ctx.fillStyle = color;
-    for (var i = 0; i < spec.length; i++) { ctx.beginPath(); ctx.arc(spec[i][0], spec[i][1], spec[i][2], 0, Math.PI * 2); ctx.fill(); }
-  }
-  // 一隻有關節的手臂：肩 a → 肘 b → 手 c，上臂穿袖、前臂露膚、末端一顆手
-  function drawLimb(a, b, c, sleeve, skin, wUp, wFore) {
-    ctx.lineCap = "round"; ctx.lineJoin = "round";
-    ctx.strokeStyle = sleeve; ctx.lineWidth = wUp;
-    ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
-    ctx.strokeStyle = skin; ctx.lineWidth = wFore;
-    ctx.beginPath(); ctx.moveTo(b[0], b[1]); ctx.lineTo(c[0], c[1]); ctx.stroke();
-    ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(c[0], c[1], wFore * 0.72, 0, Math.PI * 2); ctx.fill();
-  }
-  // 吉他（依角色換造型/顏色），畫在角色本地座標
-  function drawGuitar(type) {
-    ctx.save();
-    ctx.translate(2, -70); ctx.rotate(-0.62);
-    var maple = (type === "strat" || type === "striped" || type === "headless");
-    var neckCol = maple ? "#c99a5a" : "#2a1a0c";
-    ctx.fillStyle = neckCol; ctx.fillRect(-9, -150, 18, 120);              // 琴頸
-    if (type === "headless") {                                             // Yvette · Strandberg 無頭琴：頸尾只有小弦鈕、無琴頭
-      ctx.fillStyle = "#b8894a"; roundRect(-11, -156, 22, 12, 2); ctx.fill();
-      ctx.fillStyle = "#c8ccd2"; for (var hh = -8; hh <= 8; hh += 8) { ctx.beginPath(); ctx.arc(hh, -150, 2.4, 0, Math.PI * 2); ctx.fill(); }
-    } else {
-      ctx.fillStyle = maple ? "#b8894a" : "#0d0d0d"; roundRect(-13, -170, 26, 24, 3); ctx.fill();  // 琴頭
-    }
-    if (type === "strat") {
-      ctx.fillStyle = "#f4f4f4"; ctx.beginPath(); ctx.ellipse(0, 6, 40, 50, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = "#dcdcdc"; ctx.beginPath(); ctx.ellipse(5, 12, 25, 33, 0, 0, Math.PI * 2); ctx.fill();  // 護板
-      ctx.fillStyle = "#111"; ctx.fillRect(-8, 2, 20, 5); ctx.fillRect(-8, 14, 20, 5); ctx.fillRect(-8, 26, 20, 5);
-    } else if (type === "sg") {
-      ctx.fillStyle = "#7a1420"; ctx.beginPath(); ctx.ellipse(0, 12, 36, 44, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.moveTo(-32, -22); ctx.lineTo(-4, -34); ctx.lineTo(-6, -4); ctx.closePath(); ctx.fill();  // 左角
-      ctx.beginPath(); ctx.moveTo(32, -22); ctx.lineTo(4, -34); ctx.lineTo(6, -4); ctx.closePath(); ctx.fill();     // 右角
-      ctx.fillStyle = "#111"; ctx.fillRect(-11, 2, 22, 7); ctx.fillRect(-11, 18, 22, 7);
-    } else if (type === "red") {                                            // Brian May · Red Special
-      var rg = ctx.createRadialGradient(0, 6, 4, 0, 6, 46);
-      rg.addColorStop(0, "#c33742"); rg.addColorStop(0.7, "#7d1620"); rg.addColorStop(1, "#3a0a10");
-      ctx.fillStyle = rg; ctx.beginPath(); ctx.ellipse(0, 6, 40, 50, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = "#d8b24a"; ctx.fillRect(-12, -4, 24, 7); ctx.fillRect(-12, 14, 24, 7);  // 金拾音器
-    } else if (type === "striped") {                                        // Van Halen · Frankenstrat
-      ctx.fillStyle = "#d63a3a"; ctx.beginPath(); ctx.ellipse(0, 6, 40, 50, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.save(); ctx.beginPath(); ctx.ellipse(0, 6, 40, 50, 0, 0, Math.PI * 2); ctx.clip();
-      ctx.strokeStyle = "#f4f4f4"; ctx.lineWidth = 6;
-      for (var k = -60; k < 70; k += 22) { ctx.beginPath(); ctx.moveTo(k, -52); ctx.lineTo(k + 42, 62); ctx.stroke(); }
-      ctx.strokeStyle = "#111"; ctx.lineWidth = 4;
-      for (var k2 = -50; k2 < 70; k2 += 22) { ctx.beginPath(); ctx.moveTo(k2, -52); ctx.lineTo(k2 + 42, 62); ctx.stroke(); }
-      ctx.restore();
-      ctx.fillStyle = "#111"; ctx.fillRect(-10, 4, 22, 7);
-    } else if (type === "offset") {                                         // Kurt Cobain · 藍色 offset
-      var og = ctx.createLinearGradient(-40, -44, 40, 56);
-      og.addColorStop(0, "#3f74ad"); og.addColorStop(1, "#16324f");
-      ctx.fillStyle = og; ctx.beginPath(); ctx.ellipse(-3, 4, 42, 50, 0.12, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = "#e8e4d8"; ctx.beginPath(); ctx.ellipse(7, 14, 20, 26, 0.1, 0, Math.PI * 2); ctx.fill();  // 護板
-      ctx.fillStyle = "#111"; ctx.fillRect(-4, 6, 18, 5); ctx.fillRect(-4, 20, 18, 5);
-    } else if (type === "hollow") {                                         // B.B. King · 黑色空心琴 Lucille
-      ctx.fillStyle = "#0e0e12"; ctx.beginPath(); ctx.ellipse(0, 8, 42, 52, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = "#33333a"; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(0, 8, 42, 52, 0, 0, Math.PI * 2); ctx.stroke();
-      ctx.strokeStyle = "#c9a24a"; ctx.lineWidth = 3; ctx.lineCap = "round";
-      ctx.beginPath(); ctx.arc(-22, 10, 13, -0.6, 1.9); ctx.stroke();
-      ctx.beginPath(); ctx.arc(22, 10, 13, 1.2, 3.7); ctx.stroke();                                            // f 孔
-      ctx.fillStyle = "#c9a24a"; ctx.fillRect(-11, -6, 22, 5);
-    } else if (type === "bullseye") {                                       // Zakk Wylde · 黑白靶心
-      ctx.save(); ctx.beginPath(); ctx.ellipse(0, 6, 40, 50, 0, 0, Math.PI * 2); ctx.clip();
-      var rr = [58, 49, 40, 31, 22, 13, 6];
-      for (var b = 0; b < rr.length; b++) { ctx.fillStyle = (b % 2 === 0) ? "#f2f2f2" : "#0d0d0d"; ctx.beginPath(); ctx.arc(-4, 2, rr[b], 0, Math.PI * 2); ctx.fill(); }
-      ctx.restore();
-      ctx.fillStyle = "#1a1a1a"; ctx.fillRect(-12, -4, 24, 7);
-    } else if (type === "nylon") {                                          // Tim Henson · 原木尼龍弦 signature
-      var ng = ctx.createRadialGradient(0, 6, 4, 0, 6, 48);
-      ng.addColorStop(0, "#e9cd93"); ng.addColorStop(0.7, "#cf9f57"); ng.addColorStop(1, "#9c6e30");
-      ctx.fillStyle = ng; ctx.beginPath(); ctx.ellipse(0, 6, 40, 50, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = "#4a2f14"; ctx.beginPath(); ctx.arc(0, 10, 12, 0, Math.PI * 2); ctx.fill();                 // 音孔
-      ctx.strokeStyle = "#2e1c0c"; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(0, 10, 15, 0, Math.PI * 2); ctx.stroke();  // 玫瑰花飾
-      ctx.strokeStyle = "#6a4a24"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(-14, -18); ctx.lineTo(14, -18); ctx.stroke();  // 琴橋線
-    } else if (type === "headless") {                                       // Yvette Young · Strandberg 無頭琴：人體工學小琴身＋手繪彩渦
-      ctx.save();
-      ctx.beginPath(); ctx.ellipse(-2, 8, 34, 42, 0.14, 0, Math.PI * 2); ctx.clip();                              // 較小的偏移琴身
-      var yg = ctx.createLinearGradient(-34, -34, 34, 50);
-      yg.addColorStop(0, "#4ec9c0"); yg.addColorStop(0.5, "#e86a9a"); yg.addColorStop(1, "#6a5acd"); // 青→粉→紫 彩繪
-      ctx.fillStyle = yg; ctx.fillRect(-40, -44, 80, 96);
-      ctx.strokeStyle = "rgba(255,255,255,0.5)"; ctx.lineWidth = 3; ctx.lineCap = "round";                        // 手繪白色渦紋
-      ctx.beginPath(); ctx.arc(-6, 6, 20, 0.3, 4.2); ctx.moveTo(16, 2); ctx.arc(6, 12, 12, -0.4, 2.8); ctx.stroke();
-      ctx.restore();
-      ctx.fillStyle = "#111"; ctx.fillRect(-8, 4, 20, 5);                                                        // 拾音器
-      ctx.fillStyle = "#c8ccd2"; roundRect(-12, 40, 24, 8, 2); ctx.fill();                                       // 無頭琴橋(弦鎖)
-    } else {                                                                // lespaul（sunburst）
-      var lg = ctx.createRadialGradient(0, 6, 4, 0, 6, 46);
-      lg.addColorStop(0, "#f2b64e"); lg.addColorStop(0.6, "#c6761c"); lg.addColorStop(1, "#37200a");
-      ctx.fillStyle = lg; ctx.beginPath(); ctx.ellipse(0, 6, 40, 50, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = "#1a1a1a"; ctx.fillRect(-12, -4, 24, 8); ctx.fillRect(-12, 14, 24, 8);
-    }
-    ctx.restore();
-  }
-
-  var GUITARISTS = {
-    beethoven: {   // 貝多芬：狂亂灰捲髮、濃眉皺、白領巾
-      skin: "#e7c6a3", legs: "#20222c", torso: "#2a2530", sleeve: "#2a2530", chest: "#ece7d8", tie: "#ece7d8", guitar: "lespaul",
-      head: function (hy) {
-        curlCluster([[-44,hy-20,24],[-18,hy-40,24],[10,hy-42,24],[40,hy-22,25],[-56,hy+6,22],[56,hy+6,22],
-                     [-46,hy+42,20],[48,hy+42,20],[0,hy-50,24],[-30,hy-46,20],[30,hy-46,20]], "#4c4842");   // 狂亂灰髮
-        ctx.strokeStyle = "#2a2620"; ctx.lineWidth = 4; ctx.lineCap = "round";
-        ctx.beginPath(); ctx.moveTo(-22, hy - 3); ctx.lineTo(-6, hy - 8); ctx.moveTo(22, hy - 3); ctx.lineTo(6, hy - 8); ctx.stroke();   // 濃眉皺
-        ctx.fillStyle = "#241a12"; ctx.beginPath(); ctx.arc(-14, hy + 6, 4, 0, Math.PI * 2); ctx.arc(14, hy + 6, 4, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = "#8a5a4a"; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(-9, hy + 23); ctx.lineTo(9, hy + 23); ctx.stroke();
-      }
-    },
-    einstein: {   // 愛因斯坦：爆炸白髮、白八字鬍
-      skin: "#e9cbb0", legs: "#3a3a42", torso: "#5a5a64", sleeve: "#5a5a64", chest: "#d6d6dc", guitar: "strat",
-      head: function (hy) {
-        curlCluster([[-48,hy-12,22],[-24,hy-34,22],[6,hy-38,22],[34,hy-28,22],[52,hy-8,22],
-                     [-60,hy+18,22],[60,hy+18,22],[-50,hy+48,19],[50,hy+48,19],[0,hy-46,22]], "#ececee");   // 爆炸白髮
-        ctx.fillStyle = "#241a12"; ctx.beginPath(); ctx.arc(-14, hy + 4, 4, 0, Math.PI * 2); ctx.arc(14, hy + 4, 4, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#e4e4e8"; ctx.beginPath(); ctx.moveTo(-17, hy + 19); ctx.quadraticCurveTo(0, hy + 25, 17, hy + 19); ctx.quadraticCurveTo(0, hy + 31, -17, hy + 19); ctx.fill();   // 白八字鬍
-      }
-    },
-    mozart: {   // 莫札特：白色捲假髮＋側捲
-      skin: "#eecdb2", legs: "#2a2230", torso: "#7a2540", sleeve: "#7a2540", chest: "#f0e6cf", guitar: "hollow",
-      head: function (hy) {
-        ctx.fillStyle = "#ece7dc";
-        ctx.beginPath(); ctx.arc(0, hy - 14, 49, Math.PI, Math.PI * 2); ctx.fill();                       // 假髮圓頂
-        ctx.beginPath(); ctx.arc(-45, hy + 12, 16, 0, Math.PI * 2); ctx.arc(45, hy + 12, 16, 0, Math.PI * 2); ctx.fill();   // 兩側捲
-        ctx.beginPath(); ctx.arc(-45, hy + 32, 13, 0, Math.PI * 2); ctx.arc(45, hy + 32, 13, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#241a12"; ctx.beginPath(); ctx.arc(-14, hy + 6, 4, 0, Math.PI * 2); ctx.arc(14, hy + 6, 4, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = "#c86a6a"; ctx.lineWidth = 2.5; ctx.lineCap = "round"; ctx.beginPath(); ctx.arc(0, hy + 18, 7, 0.12 * Math.PI, 0.88 * Math.PI); ctx.stroke();
-      }
-    },
-    bach: {   // 巴哈：灰 baroque 大捲假髮
-      skin: "#e7c6a3", legs: "#20201c", torso: "#241f1a", sleeve: "#241f1a", chest: "#e6e0d2", guitar: "hollow",
-      head: function (hy) {
-        curlCluster([[-50,hy+2,22],[-52,hy+40,22],[-46,hy+76,20],[50,hy+2,22],[52,hy+40,22],[46,hy+76,20],
-                     [-30,hy-34,22],[0,hy-42,22],[30,hy-34,22],[-48,hy-14,20],[48,hy-14,20]], "#c9c3b4");   // 灰假髮(兩側垂捲)
-        ctx.fillStyle = "#241a12"; ctx.beginPath(); ctx.arc(-14, hy + 6, 4, 0, Math.PI * 2); ctx.arc(14, hy + 6, 4, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = "#3a2a1a"; ctx.lineWidth = 3; ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(-22,hy-1); ctx.lineTo(-6,hy-2); ctx.moveTo(22,hy-1); ctx.lineTo(6,hy-2); ctx.stroke();
-      }
-    },
-    newton: {   // 牛頓：長棕波浪假髮
-      skin: "#e9cbb0", legs: "#241a20", torso: "#3a2030", sleeve: "#3a2030", chest: "#d8cbb0", guitar: "lespaul",
-      head: function (hy) {
-        ctx.fillStyle = "#6a4a30";
-        ctx.beginPath(); ctx.arc(0, hy - 12, 50, Math.PI, 0); ctx.fill();
-        roundRect(-56, hy - 14, 30, 128, 15); ctx.fill(); roundRect(26, hy - 14, 30, 128, 15); ctx.fill();   // 兩側長波浪
-        curlCluster([[-46,hy+30,16],[-48,hy+70,15],[46,hy+30,16],[48,hy+70,15]], "#5a3e28");                 // 波浪捲端
-        ctx.fillStyle = "#e9cbb0"; ctx.beginPath(); ctx.arc(0, hy + 2, 30, 0, Math.PI * 2); ctx.fill();       // 臉
-        ctx.fillStyle = "#241a12"; ctx.beginPath(); ctx.arc(-12, hy + 2, 4, 0, Math.PI * 2); ctx.arc(12, hy + 2, 4, 0, Math.PI * 2); ctx.fill();
-      }
-    },
-    napoleon: {   // 拿破崙：黑二角帽(橫戴)
-      skin: "#e7c6a3", legs: "#1a1c26", torso: "#20305a", sleeve: "#20305a", chest: "#d8b24a", guitar: "sg",
-      head: function (hy) {
-        ctx.fillStyle = "#2a2a22"; ctx.beginPath(); ctx.arc(0, hy - 4, 46, Math.PI * 1.05, Math.PI * 1.95); ctx.fill();   // 短瀏海
-        ctx.fillStyle = "#14141a";                                        // 二角帽
-        ctx.beginPath(); ctx.moveTo(-64, hy - 30); ctx.quadraticCurveTo(0, hy - 74, 64, hy - 30);
-        ctx.quadraticCurveTo(30, hy - 40, 0, hy - 40); ctx.quadraticCurveTo(-30, hy - 40, -64, hy - 30); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = "#c9a24a"; ctx.fillRect(-6, hy - 62, 12, 22);       // 帽徽
-        ctx.fillStyle = "#241a12"; ctx.beginPath(); ctx.arc(-14, hy + 4, 4, 0, Math.PI * 2); ctx.arc(14, hy + 4, 4, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = "#7a4a3a"; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(-8, hy + 20); ctx.lineTo(8, hy + 20); ctx.stroke();
-      }
-    },
-    lincoln: {   // 林肯：黑高帽＋下巴鬍(無髭)
-      skin: "#d8b48a", legs: "#161620", torso: "#1a1a20", sleeve: "#1a1a20", chest: "#e6e0d2", tie: "#14141a", guitar: "hollow",
-      head: function (hy) {
-        ctx.fillStyle = "#14100c"; ctx.beginPath(); ctx.arc(0, hy - 6, 46, Math.PI * 1.04, Math.PI * 1.96); ctx.fill();   // 黑髮
-        ctx.fillStyle = "#0e0e10"; ctx.fillRect(-46, hy - 66, 92, 12); roundRect(-33, hy - 150, 66, 90, 4); ctx.fill();    // 高帽
-        ctx.fillStyle = "#241a12"; ctx.beginPath(); ctx.arc(-14, hy + 4, 4, 0, Math.PI * 2); ctx.arc(14, hy + 4, 4, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#1c150f";                                         // 下巴鬍(chin curtain)
-        ctx.beginPath(); ctx.moveTo(-30, hy + 6); ctx.quadraticCurveTo(-32, hy + 44, 0, hy + 50); ctx.quadraticCurveTo(32, hy + 44, 30, hy + 6);
-        ctx.quadraticCurveTo(20, hy + 24, 0, hy + 24); ctx.quadraticCurveTo(-20, hy + 24, -30, hy + 6); ctx.closePath(); ctx.fill();
-      }
-    },
-    vangogh: {   // 梵谷：紅橘髮鬍＋草帽
-      skin: "#e2b48c", legs: "#2a3a44", torso: "#33566a", sleeve: "#33566a", chest: "#7fa0ad", guitar: "strat",
-      head: function (hy) {
-        ctx.fillStyle = "#b5652a"; ctx.beginPath(); ctx.arc(0, hy - 6, 46, Math.PI * 1.02, Math.PI * 1.98); ctx.fill();   // 紅橘髮
-        ctx.fillStyle = "#c9722e";                                          // 紅橘鬍
-        ctx.beginPath(); ctx.moveTo(-34, hy + 2); ctx.quadraticCurveTo(-30, hy + 46, 0, hy + 50); ctx.quadraticCurveTo(30, hy + 46, 34, hy + 2);
-        ctx.quadraticCurveTo(0, hy + 26, -34, hy + 2); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = "#e8c85a"; ctx.beginPath(); ctx.ellipse(0, hy - 40, 60, 14, 0, 0, Math.PI * 2); ctx.fill();        // 草帽緣
-        ctx.fillStyle = "#dcb840"; ctx.beginPath(); ctx.ellipse(0, hy - 48, 34, 16, 0, Math.PI, 0); ctx.fill();            // 帽頂
-        ctx.fillStyle = "#241a12"; ctx.beginPath(); ctx.arc(-14, hy + 4, 4, 0, Math.PI * 2); ctx.arc(14, hy + 4, 4, 0, Math.PI * 2); ctx.fill();
-      }
-    },
-    davinci: {   // 達文西：長灰髮＋超長灰鬍
-      skin: "#e2b48c", legs: "#241c18", torso: "#3a2c20", sleeve: "#3a2c20", chest: "#5a4632", guitar: "nylon",
-      head: function (hy) {
-        ctx.fillStyle = "#b8b2a6"; ctx.beginPath(); ctx.arc(0, hy - 8, 50, Math.PI, 0); ctx.fill();
-        roundRect(-54, hy - 12, 26, 90, 12); ctx.fill(); roundRect(28, hy - 12, 26, 90, 12); ctx.fill();      // 兩側長髮
-        ctx.fillStyle = "#241a12"; ctx.beginPath(); ctx.arc(-13, hy + 2, 4, 0, Math.PI * 2); ctx.arc(13, hy + 2, 4, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#c4bfb4";                                          // 超長灰鬍
-        ctx.beginPath(); ctx.moveTo(-32, hy + 8); ctx.quadraticCurveTo(-24, hy + 70, 0, hy + 92); ctx.quadraticCurveTo(24, hy + 70, 32, hy + 8);
-        ctx.quadraticCurveTo(0, hy + 34, -32, hy + 8); ctx.closePath(); ctx.fill();
-      }
-    },
-    shakespeare: {   // 莎士比亞：禿頂＋山羊鬍＋耳環
-      skin: "#e7c6a3", legs: "#201820", torso: "#241820", sleeve: "#241820", chest: "#f0ece2", guitar: "hollow",
-      head: function (hy) {
-        ctx.fillStyle = "#3a2a1e";                                          // 兩側短髮(禿頂)
-        ctx.beginPath(); ctx.arc(-40, hy - 4, 16, 0, Math.PI * 2); ctx.arc(40, hy - 4, 16, 0, Math.PI * 2); ctx.fill();
-        ctx.fillRect(-52, hy - 6, 16, 30); ctx.fillRect(36, hy - 6, 16, 30);
-        ctx.fillStyle = "#241a12"; ctx.beginPath(); ctx.arc(-13, hy + 4, 4, 0, Math.PI * 2); ctx.arc(13, hy + 4, 4, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#3a2a1e"; ctx.fillRect(-9, hy + 18, 18, 4);        // 髭
-        ctx.beginPath(); ctx.moveTo(-7, hy + 24); ctx.lineTo(7, hy + 24); ctx.lineTo(0, hy + 38); ctx.closePath(); ctx.fill();   // 山羊鬍
-        ctx.fillStyle = "#e8c84a"; ctx.beginPath(); ctx.arc(-40, hy + 20, 3, 0, Math.PI * 2); ctx.fill();     // 耳環
-      }
-    },
-    tesla: {   // 特斯拉：中分黑髮＋八字鬍＋領結
-      skin: "#e7c6a3", legs: "#1a1a1e", torso: "#20201e", sleeve: "#20201e", chest: "#e6e0d2", tie: "#14141a", guitar: "offset",
-      head: function (hy) {
-        ctx.fillStyle = "#14100e";                                          // 中分黑髮
-        ctx.beginPath(); ctx.arc(0, hy - 8, 48, Math.PI, 0); ctx.fill();
-        ctx.fillStyle = "#e7c6a3"; ctx.beginPath(); ctx.moveTo(0, hy - 40); ctx.lineTo(-6, hy - 8); ctx.lineTo(6, hy - 8); ctx.closePath(); ctx.fill();   // 中分縫
-        ctx.fillStyle = "#241a12"; ctx.beginPath(); ctx.arc(-14, hy + 4, 4, 0, Math.PI * 2); ctx.arc(14, hy + 4, 4, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#1a140f"; ctx.beginPath(); ctx.moveTo(-15, hy + 19); ctx.quadraticCurveTo(0, hy + 23, 15, hy + 19); ctx.quadraticCurveTo(0, hy + 27, -15, hy + 19); ctx.fill();   // 八字鬍
-      }
-    },
-    paganini: {   // 帕格尼尼：狂亂長黑髮、消瘦、詭笑(魔鬼小提琴家)
-      skin: "#dcbc96", legs: "#141118", torso: "#161018", sleeve: "#161018", chest: "#2a1420", guitar: "red",
-      head: function (hy) {
-        ctx.fillStyle = "#0e0c12"; ctx.beginPath(); ctx.arc(0, hy - 10, 50, Math.PI, 0); ctx.fill();
-        roundRect(-56, hy - 14, 28, 150, 14); ctx.fill(); roundRect(28, hy - 14, 28, 150, 14); ctx.fill();    // 狂亂長黑髮
-        curlCluster([[-46,hy+120,14],[-52,hy+80,14],[46,hy+120,14],[52,hy+80,14]], "#0e0c12");
-        ctx.fillStyle = "#dcbc96"; ctx.beginPath(); ctx.arc(0, hy + 2, 30, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#1a1016"; ctx.beginPath(); ctx.arc(-12, hy, 4, 0, Math.PI * 2); ctx.arc(12, hy, 4, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = "#8a5060"; ctx.lineWidth = 2.5; ctx.lineCap = "round"; ctx.beginPath(); ctx.arc(0, hy + 12, 10, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();   // 詭笑
-      }
-    },
-    confucius: {   // 孔子：長灰鬍＋儒巾
-      skin: "#e6c49a", legs: "#241f16", torso: "#3a2f1e", sleeve: "#3a2f1e", chest: "#5a4a2e", guitar: "nylon",
-      head: function (hy) {
-        ctx.fillStyle = "#14120e"; ctx.beginPath(); ctx.arc(0, hy - 6, 44, Math.PI * 1.06, Math.PI * 1.94); ctx.fill();   // 髮
-        ctx.fillStyle = "#20201a";                                          // 儒巾(黑冠)
-        ctx.beginPath(); ctx.moveTo(-40, hy - 26); ctx.lineTo(40, hy - 26); ctx.lineTo(34, hy - 58); ctx.lineTo(-34, hy - 58); ctx.closePath(); ctx.fill();
-        ctx.fillRect(-14, hy - 74, 28, 20);
-        ctx.strokeStyle = "#2a2a20"; ctx.lineWidth = 4; ctx.lineCap = "round";   // 長眉
-        ctx.beginPath(); ctx.moveTo(-24, hy - 2); ctx.lineTo(-6, hy + 1); ctx.moveTo(24, hy - 2); ctx.lineTo(6, hy + 1); ctx.stroke();
-        ctx.fillStyle = "#241a12"; ctx.beginPath(); ctx.arc(-13, hy + 8, 3.6, 0, Math.PI * 2); ctx.arc(13, hy + 8, 3.6, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#c4bfb0";                                          // 長灰鬍
-        ctx.beginPath(); ctx.moveTo(-28, hy + 16); ctx.quadraticCurveTo(-20, hy + 78, 0, hy + 98); ctx.quadraticCurveTo(20, hy + 78, 28, hy + 16);
-        ctx.quadraticCurveTo(0, hy + 40, -28, hy + 16); ctx.closePath(); ctx.fill();
-      }
-    },
-    lulan: {   // 閃電嚕嚕安（專屬）：橄欖 T、深色短髮、銀框眼鏡、髭；動作＝舉啞鈴重訓
-      skin: "#e8c4a0", legs: "#16161c", torso: "#3f3f36", sleeve: "#3f3f36", chest: "#3f3f36", lift: true,
-      head: function (hy) {
-        ctx.fillStyle = "#1c1813";                                   // 深色短髮
-        ctx.beginPath(); ctx.arc(0, hy - 4, 47, Math.PI * 1.03, Math.PI * 1.97); ctx.fill();
-        ctx.fillRect(-45, hy - 12, 90, 10);
-        ctx.fillStyle = "#1c1813"; ctx.lineWidth = 4; ctx.strokeStyle = "#1c1813"; ctx.lineCap = "round";
-        ctx.beginPath(); ctx.moveTo(-28, hy - 7); ctx.lineTo(-9, hy - 3); ctx.stroke();   // 用力皺眉
-        ctx.beginPath(); ctx.moveTo(28, hy - 7); ctx.lineTo(9, hy - 3); ctx.stroke();
-        ctx.strokeStyle = "#d7d9de"; ctx.lineWidth = 3;                                   // 銀/透明框眼鏡
-        ctx.beginPath(); ctx.ellipse(-17, hy + 7, 15, 12, 0, 0, Math.PI * 2); ctx.stroke();
-        ctx.beginPath(); ctx.ellipse(17, hy + 7, 15, 12, 0, 0, Math.PI * 2); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(-2, hy + 6); ctx.lineTo(2, hy + 6); ctx.stroke();     // 鼻樑
-        ctx.beginPath(); ctx.moveTo(-32, hy + 5); ctx.lineTo(-45, hy + 2); ctx.stroke();  // 鏡腳
-        ctx.beginPath(); ctx.moveTo(32, hy + 5); ctx.lineTo(45, hy + 2); ctx.stroke();
-        ctx.fillStyle = "rgba(190,205,225,0.16)";                                         // 鏡片反光
-        ctx.beginPath(); ctx.ellipse(-17, hy + 7, 13, 10, 0, 0, Math.PI * 2); ctx.ellipse(17, hy + 7, 13, 10, 0, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#241a14"; ctx.beginPath(); ctx.arc(-17, hy + 7, 3.4, 0, Math.PI * 2); ctx.arc(17, hy + 7, 3.4, 0, Math.PI * 2); ctx.fill();  // 眼
-        ctx.fillStyle = "#2a2018"; ctx.fillRect(-9, hy + 24, 18, 3);                      // 髭
-        ctx.strokeStyle = "#7a4a38"; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(-8, hy + 31); ctx.lineTo(8, hy + 31); ctx.stroke();  // 咬牙
-      }
-    },
-    mom: {   // 太太（專屬）：及肩捲髮、黑圓框墨鏡、鼠尾草綠拉鍊連帽外套、淺灰寬褲、白鞋；動作＝比 YA
-      skin: "#f0d2b6", legs: "#c9ccd2", torso: "#c8d6c9", sleeve: "#c8d6c9", chest: "#bccdbd",
-      shoe: "#f4f4f2", ya: true, yaHands: 1, phone: true, scale: 1.0,
-      head: function (hy) {
-        var HAIR = "#2b1d16";
-        // 蓬鬆捲髮：底層外輪廓 ＋ 一圈捲團，做出捲度
-        ctx.fillStyle = HAIR;
-        ctx.beginPath(); ctx.ellipse(0, hy - 2, 58, 54, 0, Math.PI * 0.98, Math.PI * 2.02); ctx.fill();
-        ctx.beginPath(); ctx.ellipse(-46, hy + 22, 20, 26, -0.25, 0, Math.PI * 2); ctx.fill();   // 左側鬢髮
-        ctx.beginPath(); ctx.ellipse(46, hy + 20, 19, 25, 0.25, 0, Math.PI * 2); ctx.fill();     // 右側鬢髮
-        var curls = [[-52,-16,13],[-38,-36,14],[-14,-46,15],[12,-46,15],[36,-34,14],[52,-14,12],
-                     [-56,6,11],[56,4,11],[-50,30,10],[50,28,10]];
-        for (var i = 0; i < curls.length; i++) {
-          ctx.beginPath(); ctx.arc(curls[i][0], hy + curls[i][1], curls[i][2], 0, Math.PI * 2); ctx.fill();
-        }
-        // 墨鏡（黑色圓框）
-        ctx.fillStyle = "#15151a";
-        ctx.beginPath(); ctx.ellipse(-17, hy + 6, 16, 13, -0.05, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.ellipse(17, hy + 6, 16, 13, 0.05, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = "#15151a"; ctx.lineWidth = 3.4; ctx.lineCap = "round";
-        ctx.beginPath(); ctx.moveTo(-3, hy + 3); ctx.lineTo(3, hy + 3); ctx.stroke();            // 鼻樑
-        ctx.beginPath(); ctx.moveTo(-33, hy + 3); ctx.lineTo(-47, hy - 1); ctx.stroke();          // 鏡腳
-        ctx.beginPath(); ctx.moveTo(33, hy + 3); ctx.lineTo(47, hy - 1); ctx.stroke();
-        ctx.fillStyle = "rgba(255,255,255,0.22)";                                                 // 鏡片反光
-        ctx.beginPath(); ctx.ellipse(-22, hy + 1, 6, 4, -0.5, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.ellipse(12, hy + 1, 6, 4, -0.5, 0, Math.PI * 2); ctx.fill();
-        // 大笑（露齒）＋腮紅
-        ctx.fillStyle = "rgba(240,140,140,0.42)";
-        ctx.beginPath(); ctx.arc(-30, hy + 22, 8, 0, Math.PI * 2); ctx.arc(30, hy + 22, 8, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#b5535c";
-        ctx.beginPath(); ctx.moveTo(-13, hy + 26); ctx.quadraticCurveTo(0, hy + 42, 13, hy + 26); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = "#fff";
-        ctx.beginPath(); ctx.moveTo(-11, hy + 27); ctx.quadraticCurveTo(0, hy + 32, 11, hy + 27); ctx.closePath(); ctx.fill();
-      }
-    },
-    girl: {   // 女兒（專屬）：瀏海＋雙丸子頭＋紅花髮飾、黑圓墨鏡、黑白格紋洋裝、黑白鞋；動作＝雙手比 YA
-      skin: "#f8dcc4", legs: "#f8dcc4", torso: "#f2f2f0", sleeve: "#f8dcc4", chest: "#f2f2f0",
-      skirt: "#f2f2f0", shoe: "#1b1b20", gingham: true, dress: true, ya: true, yaHands: 2, scale: 0.72,
-      head: function (hy) {
-        var HAIR = "#2f2119";
-        ctx.fillStyle = HAIR;
-        ctx.beginPath(); ctx.arc(0, hy - 2, 52, Math.PI * 0.99, Math.PI * 2.01); ctx.fill();      // 後髮
-        ctx.beginPath(); ctx.arc(-34, hy - 44, 17, 0, Math.PI * 2); ctx.fill();                   // 左丸子頭
-        ctx.beginPath(); ctx.arc(34, hy - 44, 17, 0, Math.PI * 2); ctx.fill();                    // 右丸子頭
-        ctx.beginPath(); ctx.moveTo(-50, hy - 6); ctx.lineTo(-50, hy + 2);                         // 瀏海(上緣上提，露眼)
-        ctx.quadraticCurveTo(-25, hy + 8, 0, hy + 5); ctx.quadraticCurveTo(25, hy + 8, 50, hy + 2);
-        ctx.lineTo(50, hy - 6); ctx.closePath(); ctx.fill();
-        // 左側紅花髮飾（紅花瓣＋黃花心）
-        ctx.fillStyle = "#e03b32";
-        for (var a = 0; a < 5; a++) {
-          var ang = a / 5 * Math.PI * 2;
-          ctx.beginPath(); ctx.arc(-50 + Math.cos(ang) * 7, hy - 20 + Math.sin(ang) * 7, 5.5, 0, Math.PI * 2); ctx.fill();
-        }
-        ctx.fillStyle = "#f5c73c"; ctx.beginPath(); ctx.arc(-50, hy - 20, 5, 0, Math.PI * 2); ctx.fill();
-        // 黑色圓墨鏡（對小臉來說偏大）
-        ctx.fillStyle = "#17171c";
-        ctx.beginPath(); ctx.ellipse(-16, hy + 12, 17, 14, -0.05, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.ellipse(18, hy + 12, 17, 14, 0.05, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = "#17171c"; ctx.lineWidth = 3.2; ctx.lineCap = "round";
-        ctx.beginPath(); ctx.moveTo(-1, hy + 9); ctx.lineTo(3, hy + 9); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(-33, hy + 9); ctx.lineTo(-47, hy + 6); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(35, hy + 9); ctx.lineTo(48, hy + 6); ctx.stroke();
-        ctx.fillStyle = "rgba(255,255,255,0.2)";
-        ctx.beginPath(); ctx.ellipse(-21, hy + 7, 6, 4, -0.5, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.ellipse(13, hy + 7, 6, 4, -0.5, 0, Math.PI * 2); ctx.fill();
-        // 幼兒圓臉：腮紅大一點、小嘴
-        ctx.fillStyle = "rgba(245,145,150,0.5)";
-        ctx.beginPath(); ctx.arc(-32, hy + 28, 10, 0, Math.PI * 2); ctx.arc(32, hy + 28, 10, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = "#c06a68"; ctx.lineWidth = 2.6; ctx.lineCap = "round";
-        ctx.beginPath(); ctx.arc(1, hy + 30, 6, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
-      }
-    },
-    zengxuan: {   // 曾玹：藍色漢服(襦裙)、瀏海＋雙低馬尾＋紅髮圈、腰前藍蝴蝶結
-      skin: "#f2d6bd", legs: "#bcd8ee", torso: "#cfe3f2", sleeve: "#eef4fb", chest: "#dfeaf5",
-      skirt: "#bcd8ee", sash: "#8fc0e6", shoe: "#6fa8d6", guitar: "strat", dress: true, bow: true, scale: 0.9,
-      head: function (hy) {
-        var HAIR = "#3b2a1d";
-        ctx.fillStyle = HAIR;
-        ctx.beginPath(); ctx.arc(0, hy - 6, 50, Math.PI, 0); ctx.fill();                          // 頭頂後髮
-        roundRect(-58, hy + 8, 17, 76, 9); ctx.fill(); roundRect(41, hy + 8, 17, 76, 9); ctx.fill();  // 雙低馬尾
-        ctx.beginPath(); ctx.moveTo(-50, hy - 8); ctx.lineTo(-50, hy - 1);                        // 瀏海(上提，露出眼睛)
-        ctx.quadraticCurveTo(-25, hy + 4, 0, hy + 1); ctx.quadraticCurveTo(25, hy + 4, 50, hy - 1);
-        ctx.lineTo(50, hy - 8); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = "#e0555f"; ctx.beginPath(); ctx.arc(-49, hy + 14, 5, 0, Math.PI * 2); ctx.arc(49, hy + 14, 5, 0, Math.PI * 2); ctx.fill();  // 紅髮圈
-        ctx.fillStyle = "#2a1e16"; ctx.beginPath(); ctx.arc(-15, hy + 12, 5, 0, Math.PI * 2); ctx.arc(15, hy + 12, 5, 0, Math.PI * 2); ctx.fill();  // 眼(露出瀏海下)
-        ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(-13.5, hy + 10.5, 1.6, 0, Math.PI * 2); ctx.arc(16.5, hy + 10.5, 1.6, 0, Math.PI * 2); ctx.fill();  // 眼神光
-        ctx.fillStyle = "rgba(240,140,150,0.5)"; ctx.beginPath(); ctx.arc(-27, hy + 22, 7, 0, Math.PI * 2); ctx.arc(27, hy + 22, 7, 0, Math.PI * 2); ctx.fill();  // 腮紅
-        ctx.strokeStyle = "#c86a6a"; ctx.lineWidth = 2.5; ctx.lineCap = "round";
-        ctx.beginPath(); ctx.arc(0, hy + 24, 7, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();     // 微笑
-      }
-    },
-    lemon: {   // 🍋：粉色唐裝(立領盤扣)、齊瀏海＋雙馬尾、右側檸檬髮飾
-      skin: "#f2d6bd", legs: "#f6c9d6", torso: "#f7d3dd", sleeve: "#fdeef3", chest: "#f7d3dd",
-      skirt: "#f6c9d6", sash: "#ec9bb4", shoe: "#e58aa6", guitar: "nylon", dress: true, scale: 0.9,
-      head: function (hy) {
-        var HAIR = "#191512";
-        ctx.fillStyle = HAIR;
-        ctx.beginPath(); ctx.arc(0, hy - 6, 50, Math.PI, 0); ctx.fill();                          // 頭頂後髮
-        roundRect(-57, hy + 10, 16, 66, 8); ctx.fill(); roundRect(41, hy + 10, 16, 66, 8); ctx.fill();  // 雙馬尾
-        ctx.beginPath(); ctx.moveTo(-50, hy - 8); ctx.lineTo(-50, hy - 1);                         // 齊瀏海(上提，露出眼睛)
-        ctx.quadraticCurveTo(-25, hy + 4, 0, hy + 1); ctx.quadraticCurveTo(25, hy + 4, 50, hy - 1);
-        ctx.lineTo(50, hy - 8); ctx.closePath(); ctx.fill();
-        ctx.fillStyle = "#ec9bb4"; roundRect(-19, hy + 46, 38, 10, 4); ctx.fill();                 // 粉色立領
-        ctx.fillStyle = "#f4d03f"; ctx.beginPath(); ctx.ellipse(51, hy - 3, 9, 6, 0.4, 0, Math.PI * 2); ctx.fill();  // 檸檬🍋髮飾
-        ctx.fillStyle = "#3c8a3c"; ctx.beginPath(); ctx.arc(45, hy - 8, 2, 0, Math.PI * 2); ctx.fill();               // 蒂
-        ctx.fillStyle = "#2a1e16"; ctx.beginPath(); ctx.arc(-15, hy + 12, 5, 0, Math.PI * 2); ctx.arc(15, hy + 12, 5, 0, Math.PI * 2); ctx.fill();  // 眼(露出瀏海下)
-        ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(-13.5, hy + 10.5, 1.6, 0, Math.PI * 2); ctx.arc(16.5, hy + 10.5, 1.6, 0, Math.PI * 2); ctx.fill();  // 眼神光
-        ctx.fillStyle = "rgba(240,140,150,0.5)"; ctx.beginPath(); ctx.arc(-27, hy + 22, 7, 0, Math.PI * 2); ctx.arc(27, hy + 22, 7, 0, Math.PI * 2); ctx.fill();  // 腮紅
-        ctx.strokeStyle = "#c86a6a"; ctx.lineWidth = 2.5; ctx.lineCap = "round";
-        ctx.beginPath(); ctx.arc(0, hy + 24, 7, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();     // 微笑
-      }
-    }
-  };
-
-  // 槓鈴（一支長槓＋兩端槓片），畫在 (cx,cy)，tr=用力抖動位移
-  function drawBarbell(cx, cy, tr) {
-    ctx.save(); ctx.translate(cx + tr, cy);
-    ctx.strokeStyle = "#9aa0a6"; ctx.lineCap = "round"; ctx.lineWidth = 7;
-    ctx.beginPath(); ctx.moveTo(-92, 0); ctx.lineTo(92, 0); ctx.stroke();          // 槓身
-    var plates = [-82, -70, 70, 82];
-    for (var i = 0; i < plates.length; i++) {
-      ctx.fillStyle = "#141418"; ctx.beginPath(); ctx.ellipse(plates[i], 0, 8, 32, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = "#2c2c34"; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(plates[i], 0, 8, 32, 0, 0, Math.PI * 2); ctx.stroke();
-    }
-    ctx.restore();
-  }
-  // 閃電圖案（與胸標同款的填色閃電），中心(cx,cy)、s=縮放
-  function drawBoltIcon(cx, cy, s) {
-    ctx.beginPath();
-    ctx.moveTo(cx + 5 * s, cy - 16 * s);
-    ctx.lineTo(cx - 9 * s, cy + 1 * s);
-    ctx.lineTo(cx - 1 * s, cy + 1 * s);
-    ctx.lineTo(cx - 5 * s, cy + 16 * s);
-    ctx.lineTo(cx + 10 * s, cy - 4 * s);
-    ctx.lineTo(cx + 1 * s, cy - 4 * s);
-    ctx.closePath(); ctx.fill();
-  }
-  // 汗滴：用力(舉高)時噴汗，拋物線下落淡出
-  function updateAndDrawSweat(lift, hy) {
-    if (lift > 0.72 && Math.random() < 0.4) {
-      var side = Math.random() < 0.5 ? -1 : 1;
-      lulanSweat.push({ x: side * (34 + Math.random() * 14), y: hy - 22 + Math.random() * 26,
-        vx: side * (1.1 + Math.random() * 1.6), vy: -1.4 - Math.random() * 1.6, life: 22 + Math.random() * 12 });
-    }
-    ctx.fillStyle = "#a6d4ff";
-    for (var i = lulanSweat.length - 1; i >= 0; i--) {
-      var d = lulanSweat[i];
-      d.x += d.vx; d.y += d.vy; d.vy += 0.34; d.life--;
-      if (d.life <= 0 || d.y > 40) { lulanSweat.splice(i, 1); continue; }
-      ctx.globalAlpha = Math.min(0.9, d.life / 16);
-      ctx.beginPath(); ctx.ellipse(d.x, d.y, 2.3, 3.4, 0, 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.globalAlpha = 1;
-  }
-  // 閃電嚕嚕安：槓鈴挺舉（由下往上舉到過頭）＋用力抖動＋汗滴＋頂點爆閃電（本地座標，腳固定 y=0）
-  function drawLifter(char, songTime) {
-    var lift = (1 - Math.cos(songTime * 4.0)) / 2;                 // 0 放下(腰) .. 1 舉到過頭
-    var dip = (1 - lift) * 12;                                     // 放下時微屈膝借力
-    var hipY = -84 + dip, shoulderY = hipY - 88, hy = shoulderY - 34;
-    var kneeX = 20 + dip * 0.7, kneeY = hipY * 0.5 + dip * 0.5, footL = -26, footR = 26;
-    var trem = lift * Math.sin(songTime * 42) * 2.6;              // 舉越高→用力抖動越明顯
-
-    // 腿
-    ctx.lineCap = "round"; ctx.lineJoin = "round";
-    ctx.strokeStyle = char.legs; ctx.lineWidth = 24;
-    ctx.beginPath(); ctx.moveTo(-15, hipY); ctx.lineTo(-kneeX, kneeY); ctx.lineTo(footL, 0); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(15, hipY); ctx.lineTo(kneeX, kneeY); ctx.lineTo(footR, 0); ctx.stroke();
-    // 綠色球鞋
-    ctx.fillStyle = "#39b06a"; roundRect(footL - 16, -8, 34, 12, 5); ctx.fill(); roundRect(footR - 18, -8, 34, 12, 5); ctx.fill();
-
-    // 軀幹（橄欖 T）＋閃電胸標
-    ctx.fillStyle = char.torso; roundRect(-44, shoulderY, 88, hipY - shoulderY + 8, 18); ctx.fill();
-    ctx.fillStyle = "#ffd23d"; drawBoltIcon(0, shoulderY + 35, 1);
-
-    // 挺舉：槓鈴由下(腰) → 過頭；手臂跟著由下往上
-    var barY = hipY + ((hy - 62) - hipY) * lift;                   // 槓 y：腰 → 過頭
-    var handX = 30, elbowX = 40 - lift * 12, elbowY = shoulderY + 12 - lift * 46;
-    drawLimb([-28, shoulderY + 8], [-elbowX, elbowY], [-handX + trem, barY], char.sleeve, char.skin, 15, 12);
-    drawLimb([28, shoulderY + 8], [elbowX, elbowY], [handX - trem, barY], char.sleeve, char.skin, 15, 12);
-    drawBarbell(0, barY, trem);
-
-    // 頭（用力時微顫）
-    var hxt = lift * Math.sin(songTime * 46) * 1.4;
-    ctx.fillStyle = char.skin; ctx.beginPath(); ctx.arc(hxt, hy, 46, 0, Math.PI * 2); ctx.fill();
-    ctx.save(); ctx.translate(hxt, 0); char.head(hy); ctx.restore();
-
-    // 舉到頂點 → 頭頂冒出「同款閃電圖案」＋閃光暈
-    if (lift > 0.8) {
-      var e = (lift - 0.8) / 0.2;                                 // 0..1 強度
-      ctx.save();
-      var fg = ctx.createRadialGradient(0, barY - 8, 4, 0, barY - 8, 74);
-      fg.addColorStop(0, "rgba(255,225,120," + (0.5 * e) + ")"); fg.addColorStop(1, "rgba(255,225,120,0)");
-      ctx.fillStyle = fg; ctx.beginPath(); ctx.arc(0, barY - 8, 74, 0, Math.PI * 2); ctx.fill();
-      var pulse = 1 + Math.sin(songTime * 40) * 0.14;             // 微跳＝閃爍
-      ctx.fillStyle = "#ffd23d"; ctx.globalAlpha = 0.78 + 0.22 * e;
-      drawBoltIcon(0, barY - 34, 1.6 * pulse);                    // 頭頂大閃電（同款）
-      drawBoltIcon(-36, barY - 14, 0.85 * pulse);                 // 左小
-      drawBoltIcon(36, barY - 16, 0.9 * pulse);                   // 右小
-      ctx.restore();
-    }
-
-    // 汗滴（用力峰值噴發）
-    updateAndDrawSweat(lift, hy);
-  }
-
-  // 右側 Q 版吉他手（可切換角色；手臂會隨拍擺動）
-  function drawGuitarist(songTime) {
-    if (guitaristId === "none") return;
-    var char = GUITARISTS[guitaristId] || GUITARISTS.slash;
-    var hgt = guitaristHeight();                                    // 人物加大(上限 470)
-    var rise = 30 + hypeShown * (H * 0.16);                         // 舞台更高
-    var cx = (stageLeftX() + W) / 2, floorY = H * 0.88, groundY = floorY - rise, headY = groundY - hgt * 0.86;   // 樂手站在舞台(右側寬台)正中央
-    if (stageOn) {
-      drawFollowSpot(cx, headY, groundY, hypeShown, songTime, hgt);        // 追蹤聚光燈打在樂手身上
-      drawStageDeck(groundY, floorY, hypeShown, songTime);                 // 大舞台台面(右側寬台)
-      drawAmpBackline(cx, groundY, hgt, hypeShown, songTime);              // 知名音箱 backline(角色左後方)＋音箱特效
-    }
-    if (guitaristId === "lulan") drawSmithMachine(cx, groundY, hgt * 1.06);  // 閃電嚕嚕安→身後擺一台史密斯機(框住人物)
-    if (guitaristId === "sisters") { drawSisters(cx, groundY, hgt, songTime); return; }  // 曾玹＆🍋＝同一角色、左右各站一邊(各自 emoji 特效)
-    if (guitaristId === "family") { drawFamily(cx, groundY, hgt, songTime); return; }     // 太太＆女兒＝左右各站一邊、都在比 YA
-    var bob = Math.sin(songTime * 6.3) * 4, sway = Math.sin(songTime * 3.1) * 0.04;
-    var s = hgt / 320 * (char.scale || 1) * (1 + charPulse * 0.07);
-    ctx.save();
-    ctx.translate(cx, groundY - bob - charPulse * 10);
-    ctx.scale(s, s); ctx.rotate(sway);
-    ctx.globalAlpha = 0.97;
-
-    // 站上台：熱度高時打聚光暈(升降台改在螢幕座標另畫，見 drawStageRiser)
-    if (hypeShown > 0.02) {
-      var hl = hypeShown;
-      var halo = ctx.createRadialGradient(0, -150, 20, 0, -150, 150);
-      halo.addColorStop(0, "rgba(255,240,180," + (0.05 + hl * 0.10) + ")");   // 光暈縮小、變淡，避免蓋到音符
-      halo.addColorStop(1, "rgba(255,240,180,0)");
-      ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(0, -150, 150, 0, Math.PI * 2); ctx.fill();
-    }
-    // 連段段位慶祝爆發：角色身後放射光芒＋擴張光環(在角色之下先畫)
-    if (comboBurst.t < 0.7) {
-      var p = comboBurst.t / 0.7, fade = 1 - p;
-      ctx.save();
-      ctx.translate(0, -150); ctx.rotate(songTime * 1.2);
-      ctx.strokeStyle = "rgba(255,224,130," + (0.3 * fade) + ")"; ctx.lineWidth = 4;   // 光芒縮短、變淡
-      for (var rb = 0; rb < 12; rb++) {
-        var ang = rb / 12 * Math.PI * 2, r0 = 50 + p * 40, r1 = 100 + p * 110;
-        ctx.beginPath(); ctx.moveTo(Math.cos(ang) * r0, Math.sin(ang) * r0); ctx.lineTo(Math.cos(ang) * r1, Math.sin(ang) * r1); ctx.stroke();
-      }
-      ctx.strokeStyle = "rgba(255,240,190," + (0.4 * fade) + ")"; ctx.lineWidth = 5;
-      ctx.beginPath(); ctx.arc(0, 0, 70 + p * 150, 0, Math.PI * 2); ctx.stroke();
-      ctx.restore();
-    }
-
-    // 專屬：閃電嚕嚕安＝舉啞鈴重訓（非吉他姿勢）
-    if (char.lift) { drawLifter(char, songTime); ctx.restore(); return; }
-
-    paintGuitaristBody(char, songTime);   // 身體＋腿/裙＋吉他＋手臂＋頭(已在角色本地座標)
-    ctx.restore();
-
-    // 聚光燈打在身上的暖色高光(疊在角色上，讓人明顯被光照亮)
-    if (stageOn) {
-      ctx.save();
-      ctx.globalCompositeOperation = "lighter";
-      var lit = 0.05 + hypeShown * 0.13, cyMid = groundY - hgt * 0.5;
-      var hg = ctx.createRadialGradient(cx - hgt * 0.06, cyMid - hgt * 0.08, 8, cx, cyMid, hgt * 0.5);
-      hg.addColorStop(0, "rgba(255,246,214," + lit + ")"); hg.addColorStop(1, "rgba(255,246,214,0)");
-      ctx.fillStyle = hg; ctx.beginPath(); ctx.ellipse(cx, cyMid, hgt * 0.34, hgt * 0.5, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.restore();
-    }
-  }
-
-  // 比 YA 的手（✌️）：手掌＋兩指張開；flip=-1 時左右鏡射
-  function drawPeaceHand(x, y, r, skin, flip, tilt) {
-    flip = flip || 1; tilt = tilt || 0;
-    ctx.save();
-    ctx.translate(x, y); ctx.rotate(tilt * flip);
-    ctx.fillStyle = skin;
-    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();                       // 手掌
-    var fw = r * 0.44, fl = r * 1.65;                                                    // 兩根手指（V 字）
-    ctx.save(); ctx.rotate(-0.30 * flip); roundRect(-fw / 2 - r * 0.30 * flip, -fl, fw, fl, fw / 2); ctx.fill(); ctx.restore();
-    ctx.save(); ctx.rotate(0.30 * flip);  roundRect(-fw / 2 + r * 0.30 * flip, -fl, fw, fl, fw / 2); ctx.fill(); ctx.restore();
-    ctx.fillStyle = "rgba(0,0,0,0.10)";                                                   // 收起的手指(陰影暗示)
-    ctx.beginPath(); ctx.arc(r * 0.34 * flip, r * 0.36, r * 0.42, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-  }
-  // 比 YA 的角色：不拿吉他，手舉起來比 ✌️（yaHands=1 只有一手，2 則雙手）
-  //   繪製順序很重要：身體 → 裙/腿 → 垂下的手 → **頭** → **舉起的手**
-  //   （舉起的手要畫在頭之後，否則會被頭蓋住，看起來像從頭髮裡冒出來）
-  function paintYaBody(char, songTime) {
-    var wig = Math.sin(songTime * 5.2) * 3, wig2 = Math.sin(songTime * 5.2 + 1.1) * 3;
-    // 身體
-    ctx.fillStyle = char.torso; roundRect(-46, -150, 92, char.dress ? 70 : 150, 20); ctx.fill();
-    if (char.dress) {
-      if (char.gingham) ginghamClip(function () { roundRect(-46, -150, 92, 70, 20); }, -46, -150, 92, 70, 7);   // 上身格紋
-      ctx.fillStyle = char.skirt || char.legs;                                            // 蓬裙(外擴)
-      ctx.beginPath(); ctx.moveTo(-44, -86); ctx.lineTo(44, -86); ctx.lineTo(74, 4); ctx.quadraticCurveTo(0, 20, -74, 4); ctx.closePath(); ctx.fill();
-      if (char.gingham) ginghamClip(function () {                                          // 裙擺格紋
-        ctx.moveTo(-44, -86); ctx.lineTo(44, -86); ctx.lineTo(74, 4); ctx.quadraticCurveTo(0, 20, -74, 4); ctx.closePath();
-      }, -74, -86, 148, 106, 7);
-      ctx.fillStyle = "#ffffff"; roundRect(-31, -153, 62, 7, 3); ctx.fill();               // 領口白滾邊
-      ctx.fillStyle = char.skin; roundRect(-25, 4, 17, 20, 6); ctx.fill(); roundRect(8, 4, 17, 20, 6); ctx.fill();   // 小腿
-      ctx.fillStyle = char.shoe || "#1b1b20"; roundRect(-29, 18, 23, 10, 4); ctx.fill(); roundRect(6, 18, 23, 10, 4); ctx.fill();
-      ctx.fillStyle = "#f2f2f2"; ctx.fillRect(-29, 25, 23, 4); ctx.fillRect(6, 25, 23, 4); // 白鞋底
-    } else {
-      ctx.fillStyle = char.legs; roundRect(-40, -40, 34, 40, 8); ctx.fill(); roundRect(6, -40, 34, 40, 8); ctx.fill();   // 寬褲
-      ctx.fillStyle = char.shoe || "#f2f2f2"; roundRect(-44, -6, 40, 12, 5); ctx.fill(); roundRect(4, -6, 40, 12, 5); ctx.fill();
-      ctx.fillStyle = char.chest; roundRect(-30, -160, 60, 18, 8); ctx.fill();             // 連帽外套立領
-      ctx.strokeStyle = "rgba(0,0,0,0.18)"; ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.moveTo(0, -146); ctx.lineTo(0, -34); ctx.stroke();              // 拉鍊
-      ctx.fillStyle = "rgba(255,255,255,0.5)"; roundRect(-3, -150, 6, 9, 3); ctx.fill();
-    }
-    // 垂下的那隻手（先畫，會被頭蓋一點沒關係）
-    if (char.yaHands < 2) {
-      drawLimb([-34, -140], [-50, -100], [-40, -58], char.sleeve, char.skin, 15, 12);
-      if (char.phone) {
-        ctx.fillStyle = "#22242a"; roundRect(-50, -62, 15, 26, 4); ctx.fill();
-        ctx.fillStyle = "#5f6b7a"; roundRect(-48, -60, 11, 20, 2); ctx.fill();
-      }
-    }
-    // 頭
-    var hy = -206;
-    ctx.fillStyle = char.skin; ctx.beginPath(); ctx.arc(0, hy, 50, 0, Math.PI * 2); ctx.fill();
-    char.head(hy);
-    // ★ 舉起來比 YA 的手（畫在頭之後，位置在臉旁邊，像照片那樣）
-    if (char.yaHands >= 2) {
-      drawLimb([-36, -140], [-62, -172], [-70 + wig, -206], char.sleeve, char.skin, 13, 11);
-      drawLimb([36, -140], [62, -172], [70 + wig2, -206], char.sleeve, char.skin, 13, 11);
-      drawPeaceHand(-70 + wig, -212, 12, char.skin, -1, 0.16);
-      drawPeaceHand(70 + wig2, -212, 12, char.skin, 1, 0.16);
-    } else {
-      drawLimb([36, -140], [66, -168], [72 + wig, -200], char.sleeve, char.skin, 15, 12);
-      drawPeaceHand(72 + wig, -207, 13, char.skin, 1, 0.18);
-    }
-  }
-  // 黑白格紋：用傳入的路徑函式當 clip，在該範圍內鋪格子（洋裝上身與裙擺共用）
-  function ginghamClip(pathFn, x, y, w, h, cell) {
-    cell = cell || 8;
-    ctx.save();
-    ctx.beginPath(); pathFn(); ctx.clip();
-    for (var gy = y; gy < y + h; gy += cell) {
-      for (var gx = x; gx < x + w; gx += cell) {
-        var odd = (Math.floor((gx - x) / cell) + Math.floor((gy - y) / cell)) % 2;
-        ctx.fillStyle = odd ? "rgba(22,22,26,0.88)" : "rgba(22,22,26,0.26)";
-        ctx.fillRect(gx, gy, cell, cell);
-      }
-    }
-    ctx.restore();
-  }
-
-  // 畫一個角色的「身體＋腿/裙＋吉他＋手臂＋頭」——假設 ctx 已平移/縮放到該角色腳底、本地座標。
-  // 單人(drawGuitarist)與雙人(drawSisters)共用。
-  function paintGuitaristBody(char, songTime) {
-    if (char.ya) { paintYaBody(char, songTime); return; }      // 比 YA 的角色不拿吉他，走另一套
-    // 身體
-    ctx.fillStyle = char.torso; roundRect(-46, -150, 92, char.shorts ? 118 : (char.dress ? 70 : 150), 20); ctx.fill();
-    // 腿 / 短褲 / 洋裝裙擺
-    if (char.dress) {
-      // 漢服/唐裝：合身上衣＋外擴裙擺(蓋住腿)＋半透明紗裙外層＋小腿鞋＋腰帶/蝴蝶結
-      ctx.fillStyle = char.skirt || char.legs;                                     // 裙身(外擴梯形)
-      ctx.beginPath(); ctx.moveTo(-44, -86); ctx.lineTo(44, -86); ctx.lineTo(78, 6); ctx.quadraticCurveTo(0, 22, -78, 6); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = "rgba(255,255,255,0.26)";                                     // 紗裙(半透明外層，飄逸感)
-      ctx.beginPath(); ctx.moveTo(-40, -78); ctx.lineTo(40, -78); ctx.lineTo(90, 14); ctx.quadraticCurveTo(0, 32, -90, 14); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = char.skin; roundRect(-24, 6, 15, 16, 5); ctx.fill(); roundRect(9, 6, 15, 16, 5); ctx.fill();      // 小腿
-      ctx.fillStyle = char.shoe || "#e8748f"; roundRect(-27, 18, 20, 8, 4); ctx.fill(); roundRect(7, 18, 20, 8, 4); ctx.fill();   // 鞋
-      if (char.sash) { ctx.fillStyle = char.sash; roundRect(-45, -90, 90, 11, 4); ctx.fill(); }                        // 腰帶(高腰)
-      if (char.bow) {                                                              // 腰前蝴蝶結(曾玹)
-        ctx.fillStyle = char.sash || "#8fc0e6";
-        ctx.beginPath(); ctx.moveTo(0, -84); ctx.lineTo(-22, -95); ctx.lineTo(-22, -73); ctx.closePath(); ctx.fill();
-        ctx.beginPath(); ctx.moveTo(0, -84); ctx.lineTo(22, -95); ctx.lineTo(22, -73); ctx.closePath(); ctx.fill();
-        ctx.beginPath(); ctx.arc(0, -84, 6, 0, Math.PI * 2); ctx.fill();
-        ctx.fillRect(-4, -82, 8, 42);                                              // 垂帶
-      }
-    } else if (char.shorts) {
-      ctx.fillStyle = char.torso; roundRect(-40, -40, 34, 22, 7); ctx.fill(); roundRect(6, -40, 34, 22, 7); ctx.fill();   // 短褲
-      ctx.fillStyle = char.legs;  roundRect(-36, -20, 26, 20, 6); ctx.fill(); roundRect(10, -20, 26, 20, 6); ctx.fill();  // 裸腿
-      ctx.fillStyle = "#f2f2f2";  ctx.fillRect(-36, -6, 26, 6); ctx.fillRect(10, -6, 26, 6);                              // 白襪
-    } else {
-      ctx.fillStyle = char.legs; roundRect(-40, -40, 34, 40, 8); ctx.fill(); roundRect(6, -40, 34, 40, 8); ctx.fill();
-    }
-    // 胸口 / 領帶
-    ctx.fillStyle = char.chest; ctx.beginPath(); ctx.moveTo(-16, -150); ctx.lineTo(16, -150); ctx.lineTo(0, -106); ctx.closePath(); ctx.fill();
-    if (char.tie) {
-      ctx.fillStyle = char.tie;
-      ctx.beginPath(); ctx.moveTo(-5, -146); ctx.lineTo(5, -146); ctx.lineTo(3, -118); ctx.lineTo(-3, -118); ctx.closePath(); ctx.fill();
-      ctx.beginPath(); ctx.moveTo(-7, -118); ctx.lineTo(7, -118); ctx.lineTo(0, -104); ctx.closePath(); ctx.fill();
-    }
-    // 吉他（角色專屬）
-    drawGuitar(char.guitar);
-    // ---- 手臂（上臂＋前臂＋手，會擺動）----
-    var sw = Math.sin(songTime * 9);                              // 刷弦擺動相位
-    drawLimb([34, -140], [50, -100 + sw * 4], [14 + sw * 3, -56 + sw * 22], char.sleeve, char.skin, 15, 12);  // 刷弦臂
-    ctx.save(); ctx.translate(14 + sw * 3, -56 + sw * 22); ctx.rotate(sw * 0.4);   // 撥片
-    ctx.fillStyle = "#e8d24a"; ctx.beginPath(); ctx.moveTo(0, -3); ctx.lineTo(7, 4); ctx.lineTo(-2, 9); ctx.closePath(); ctx.fill();
-    ctx.restore();
-    var vib = Math.sin(songTime * 11) * 2;                        // 按弦臂（輕微揉弦）
-    drawLimb([-34, -140], [-52, -108], [-54 + vib, -150 - vib], char.sleeve, char.skin, 15, 12);
-    // 頭
-    var hy = -206;
-    ctx.fillStyle = char.skin; ctx.beginPath(); ctx.arc(0, hy, 50, 0, Math.PI * 2); ctx.fill();
-    char.head(hy);
-  }
-
-  // 曾玹 ＆ 🍋：同一個「角色」＝兩人左右各站一邊，各自噴自己的 emoji 特效(👍 / 🍋)
-  var sisFx = { thumbs: [], lemons: [], acc: 0 };
-  function spawnFxEmoji(arr, x, y) {
-    arr.push({ x: x + (Math.random() * 46 - 23), y: y + (Math.random() * 20 - 10),
-               vy: -(46 + Math.random() * 40), vx: (Math.random() * 24 - 12),
-               t: 0, life: 1.5 + Math.random() * 0.9, rot: (Math.random() * 0.7 - 0.35), spin: (Math.random() * 1.4 - 0.7), s: 0.72 + Math.random() * 0.7 });
-  }
-  function drawFxEmoji(arr, glyph, dt) {
-    for (var i = arr.length - 1; i >= 0; i--) {
-      var p = arr[i]; p.t += dt; p.y += p.vy * dt; p.x += p.vx * dt; p.rot += p.spin * dt; p.vy += 26 * dt;   // 微重力減速
-      if (p.t >= p.life) { arr.splice(i, 1); continue; }
-      var a = p.t < 0.25 ? (p.t / 0.25) : (p.t > p.life - 0.5 ? (p.life - p.t) / 0.5 : 1);
-      var pop = p.t < 0.25 ? (0.6 + 0.4 * (p.t / 0.25)) : 1;
-      ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, a));
-      ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.scale(p.s * pop, p.s * pop);
-      ctx.font = "30px system-ui, 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif";
-      ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(glyph, 0, 0);
-      ctx.restore();
-    }
-  }
-  function drawSisters(cx, groundY, hgt, songTime) {
-    var dx = hgt * 0.30;                                          // 兩人左右間距
-    var sBase = hgt / 320 * 0.82 * (1 + charPulse * 0.07);        // 各自略小，兩人並排才擺得下
-    function paintAt(char, x, phase) {
-      var t = songTime + phase;
-      var bob = Math.sin(t * 6.3) * 4, sway = Math.sin(t * 3.1) * 0.04;
-      ctx.save();
-      ctx.translate(x, groundY - bob - charPulse * 10);
-      ctx.scale(sBase, sBase); ctx.rotate(sway);
-      ctx.globalAlpha = 0.97;
-      paintGuitaristBody(char, t);
-      ctx.restore();
-    }
-    paintAt(GUITARISTS.zengxuan, cx - dx, 0);                     // 左：曾玹
-    paintAt(GUITARISTS.lemon,    cx + dx, 1.4);                   // 右：🍋(錯開相位，動作不同步)
-    // emoji 特效(螢幕座標、前景)：曾玹=👍、🍋=🍋，持續噴一大串；越嗨越密
-    var dt = 1 / 60, interval = 0.09 - hypeShown * 0.05, headY = groundY - hgt * 0.66;
-    sisFx.acc += dt;
-    while (sisFx.acc >= interval) {
-      sisFx.acc -= interval;
-      if (sisFx.thumbs.length < 60) spawnFxEmoji(sisFx.thumbs, cx - dx, headY);
-      if (sisFx.lemons.length < 60) spawnFxEmoji(sisFx.lemons, cx + dx, headY);
-    }
-    drawFxEmoji(sisFx.thumbs, "👍", dt);
-    drawFxEmoji(sisFx.lemons, "🍋", dt);
-  }
-
-  // 太太 ＆ 女兒：同一個「角色」＝兩人左右各站一邊，都在比 YA；頭上噴 ✌️ 與 💗
-  var famFx = { ya: [], hearts: [], acc: 0 };
-  function drawFamily(cx, groundY, hgt, songTime) {
-    var dx = hgt * 0.26;
-    var sBase = hgt / 320 * 0.86 * (1 + charPulse * 0.07);
-    function paintAt(char, x, phase) {
-      var t = songTime + phase;
-      var bob = Math.sin(t * 6.3) * 4, sway = Math.sin(t * 3.1) * 0.04;
-      ctx.save();
-      ctx.translate(x, groundY - bob - charPulse * 10);
-      ctx.scale(sBase * (char.scale || 1), sBase * (char.scale || 1));
-      ctx.rotate(sway);
-      ctx.globalAlpha = 0.97;
-      paintYaBody(char, t);
-      ctx.restore();
-    }
-    paintAt(GUITARISTS.mom, cx - dx, 0);                       // 左：太太
-    paintAt(GUITARISTS.girl, cx + dx, 0.9);                    // 右：女兒（錯開相位）
-    var dt = 1 / 60, interval = 0.13 - hypeShown * 0.06, headY = groundY - hgt * 0.62;
-    famFx.acc += dt;
-    while (famFx.acc >= interval) {
-      famFx.acc -= interval;
-      if (famFx.ya.length < 40) spawnFxEmoji(famFx.ya, cx - dx, headY);
-      if (famFx.hearts.length < 40) spawnFxEmoji(famFx.hearts, cx + dx, headY - hgt * 0.06);
-    }
-    drawFxEmoji(famFx.ya, "✌️", dt);
-    drawFxEmoji(famFx.hearts, "💗", dt);
-  }
-
-  // 右側大字評分動畫
-  var JUDGE_WORD = { perfect: ["PERFECT!", "#ffd93d"], great: ["GREAT!", "#5ec26a"], good: ["GOOD", "#5b8def"], miss: ["MISS…", "#ff5d6c"] };
-  function drawBigJudge() {
-    if (!bigJudge) return;
-    bigJudge.t += 1 / 60;
-    if (bigJudge.t > 0.85) { bigJudge = null; return; }
-    var p = bigJudge.t / 0.85, info = JUDGE_WORD[bigJudge.tier];
-    var scl = p < 0.24 ? (0.5 + (p / 0.24) * 0.78) : (1.28 - (p - 0.24) / 0.76 * 0.28);
-    var alpha = p < 0.72 ? 1 : (1 - (p - 0.72) / 0.28);
-    var cx = W * 0.5, cy = H * 0.38 - p * 20;
-    // 判定字（畫面置中）
-    ctx.save();
-    ctx.globalAlpha = alpha; ctx.translate(cx, cy); ctx.scale(scl, scl); ctx.rotate(-0.05);
-    ctx.font = "900 60px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.lineWidth = 9; ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.strokeText(info[0], 0, 0);
-    ctx.fillStyle = info[1]; ctx.fillText(info[0], 0, 0);
-    ctx.restore();
-    // 倍數（×2/×3…）＋ 連段（命中時才顯示）
-    if (bigJudge.tier !== "miss" && bigJudge.combo > 1) {
-      var mult = comboMult(bigJudge.combo), by = cy + 54;
-      ctx.save(); ctx.globalAlpha = alpha;
-      ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      if (mult >= 2) {
-        var ms = 1 + (mult - 2) * 0.09;                       // 倍數越高字越大
-        ctx.save(); ctx.translate(cx, by); ctx.scale(ms, ms);
-        ctx.font = "900 46px system-ui, sans-serif";
-        ctx.lineWidth = 9; ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.strokeText("×" + mult, 0, 0);
-        ctx.fillStyle = "#ffd93d"; ctx.fillText("×" + mult, 0, 0);
-        ctx.restore();
-        by += 40;
-      }
-      ctx.font = "800 22px system-ui, sans-serif";
-      ctx.lineWidth = 5; ctx.strokeStyle = "rgba(0,0,0,0.7)";
-      ctx.strokeText(bigJudge.combo + " COMBO", cx, by);
-      ctx.fillStyle = "#fff"; ctx.fillText(bigJudge.combo + " COMBO", cx, by);
-      ctx.restore();
-    }
-  }
-
-  function render() {
-    ctx.clearRect(0, 0, W, H);
-    var playingNow = (state === "playing" || state === "paused");
-    var hypeTarget = (playingNow && current) ? Math.min(current.combo / 36, 1) : 0;
-    hypeShown += (hypeTarget - hypeShown) * 0.06;                    // 連段越高→熱度越高；miss 歸零時平滑降溫
-    if (comboBurst.t < 999) comboBurst.t += 0.016;                   // 推進連段慶祝爆發動畫
-    drawBackground();
-    if (state === "playing" || state === "paused") {
-      var songTime = A.getSongTime();
-      drawGuitarist(songTime);                                          // 角色＋舞台(在音符之下)
-      if (stageOn) drawCrowd(hypeShown, songTime, guitaristHeight());   // 台下觀眾(前景，約樂手1/4高、前後交錯)
-      if (stageProcedural) { ctx.fillStyle = "rgba(10,8,16,0.30)"; ctx.fillRect(0, 0, W, H); }   // 暗幕：讓舞台沉到背景、音符更清楚
-      renderTab(songTime);
-      drawBigJudge();                                                   // 大字評分(最上層)
-      charPulse = Math.max(0, charPulse - 0.05);
-      drawHud(songTime);
-      if (songTime < 0) {                                                                     // 開場先「準備」，再倒數 4 拍
-        var countIn = 4 * countBeat;
-        if (songTime >= -countIn) drawCenterText(String(Math.min(4, Math.ceil(-songTime / countBeat))), true);
-        else drawCenterText("準備", true);
-      }
-      if (state === "paused") drawCenterText("已暫停　（空白鍵繼續）");
-    }
-  }
-
-  // --- 六線譜橫向 ---
-  function renderTab(songTime) {
-    pad = null;   // 六線譜模式沒有觸控鍵盤
-    var view = (els.bottomSelect && els.bottomSelect.value) || "jianpu";
-    var labelW = 54, topPad = 40;
-    var bandH = (view === "fretboard") ? Math.min(200, Math.round(H * 0.4)) : (view === "staff" ? Math.min(215, Math.round(H * 0.40)) : 92);   // 指板圖/五線譜加大、簡譜列
-    var bandTop = H - bandH - 8;
-    var jY = bandTop + bandH / 2;       // 簡譜列中心
-    var sBot = bandTop - 12;            // 弦線底部
-    var sc = tabInfo.stringCount, tuning = tabInfo.tuning;
-    var rowGap = (sBot - topPad) / Math.max(1, sc - 1);
-    var hitX = labelW + (W - labelW) * 0.18;
-    var pxPerSec = (W - hitX) / travel;
-
-    // 弦線 + 弦名（弦粗細像真吉他：第1弦(高e,row0)最細 → 第6弦(低E,row5)最粗）
-    for (var r = 0; r < sc; r++) {
-      var y = topPad + r * rowGap;
-      ctx.strokeStyle = "rgba(230,235,245,0.34)"; ctx.lineWidth = 0.8 + r * 0.7;
-      ctx.beginPath(); ctx.moveTo(labelW, y); ctx.lineTo(W, y); ctx.stroke();
-      ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.font = "13px system-ui, sans-serif";
-      ctx.textAlign = "right"; ctx.textBaseline = "middle";
-      ctx.fillText(NOTE_NAMES[pc(tuning[r])], labelW - 8, y);
-    }
-    ctx.lineWidth = 1;
-
-    // 下方：簡譜列（只在簡譜檢視顯示）— GP/KTV 式播放：小節線＋小節號＋當前音高亮
-    if (view === "jianpu") {
-      var sTop = jY - 38, sH = 76;
-      ctx.fillStyle = "rgba(255,255,255,0.05)"; ctx.fillRect(labelW, sTop, W - labelW, sH);
-      // 小節線＋小節號（隨譜捲動）
-      for (var bi = 0; bi < barStartsScaled.length; bi++) {
-        var bx = hitX + (barStartsScaled[bi] - songTime) * pxPerSec;
-        if (bx < labelW - 2 || bx > W + 2) continue;
-        ctx.strokeStyle = (bi % 4 === 0) ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.22)"; ctx.lineWidth = (bi % 4 === 0) ? 2 : 1;
-        ctx.beginPath(); ctx.moveTo(bx, sTop + 2); ctx.lineTo(bx, sTop + sH - 2); ctx.stroke();
-        ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.font = "10px system-ui, sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "top";
-        ctx.fillText(String(bi + 1), bx + 3, sTop + 3);
-      }
-      ctx.lineWidth = 1;
-      ctx.fillStyle = "rgba(255,255,255,0.4)"; ctx.font = "13px system-ui, sans-serif";
-      ctx.textAlign = "right"; ctx.textBaseline = "middle";
-      ctx.fillText("簡譜", labelW - 8, jY);
-    }
-    // 下方：五線譜列（高音譜號、5 條線、隨譜捲動的小節線）— 加大＋鋪深色底(音符不被背景干擾)
-    var staffGap = Math.round(bandH * 0.15);          // 線距(依 band 高度縮放，約 30px)
-    var staffHalf = staffGap * 2;                     // 中線到最上/下線
-    if (view === "staff") {
-      ctx.fillStyle = "rgba(8,10,16,0.95)"; ctx.fillRect(labelW, bandTop + 2, W - labelW, bandH - 4);   // 近乎不透明深色底條(音符不被舞台/角色干擾)
-      ctx.strokeStyle = "rgba(255,255,255,0.10)"; ctx.lineWidth = 1; ctx.strokeRect(labelW, bandTop + 2, W - labelW, bandH - 4);   // 細邊框
-      ctx.strokeStyle = "rgba(232,236,244,0.55)"; ctx.lineWidth = 1.2;
-      for (var ln = 0; ln < 5; ln++) { var ly = jY - staffHalf + ln * staffGap; ctx.beginPath(); ctx.moveTo(labelW, ly); ctx.lineTo(W, ly); ctx.stroke(); }
-      for (var sbi = 0; sbi < barStartsScaled.length; sbi++) {   // 小節線(隨譜捲動)
-        var sbx = hitX + (barStartsScaled[sbi] - songTime) * pxPerSec;
-        if (sbx < labelW - 2 || sbx > W + 2) continue;
-        ctx.strokeStyle = (sbi % 4 === 0) ? "rgba(255,255,255,0.42)" : "rgba(255,255,255,0.22)"; ctx.lineWidth = (sbi % 4 === 0) ? 2 : 1;
-        ctx.beginPath(); ctx.moveTo(sbx, jY - staffHalf); ctx.lineTo(sbx, jY + staffHalf); ctx.stroke();
-      }
-      ctx.lineWidth = 1;
-      ctx.fillStyle = "rgba(255,255,255,0.9)"; ctx.font = Math.round(staffGap * 3.6) + "px system-ui, 'Apple Symbols', sans-serif";
-      ctx.textAlign = "left"; ctx.textBaseline = "middle"; ctx.fillText("𝄞", labelW + 6, jY - staffGap * 0.15);   // 𝄞 高音譜號
-      ctx.fillStyle = "rgba(255,255,255,0.45)"; ctx.font = "12px system-ui, sans-serif";
-      ctx.textAlign = "right"; ctx.textBaseline = "top"; ctx.fillText("五線譜", labelW - 8, bandTop + 6);
-    }
-    // KTV：找最接近判定線的音（當前音）供高亮
-    var curJ = -1, curBest = 1e9;
-    if (view === "jianpu" || view === "staff") {
-      for (var ci = 0; ci < items.length; ci++) { var dd = Math.abs(items[ci].time - songTime); if (dd < curBest) { curBest = dd; curJ = ci; } }
-    }
-
-    // 判定線
-    var topY = topPad - 16, botY = (view === "jianpu") ? (jY + 26) : (view === "staff" ? (jY + staffHalf + 10) : (sBot + 10));
-    ctx.fillStyle = "rgba(91,141,239,0.12)"; ctx.fillRect(hitX - 22, topY, 44, botY - topY);
-    ctx.strokeStyle = "rgba(255,255,255,0.85)"; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(hitX, topY); ctx.lineTo(hitX, botY); ctx.stroke(); ctx.lineWidth = 1;
-
-    // 音符（六線譜）+ 同步簡譜/五線譜
-    var strip = [], staffStrip = [];
-    for (var i = 0; i < items.length; i++) {
-      var it = items[i];
-      if (it.judged && (it.hit || songTime - it.time > 0.4)) continue;
-      var x = hitX + (it.time - songTime) * pxPerSec;
-      if (x < labelW - 40 || x > W + 40) continue;
-      for (var j = 0; j < it.notes.length; j++) {
-        var nn = it.notes[j];
-        var baseY = topPad + nn.row * rowGap;
-        var defl = 0;                                    // 推弦往下位移量(px)
-        if (nn.bend > 0) {
-          var t = 1 - (x - hitX) / 110;
-          t = Math.max(0, Math.min(1, t));
-          var strings = nn.bend / 2;                     // 半音→往下1弦、全音→往下2弦
-          var target = strings * rowGap - 17;
-          var maxDown = (sBot - baseY) + rowGap * 0.4;   // 不壓出弦區太多
-          defl = Math.max(0, Math.min(t * Math.max(0, target), maxDown));
-          if (defl > 0.5) drawBendString(x, baseY, defl, nn);
-        }
-        var vib = nn.vibrato ? Math.sin(x * 0.18) * (nn.vibrato >= 2 ? 5 : 3) : 0;  // 揉弦抖動
-        var ny = baseY + defl + vib;
-        if (nn.hammerOrigin && nn.linkTime != null) {    // 搥弦/勾弦連接弧線
-          var x2 = hitX + (nn.linkTime - songTime) * pxPerSec;
-          drawHammerSlur(x, ny, x2, topPad + nn.linkRow * rowGap, nn);
-        }
-        if (nn.slideOut || nn.slideIn) drawSlide(x, ny, nn);   // 滑音斜線
-        drawTabNote(x, ny, nn, it.tier);
-      }
-      if (it.chord) {                                          // GP 譜標示的和弦(顯示在該拍上方)
-        var chCol = it.chordColor || "rgba(224,164,75,0.95)";
-        if (it.chordRepeat) drawChordRepeat(x, topPad - 12, chCol);            // 與前一個相同→「同上」記號
-        else {
-          if (it.chordFrets) drawChordDiagram(x, topPad - 46, it.chordFrets, it.chordFirst || 0, chCol);  // 和弦表圖案
-          drawChordLabel(x, topPad - 12, it.chord, chCol);                     // 和弦名(彩色膠囊)
-        }
-      }
-      if (it.deadNotes) {                                       // 死音/悶音(X)：只顯示、不判定
-        for (var dj = 0; dj < it.deadNotes.length; dj++) drawDeadNote(x, topPad + it.deadNotes[dj].row * rowGap);
-      }
-      if (view === "jianpu" && it.jianpu) strip.push({ x: x, jp: it.jianpu, dur: it.dur, nv: it.nv, dots: it.dots, tuplet: it.tuplet, t: it.time, cur: i === curJ, grace: !!it.grace });
-      if (view === "staff" && !it.deadOnly) {
-        var mids = (it.notes && it.notes.length) ? it.notes.map(function (n) { return n.midi; }) : (it.midi != null ? [it.midi] : []);
-        if (mids.length) staffStrip.push({ x: x, midis: mids, nv: it.nv, dots: it.dots, cur: i === curJ });
-      }
-    }
-    if (view === "jianpu") drawJianpuStrip(strip, jY, sTop, sH, hitX);
-    if (view === "staff") drawStaffStrip(staffStrip, jY, hitX, labelW, staffGap);
-    drawPopupsHorizontal(hitX, topPad);
-
-    // 下方：指板圖（顯示本小節要按到的格子）
-    if (view === "fretboard") drawFretboardMeasure(labelW, bandTop, bandH, songTime);
-  }
-
-  function currentBar(t) {
-    var idx = 0;
-    for (var i = 0; i < barStartsScaled.length; i++) { if (barStartsScaled[i] <= t + 1e-6) idx = i; else break; }
-    return idx;
-  }
-
-  function curFretStyle() {
-    var v = (els.fretStyleSelect && els.fretStyleSelect.value) || "rosewood";
-    return FRETBOARD_STYLES[v] || FRETBOARD_STYLES.rosewood;
-  }
-  function dotAt(x, y, r) { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
-  function sharkFin(x, y, s) {
-    ctx.beginPath(); ctx.moveTo(x, y - s); ctx.lineTo(x + s * 0.8, y + s * 0.7);
-    ctx.lineTo(x, y + s * 0.15); ctx.lineTo(x - s * 0.8, y + s * 0.7); ctx.closePath(); ctx.fill();
-  }
-  function leafShape(x, y, s, tilt) {
-    ctx.save(); ctx.translate(x, y); ctx.rotate(tilt);
-    ctx.beginPath(); ctx.ellipse(0, 0, s, s * 0.5, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-  }
-  function drawVine(fbLeft, colW, gridTop, gridBot, maxFret, color) {
-    var midY = (gridTop + gridBot) / 2, amp = (gridBot - gridTop) * 0.3;
-    ctx.save();
-    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 2; ctx.globalAlpha = 0.85;
-    ctx.beginPath();
-    for (var f = 0; f <= maxFret + 0.5; f += 0.2) {
-      var x = fbLeft + (f + 0.5) * colW, y = midY + Math.sin(f * 1.15) * amp;
-      if (f === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-    for (var g = 1; g <= maxFret; g++) {
-      var vx = fbLeft + (g + 0.5) * colW, vy = midY + Math.sin(g * 1.15) * amp;
-      leafShape(vx, vy, colW * 0.17, Math.cos(g * 1.15) >= 0 ? -0.6 : 0.6);
-    }
-    ctx.restore();
-  }
-  function drawInlays(st, fbLeft, colW, gridTop, gridBot, rowGap, maxFret) {
-    if (st.inlay === "vine") { drawVine(fbLeft, colW, gridTop, gridBot, maxFret, st.inlayColor); return; }
-    var midY = (gridTop + gridBot) / 2;
-    ctx.save(); ctx.fillStyle = st.inlayColor;
-    var marks = INLAY_SINGLE.concat(INLAY_DOUBLE);
-    for (var m = 0; m < marks.length; m++) {
-      var f = marks[m]; if (f > maxFret) continue;
-      var cx = fbLeft + (f + 0.5) * colW, isDbl = INLAY_DOUBLE.indexOf(f) >= 0;
-      if (st.inlay === "block") {
-        var bw = colW * 0.5, bh = (gridBot - gridTop) * 0.8;
-        ctx.fillRect(cx - bw / 2, midY - bh / 2, bw, bh);
-      } else if (st.inlay === "shark") {
-        var s = Math.min(colW * 0.34, rowGap * 1.1);
-        if (isDbl) { sharkFin(cx, midY - rowGap * 0.9, s); sharkFin(cx, midY + rowGap * 0.9, s); }
-        else sharkFin(cx, midY, s);
-      } else { // dot
-        if (isDbl) { dotAt(cx, midY - rowGap * 0.95, 4.5); dotAt(cx, midY + rowGap * 0.95, 4.5); }
-        else dotAt(cx, midY, 5);
-      }
-    }
-    ctx.restore();
-  }
-
-  // 指板圖：24 格，套用選定樣式，顯示所選範圍(拍/小節)要按的弦/格
-  function drawFretboardMeasure(fbLeft, top, h, songTime) {
-    var st = curFretStyle();
-    var sc = tabInfo.stringCount, tuning = tabInfo.tuning;
-    var maxFret = 17, nCols = maxFret + 1;   // 少顯示幾格→每格更寬、點更大（涵蓋多數把位）
-    var fbRight = W - 10, gridTop = top + 16, gridBot = top + h - 22;
-    var rowGap = (gridBot - gridTop) / Math.max(1, sc - 1);
-    var colW = (fbRight - fbLeft) / nCols;
-
-    ctx.save();
-    roundRect(fbLeft, top, fbRight - fbLeft, h, 8); ctx.clip();
-    var wood = ctx.createLinearGradient(0, top, 0, top + h);
-    wood.addColorStop(0, st.wood[0]); wood.addColorStop(1, st.wood[1]);
-    ctx.fillStyle = wood; ctx.fillRect(fbLeft, top, fbRight - fbLeft, h);
-
-    drawInlays(st, fbLeft, colW, gridTop, gridBot, rowGap, maxFret);   // 鑲嵌(在弦線底下)
-
-    // 品絲 + 上弦枕
-    for (var c = 1; c <= maxFret; c++) {
-      var fx = fbLeft + c * colW;
-      ctx.strokeStyle = st.fretwire; ctx.lineWidth = (c === 12 || c === 24) ? 2.5 : 1.4;
-      ctx.beginPath(); ctx.moveTo(fx, gridTop - 5); ctx.lineTo(fx, gridBot + 5); ctx.stroke();
-    }
-    ctx.strokeStyle = st.nut; ctx.lineWidth = 5;
-    ctx.beginPath(); ctx.moveTo(fbLeft, gridTop - 5); ctx.lineTo(fbLeft, gridBot + 5); ctx.stroke();
-    ctx.lineWidth = 1;
-
-    // 弦線 + 弦名
-    for (var r = 0; r < sc; r++) {
-      var y = gridTop + r * rowGap;
-      ctx.strokeStyle = st.string; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(fbLeft, y); ctx.lineTo(fbRight, y); ctx.stroke();
-      ctx.fillStyle = "rgba(245,240,228,0.65)"; ctx.font = "13px system-ui, sans-serif";
-      ctx.textAlign = "right"; ctx.textBaseline = "middle";
-      ctx.fillText(NOTE_NAMES[pc(tuning[r])], fbLeft - 4, y);
-    }
-    // 格號
-    ctx.fillStyle = "rgba(245,240,228,0.55)"; ctx.font = "12px system-ui, sans-serif";
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    for (var f2 = 1; f2 <= maxFret; f2++) ctx.fillText(String(f2), fbLeft + (f2 + 0.5) * colW, gridBot + 12);
-
-    // 依「指板範圍」過濾要顯示的音
-    var win = (els.fretWindowSelect && els.fretWindowSelect.value) || "4";
-    var useBar = (win === "bar2"), curB = currentBar(songTime), positions = {};
-    var secPerBeat = (60 / (timeline.tempo || 120)) / speed;
-    var t0 = songTime - 0.08, t1 = songTime + (parseInt(win, 10) || 4) * secPerBeat;
-    for (var i = 0; i < items.length; i++) {
-      var it = items[i], inWin = useBar ? (it.bar === curB || it.bar === curB + 1) : (it.time >= t0 && it.time <= t1);
-      if (!inWin) continue;
-      var cur = Math.abs(it.time - songTime) < 0.28;
-      for (var j = 0; j < it.notes.length; j++) {
-        var nn = it.notes[j]; if (nn.fret > maxFret) continue;
-        var key = nn.row + "-" + nn.fret;
-        if (!positions[key]) positions[key] = { row: nn.row, fret: nn.fret, degree: nn.degree, tech: noteHasTech(nn), cur: false };
-        if (cur) positions[key].cur = true;
-      }
-    }
-    var rad = Math.max(10, Math.min(18, colW * 0.42, rowGap * 0.46));
-    for (var k in positions) {
-      var p = positions[k];
-      var dx = fbLeft + (p.fret + 0.5) * colW, dy = gridTop + p.row * rowGap;
-      var col = p.tech ? LANE_COLORS[p.degree - 1] : (p.cur ? "#ffffff" : st.noteBg);
-      if (p.cur) { ctx.save(); ctx.shadowColor = col; ctx.shadowBlur = 12; }
-      ctx.fillStyle = col; dotAt(dx, dy, rad);
-      if (p.cur) ctx.restore();
-      ctx.lineWidth = 2; ctx.strokeStyle = p.cur ? "#fff" : "rgba(0,0,0,0.3)";
-      ctx.beginPath(); ctx.arc(dx, dy, rad, 0, Math.PI * 2); ctx.stroke(); ctx.lineWidth = 1;
-      ctx.fillStyle = p.tech ? "#161616" : st.noteFg;
-      ctx.font = "bold " + Math.round(rad * 0.95) + "px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(String(p.fret), dx, dy + 1);
-    }
-    // 範圍標示
-    ctx.fillStyle = "rgba(245,240,228,0.6)"; ctx.font = "13px system-ui, sans-serif";
-    ctx.textAlign = "left"; ctx.textBaseline = "top";
-    ctx.fillText(useBar ? ("第 " + (curB + 1) + "–" + (curB + 2) + " 小節") : ("接下來 " + win + " 拍"), fbLeft + 4, top + 3);
-    ctx.restore();
-  }
-
-  // 推弦特效：GP 譜風格的拋物線（先沿弦平走，再彎向下方目標；箭頭朝下）
-  function drawBendString(x, baseY, defl, nn) {
-    var col = LANE_COLORS[nn.degree - 1];
-    var x0 = x - Math.max(34, defl * 0.6);
-    ctx.save();
-    ctx.strokeStyle = col; ctx.lineWidth = 2.5; ctx.globalAlpha = 0.92; ctx.lineJoin = "round";
-    ctx.beginPath();
-    ctx.moveTo(x0, baseY);
-    ctx.bezierCurveTo(x, baseY, x, baseY + defl * 0.5, x, baseY + defl);
-    ctx.stroke();
-    ctx.restore();
-    ctx.lineWidth = 1;
-  }
-
-  // 搥弦/勾弦：連接起音與目的音的弧線 + H(搥)/P(勾) 標記
-  function drawHammerSlur(x1, y1, x2, y2, nn) {
-    var col = LANE_COLORS[nn.degree - 1], rad = 15, topy = Math.min(y1, y2) - 24, mx = (x1 + x2) / 2;
-    ctx.save();
-    ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.globalAlpha = 0.85;
-    ctx.beginPath();
-    ctx.moveTo(x1, y1 - rad);
-    ctx.quadraticCurveTo(mx, topy, x2, y2 - rad);
-    ctx.stroke();
-    ctx.restore();
-    ctx.fillStyle = col; ctx.font = "bold 12px system-ui, sans-serif";
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText((nn.linkFret != null && nn.linkFret > nn.fret) ? "H" : "P", mx, topy - 6);
-    ctx.lineWidth = 1;
-  }
-
-  // 滑音：穿過音符的斜線（往高音右上、往低音右下）
-  function drawSlide(x, y, nn) {
-    var col = LANE_COLORS[nn.degree - 1], L = 22;
-    var down = (nn.slideOut === 4 || nn.slideOut === 5 || nn.slideIn === 2);
-    ctx.save();
-    ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.lineCap = "round"; ctx.globalAlpha = 0.8;
-    ctx.beginPath();
-    if (down) { ctx.moveTo(x - L, y - L * 0.6); ctx.lineTo(x + L, y + L * 0.6); }
-    else { ctx.moveTo(x - L, y + L * 0.6); ctx.lineTo(x + L, y - L * 0.6); }
-    ctx.stroke();
-    ctx.restore();
-    ctx.lineWidth = 1; ctx.lineCap = "butt";
-  }
-
-  // 簡譜字符：級數(依級數上色) + 升降前綴 + 八度點
-  // 一拍(四分音符)秒數(已含倍速)
-  function beatSec() { return 60 / ((timeline && timeline.tempo) || 120) / (speed || 1); }
-  // 由時值(秒)推簡譜節奏記號：u=底線數(八分/十六分…)、d=增時線數(二分/全音符)、dot=附點
-  var RHYTHM_TABLE = [[4,0,3,0],[3,0,2,0],[2,0,1,0],[1.5,0,0,1],[1,0,0,0],[0.75,1,0,1],[0.5,1,0,0],[0.375,2,0,1],[0.25,2,0,0],[0.1875,3,0,1],[0.125,3,0,0]];
-  function rhythmMarks(durSec) {
-    var beats = durSec / beatSec();
-    if (!(beats > 0)) return { u: 0, d: 0, dot: false };
-    var lb = Math.log(beats), best = RHYTHM_TABLE[4], bd = 1e9;
-    for (var i = 0; i < RHYTHM_TABLE.length; i++) { var e = RHYTHM_TABLE[i], dd = Math.abs(lb - Math.log(e[0])); if (dd < bd) { bd = dd; best = e; } }
-    return { u: best[1], d: best[2], dot: !!best[3] };
-  }
-  // 由「書寫音值」精算節奏記號（連音正確：六連音的十六分仍畫兩條底線，不會被時值近似成三條）
-  // nv: 1全/2半/4四分/8八分/16十六分…；dots: 附點數。無 nv 時退回以時值近似。
-  function marksOf(o) {
-    if (o && typeof o.nv === "number" && o.nv > 0) {
-      var u = 0, d = 0, nv = o.nv;
-      if (nv >= 8) u = Math.round(Math.log(nv / 4) / Math.log(2)); // 8→1,16→2,32→3,64→4
-      else if (nv === 2) d = 1;                                    // 二分：一條增時線
-      else if (nv === 1) d = 3;                                    // 全音：三條增時線
-      return { u: u, d: d, dot: (o.dots || 0) > 0 };
-    }
-    return rhythmMarks(o && o.dur != null ? o.dur : 0);
-  }
-  // 畫節奏記號：底線在數字下、附點與增時線在數字右
-  function drawRhythmMarks(cx, y, hw, m, color, dashes) {
-    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineCap = "butt";
-    for (var i = 0; i < m.u; i++) { var uy = y + 13 + i * 4; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(cx - hw, uy); ctx.lineTo(cx + hw, uy); ctx.stroke(); }
-    var rx = cx + hw + 5;
-    if (m.dot) { ctx.beginPath(); ctx.arc(rx, y, 2.3, 0, Math.PI * 2); ctx.fill(); rx += 8; }
-    if (dashes) for (var d = 0; d < m.d; d++) { ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(rx, y); ctx.lineTo(rx + 11, y); ctx.stroke(); rx += 16; }
-  }
-
-  // 某時間點落在第幾拍（供 beam 分組）
-  function beatIndexOf(t) {
-    var idx = 0;
-    for (var i = 0; i < beatTimes.length; i++) { if (beatTimes[i] <= t + 1e-6) idx = i; else break; }
-    return idx;
-  }
-  // 底部簡譜列：數字＋依拍分組的連底線(beam)＋附點/增時線/八度點＋播放位置線
-  function drawJianpuStrip(notes, y, sTop, sH, hitX) {
-    var hw = 15, i, k, L;
-    for (i = 0; i < notes.length; i++) { var m = marksOf(notes[i]); notes[i].u = m.u; notes[i].d = m.d; notes[i].dot = m.dot; notes[i].beat = beatIndexOf(notes[i].t); }
-    // 連底線：同一拍內，每個層級(L=八分/十六分/三十二分)畫連續段落；四分無底線＝獨立
-    ctx.strokeStyle = "rgba(232,236,244,0.92)"; ctx.lineCap = "butt";
-    var gi = 0;
-    while (gi < notes.length) {
-      var gj = gi; while (gj + 1 < notes.length && notes[gj + 1].beat === notes[gi].beat) gj++;   // [gi..gj] 同拍
-      for (L = 1; L <= 3; L++) {
-        var runStart = -1;
-        for (k = gi; k <= gj + 1; k++) {
-          var has = (k <= gj) && notes[k].u >= L;
-          if (has && runStart < 0) runStart = k;
-          if (!has && runStart >= 0) {
-            var y2 = y + 18 + (L - 1) * 5;
-            var x0 = notes[runStart].x - hw, x1 = (k - 1 === runStart) ? notes[runStart].x + hw : notes[k - 1].x + hw;
-            ctx.lineWidth = 2.6; ctx.beginPath(); ctx.moveTo(x0, y2); ctx.lineTo(x1, y2); ctx.stroke();
-            runStart = -1;
-          }
-        }
-      }
-      gi = gj + 1;
-    }
-    // 數字＋附點＋增時線＋八度點＋KTV 高亮
-    for (i = 0; i < notes.length; i++) {
-      var n = notes[i], jp = n.jp, x = Math.round(n.x);
-      var col = jp.tech ? LANE_COLORS[jp.degree - 1] : NEUTRAL_NOTE;
-      if (n.cur) { ctx.fillStyle = "rgba(255,214,61,0.92)"; roundRect(x - 20, y - 24, 40, 54, 9); ctx.fill(); col = "#161616"; }
-      ctx.fillStyle = col; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.font = (n.grace ? "bold 19px" : (n.cur ? "bold 34px" : "bold 30px")) + " system-ui, sans-serif";  // 裝飾音＝小字
-      ctx.fillText(jp.symbol + String(jp.degree), x, y);
-      if (n.dot) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x + hw + 6, y, 3, 0, Math.PI * 2); ctx.fill(); }
-      for (var dd = 0; dd < n.d; dd++) { ctx.strokeStyle = col; ctx.lineWidth = 3; var rx = x + hw + 10 + dd * 18; ctx.beginPath(); ctx.moveTo(rx, y); ctx.lineTo(rx + 14, y); ctx.stroke(); }
-      var off = jp.octaveOffset;
-      if (off) {
-        ctx.fillStyle = n.cur ? "#161616" : col;
-        var cnt = Math.min(Math.abs(off), 3), sp = 9, r = 3, sx = x - (cnt - 1) * sp / 2, dy = off > 0 ? y - 23 : y + 22 + n.u * 5;
-        for (var q = 0; q < cnt; q++) { ctx.beginPath(); ctx.arc(sx + q * sp, dy, r, 0, Math.PI * 2); ctx.fill(); }
-      }
-    }
-    // 連音括線：同一 tuplet 組的連續音，上方畫方括線＋數字（三連音「3」、六連音「6」…）
-    i = 0;
-    while (i < notes.length) {
-      var tp = notes[i].tuplet;
-      if (!tp || tp.gid < 0) { i++; continue; }
-      var j = i;
-      while (j + 1 < notes.length && notes[j + 1].tuplet && notes[j + 1].tuplet.gid === tp.gid) j++;
-      if (j > i) {                                  // 至少兩個音才畫括線
-        var bx0 = notes[i].x - hw, bx1 = notes[j].x + hw, by = y - 33, mid = (bx0 + bx1) / 2;
-        ctx.strokeStyle = "rgba(180,210,255,0.92)"; ctx.fillStyle = "rgba(198,220,255,0.98)"; ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(bx0, by + 6); ctx.lineTo(bx0, by); ctx.lineTo(mid - 8, by);   // 左半 + 左端下勾
-        ctx.moveTo(mid + 8, by); ctx.lineTo(bx1, by); ctx.lineTo(bx1, by + 6);   // 右半 + 右端下勾
-        ctx.stroke();
-        ctx.font = "bold 13px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-        ctx.fillText(String(tp.n), mid, by);
-        ctx.lineWidth = 1;
-      }
-      i = j + 1;
-    }
-
-    // 播放位置線（即時彈到的位置）＋頂端三角
-    ctx.strokeStyle = "#ffd93d"; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(hitX, sTop); ctx.lineTo(hitX, sTop + sH); ctx.stroke();
-    ctx.fillStyle = "#ffd93d"; ctx.beginPath(); ctx.moveTo(hitX - 5, sTop); ctx.lineTo(hitX + 5, sTop); ctx.lineTo(hitX, sTop + 7); ctx.closePath(); ctx.fill();
-    ctx.lineWidth = 1;
-  }
-
-  // 五線譜音符定位：MIDI → 高音譜號的「線/間」階數（每階＝線到相鄰間；B4=中線=34）
-  var STAFF_STEP_OF_PC  = [0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6];   // C C# D D# E F F# G G# A A# B → 字母階
-  var STAFF_SHARP_OF_PC = [0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0];   // 黑鍵→要畫升記號
-  // 底部五線譜列：符頭(依音高落在線/間) + 符桿 + 加線 + 升記號 + 目前音高亮 + 播放位置線
-  //   lineGap=線距(依 band 高度縮放)；每階(半格)= lineGap/2
-  function drawStaffStrip(notes, jY, hitX, labelW, lineGap) {
-    lineGap = lineGap || 24;
-    var half = lineGap / 2, staffHalf = lineGap * 2;
-    var hw = lineGap * 0.62, rx = lineGap * 0.42, ry = lineGap * 0.32, stem = lineGap * 1.5;
-    function yOf(step) { return jY - (step - 34) * half; }
-    for (var i = 0; i < notes.length; i++) {
-      var n = notes[i], x = Math.round(n.x);
-      if (n.cur) { ctx.fillStyle = "rgba(255,214,61,0.16)"; roundRect(x - hw - 3, jY - staffHalf - 12, hw * 2 + 6, staffHalf * 2 + 24, 7); ctx.fill(); }
-      var col = n.cur ? "#ffd93d" : "rgba(240,244,252,0.97)";
-      for (var m = 0; m < n.midis.length; m++) {
-        var midi = n.midis[m] + 12, pcc = ((midi % 12) + 12) % 12;   // +12：吉他慣例，記譜比發聲高八度(音符落在譜表更集中)
-        var step = (Math.floor(midi / 12) - 1) * 7 + STAFF_STEP_OF_PC[pcc], y = yOf(step);
-        ctx.strokeStyle = "rgba(232,236,244,0.7)"; ctx.lineWidth = 1.6;   // 加線(超出 5 線時)
-        var s2;
-        if (step > 38) { for (s2 = 40; s2 <= step; s2 += 2) { ctx.beginPath(); ctx.moveTo(x - hw, yOf(s2)); ctx.lineTo(x + hw, yOf(s2)); ctx.stroke(); } }
-        else if (step < 30) { for (s2 = 28; s2 >= step; s2 -= 2) { ctx.beginPath(); ctx.moveTo(x - hw, yOf(s2)); ctx.lineTo(x + hw, yOf(s2)); ctx.stroke(); } }
-        var stemUp = step < 34;                                          // 符桿方向
-        ctx.strokeStyle = col; ctx.lineWidth = 2.2; ctx.beginPath();
-        if (stemUp) { ctx.moveTo(x + rx, y); ctx.lineTo(x + rx, y - stem); } else { ctx.moveTo(x - rx, y); ctx.lineTo(x - rx, y + stem); }
-        ctx.stroke();
-        ctx.save(); ctx.translate(x, y); ctx.rotate(-0.32);             // 符頭(實心橢圓、微斜)
-        ctx.fillStyle = col; ctx.beginPath(); ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-        if (STAFF_SHARP_OF_PC[pcc]) { ctx.fillStyle = col; ctx.font = Math.round(lineGap * 0.95) + "px system-ui, 'Apple Symbols', sans-serif"; ctx.textAlign = "right"; ctx.textBaseline = "middle"; ctx.fillText("♯", x - hw + 2, y); }
-      }
-    }
-    ctx.strokeStyle = "#ffd93d"; ctx.lineWidth = 2;                     // 播放位置線
-    ctx.beginPath(); ctx.moveTo(hitX, jY - staffHalf - 10); ctx.lineTo(hitX, jY + staffHalf + 10); ctx.stroke(); ctx.lineWidth = 1;
-  }
-
-  // 死音/悶音：六線譜上以灰色「✕」表示（無音高、不判定，純視覺參考）
-  function drawDeadNote(x, y) {
-    x = Math.round(x); y = Math.round(y);
-    var r = 9;
-    ctx.save();
-    ctx.strokeStyle = "rgba(210,210,210,0.9)"; ctx.lineWidth = 3.2; ctx.lineCap = "round";
-    ctx.beginPath(); ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y + r);
-    ctx.moveTo(x + r, y - r); ctx.lineTo(x - r, y + r); ctx.stroke();
-    ctx.strokeStyle = "rgba(0,0,0,0.35)"; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y + r);
-    ctx.moveTo(x + r, y - r); ctx.lineTo(x - r, y + r); ctx.stroke();
-    ctx.restore();
-  }
-
-  function drawTabNote(x, y, n, tier) {
-    x = Math.round(x); y = Math.round(y);          // 對齊像素，避免次像素抖動殘影
-    var rad = n.grace ? 12 : 20, tech = noteHasTech(n);   // 裝飾音＝GP 譜上的小字音符，畫小顆
-    if (!n.grace) return drawTabNoteBody(x, y, n, rad, tech);
-    ctx.save();
-    ctx.globalAlpha = 0.9;
-    drawTabNoteBody(x, y, n, rad, tech);
-    ctx.restore();
-  }
-  // 和弦名標籤（彩色小膠囊，畫在該拍上方）
-  function drawChordLabel(x, y, name, color) {
-    name = String(name); if (!name) return;
-    color = color || "rgba(224,164,75,0.95)";
-    ctx.save();
-    ctx.font = "bold 15px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    var w = ctx.measureText(name).width + 14, h = 20;
-    ctx.fillStyle = color;
-    roundRect(Math.round(x - w / 2), Math.round(y - h), w, h, 6); ctx.fill();
-    ctx.fillStyle = "#1a1206"; ctx.fillText(name, x, y - h / 2 + 1);
-    ctx.restore();
-  }
-  // 和弦「同上」重複記號（與前一個和弦相同時，不重畫和弦表，只畫一個彩色 ⁄ 斜線記號）
-  function drawChordRepeat(x, y, color) {
-    ctx.save();
-    ctx.strokeStyle = color || "#e0a44b"; ctx.lineWidth = 3; ctx.lineCap = "round";
-    ctx.beginPath(); ctx.moveTo(x - 7, y - 3); ctx.lineTo(x + 7, y - 15); ctx.stroke();      // 斜線
-    ctx.fillStyle = color || "#e0a44b";
-    ctx.beginPath(); ctx.arc(x - 9, y - 14, 1.8, 0, Math.PI * 2); ctx.fill();                 // 上下兩點(制音記號感)
-    ctx.beginPath(); ctx.arc(x + 9, y - 4, 1.8, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-  }
-  // 迷你和弦表：6 弦 × 幾格；frets=各弦格位(-1不彈/0空弦)，firstFret=起始格
-  function drawChordDiagram(x, y, frets, firstFret, color) {
-    if (!frets || !frets.length) return;
-    var n = frets.length;                                        // 弦數(通常 6)
-    var cw = 30, rows = 4, cellH = 8, colW = cw / (n - 1 > 0 ? n - 1 : 1);
-    var left = Math.round(x - cw / 2), top = Math.round(y - rows * cellH);
-    ctx.save();
-    color = color || "#e0a44b";
-    // 底板
-    ctx.fillStyle = "rgba(20,16,10,0.85)"; roundRect(left - 4, top - 8, cw + 8, rows * cellH + 12, 4); ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,0.35)"; ctx.lineWidth = 1;
-    for (var r = 0; r <= rows; r++) { ctx.beginPath(); ctx.moveTo(left, top + r * cellH); ctx.lineTo(left + cw, top + r * cellH); ctx.stroke(); }
-    if ((firstFret || 0) <= 1) { ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(left, top); ctx.lineTo(left + cw, top); ctx.stroke(); }  // 上弦枕
-    ctx.strokeStyle = "rgba(255,255,255,0.5)"; ctx.lineWidth = 1;
-    for (var s = 0; s < n; s++) { var sx = left + s * colW; ctx.beginPath(); ctx.moveTo(sx, top); ctx.lineTo(sx, top + rows * cellH); ctx.stroke(); }
-    // 各弦標記：中文吉他和弦表最低音弦在左；alphaTab strings[0] 多為第 1 弦(高音)→反轉讓低音在左
-    for (var i = 0; i < n; i++) {
-      var f = frets[i], sx2 = left + (n - 1 - i) * colW;
-      if (f < 0) { ctx.fillStyle = "rgba(255,255,255,0.7)"; ctx.font = "9px system-ui"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("✕", sx2, top - 4); }
-      else if (f === 0) { ctx.strokeStyle = "rgba(255,255,255,0.7)"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(sx2, top - 4, 2.4, 0, Math.PI * 2); ctx.stroke(); }
-      else {
-        var fr = f - (firstFret > 1 ? firstFret - 1 : 0);       // 相對起始格
-        if (fr < 1) fr = 1; if (fr > rows) fr = rows;
-        ctx.fillStyle = color; ctx.beginPath(); ctx.arc(sx2, top + (fr - 0.5) * cellH, 3, 0, Math.PI * 2); ctx.fill();
-      }
-    }
-    if (firstFret > 1) { ctx.fillStyle = "rgba(255,255,255,0.8)"; ctx.font = "8px system-ui"; ctx.textAlign = "right"; ctx.textBaseline = "middle"; ctx.fillText(firstFret + "fr", left - 5, top + cellH * 0.5); }
-    ctx.restore();
-  }
-  function drawTabNoteBody(x, y, n, rad, tech) {
-    var col = tech ? LANE_COLORS[n.degree - 1] : NEUTRAL_NOTE;   // 單音中性色，技巧才上色
-    ctx.save();
-    if (n.palmMute) ctx.globalAlpha = 0.55;         // 悶音：暗化
-    ctx.fillStyle = col;
-    if (n.harmonic) {                               // 泛音：菱形 + 亮邊
-      diamondPath(x, y, rad); ctx.fill();
-      ctx.lineWidth = 2; ctx.strokeStyle = "rgba(255,255,255,0.85)";
-      diamondPath(x, y, rad); ctx.stroke();
-    } else {                                        // 一般：銳利實心圓
-      ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.fill();
-      ctx.lineWidth = 2; ctx.strokeStyle = "rgba(0,0,0,0.28)";
-      ctx.beginPath(); ctx.arc(x, y, rad, 0, Math.PI * 2); ctx.stroke();
-    }
-    ctx.restore();
-    ctx.lineWidth = 1;
-    if (n.chordNote) {                              // 屬於和弦的單音：彩色外環特別標注(同和弦同色)
-      ctx.save();
-      ctx.strokeStyle = n.chordColor || "rgba(224,164,75,0.95)"; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(x, y, rad + 4, 0, Math.PI * 2); ctx.stroke();
-      ctx.restore();
-    }
-    ctx.fillStyle = "#161616"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.font = "bold " + (rad >= 18 ? 19 : Math.max(10, Math.round(rad * 1.05))) + "px system-ui, sans-serif";  // 小顆(裝飾音)字級跟著縮
-    ctx.fillText(String(n.fret), x, y + 1);
-    // 技巧標記
-    if (n.bend > 0) {                               // 推弦向下箭頭
-      ctx.strokeStyle = col; ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.moveTo(x - 6, y + rad + 5); ctx.lineTo(x, y + rad + 12); ctx.lineTo(x + 6, y + rad + 5);
-      ctx.stroke(); ctx.lineWidth = 1;
-    }
-    if (n.vibrato) {                                // 揉弦波浪標記
-      ctx.strokeStyle = col; ctx.lineWidth = 2;
-      var wy = y - rad - 7;
-      ctx.beginPath();
-      ctx.moveTo(x - 9, wy); ctx.quadraticCurveTo(x - 4.5, wy - 4, x, wy);
-      ctx.quadraticCurveTo(x + 4.5, wy + 4, x + 9, wy);
-      ctx.stroke(); ctx.lineWidth = 1;
-    }
-    if (n.palmMute) {                               // 悶音 PM 標記
-      ctx.fillStyle = col; ctx.font = "bold 10px system-ui, sans-serif";
-      ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText("PM", x, y - rad - 8);
-    }
-    if (n.tap) {                                    // 點弦：左上角 T
-      ctx.fillStyle = col; ctx.font = "bold 13px system-ui, sans-serif";
-      ctx.textAlign = "right"; ctx.textBaseline = "middle";
-      ctx.fillText("T", x - rad - 2, y - rad + 5);
-    }
-    if (n.trill) {                                  // 顫音：右上角 tr
-      ctx.fillStyle = col; ctx.font = "bold italic 13px system-ui, sans-serif";
-      ctx.textAlign = "left"; ctx.textBaseline = "middle";
-      ctx.fillText("tr", x + rad + 2, y - rad + 5);
-    }
-    if (n.tremolo) {                                // 震音撥弦：音符上方三條斜線
-      ctx.strokeStyle = col; ctx.lineWidth = 2.2; ctx.lineCap = "round";
-      var ty = y - rad - 4;
-      for (var s = -1; s <= 1; s++) { ctx.beginPath(); ctx.moveTo(x + s * 6 - 3, ty + 3); ctx.lineTo(x + s * 6 + 3, ty - 3); ctx.stroke(); }
-      ctx.lineWidth = 1; ctx.lineCap = "butt";
-    }
-    if (n.staccato) {                               // 斷奏：音符上方一個小實心點
-      ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y - rad - 6, 2.6, 0, Math.PI * 2); ctx.fill();
-    }
-    if (n.letRing) {                                // 延音：往右延伸的虛線 + L.R.
-      ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.setLineDash([3, 3]);
-      ctx.beginPath(); ctx.moveTo(x + rad + 3, y); ctx.lineTo(x + rad + 26, y); ctx.stroke();
-      ctx.setLineDash([]); ctx.lineWidth = 1;
-      ctx.fillStyle = col; ctx.font = "bold 8px system-ui, sans-serif";
-      ctx.textAlign = "left"; ctx.textBaseline = "bottom";
-      ctx.fillText("L.R.", x + rad + 3, y - 2);
-    }
-  }
-  function diamondPath(x, y, r) {
-    ctx.beginPath();
-    ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath();
-  }
-
-  function drawPopupsHorizontal(hitX, topPad) {
-    var labels = { perfect: ["PERFECT", "#ffd93d"], great: ["GREAT", "#5ec26a"], good: ["GOOD", "#5b8def"], miss: ["MISS", "#ff5d6c"] };
-    var shown = 0;
-    for (var i = popups.length - 1; i >= 0; i--) {
-      var p = popups[i]; p.t += 1 / 60;
-      if (p.t > 0.6) { popups.splice(i, 1); continue; }
-      if (shown++ > 3) continue;
-      var alpha = 1 - p.t / 0.6, info = labels[p.tier];
-      ctx.globalAlpha = alpha; ctx.fillStyle = info[1];
-      ctx.font = "bold 22px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(info[0], hitX, topPad - 26 - p.t * 26); ctx.globalAlpha = 1;
-    }
-  }
-
-  function drawHud(songTime) {
-    els.hudScore.textContent = score.toLocaleString();
-    els.hudCombo.textContent = current.combo > 1
-      ? ((comboMult(current.combo) >= 2 ? "×" + comboMult(current.combo) + "　" : "") + current.combo + " combo")
-      : "";
-    var total = stats.perfect + stats.great + stats.good + stats.miss;
-    var accSum = stats.perfect * ACC.perfect + stats.great * ACC.great + stats.good * ACC.good;
-    els.hudAcc.textContent = (total ? (accSum / total * 100) : 100).toFixed(1) + "%";
-    els.progressFill.style.width = (Math.max(0, Math.min(1, songTime / (songDuration || 1))) * 100) + "%";
-  }
-
-  function drawCenterText(text, big) {
-    if (!text) return;
-    ctx.fillStyle = "rgba(0,0,0,0.35)"; ctx.fillRect(0, H / 2 - 60, W, 120);
-    ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.font = (big ? "bold 72px" : "bold 28px") + " system-ui, sans-serif";
-    ctx.fillText(text, W / 2, H / 2);
-  }
-
-  function roundRect(x, y, w, h, r) {
-    ctx.beginPath(); ctx.moveTo(x + r, y);
-    ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
-    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
-  }
-  function escapeHtml(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
-  function fmtTime(sec) { sec = Math.max(0, Math.round(sec)); var m = Math.floor(sec / 60), s = sec % 60; return m + ":" + (s < 10 ? "0" : "") + s; }
-
-  window.JianpuGame = {
-    loadArrayBuffer: loadArrayBuffer,
-    gateOwnUse: gateOwnUse,              // 我的曲庫(自己上傳)播放前呼叫，未開通者扣每日免費次數
-    ownGateBlockedMsg: ownGateBlockedMsg,
-    start: startGame,
-    getState: function () { return state; },
-    getDebug: function () { return { score: score, combo: current && current.combo, stats: stats, songTime: A.getSongTime(), items: items && items.length, displayMode: displayMode, inputMode: inputMode }; },
-    _micTick: function () { micTick(A.getSongTime()); }   // 測試用：手動觸發一次收音判定
-  };
-
-  document.addEventListener("DOMContentLoaded", init);
-})();
+(function(){"use strict";var T=window.Theory,GP=window.GPLoader,A=window.GameAudio,P=window.Pitch;var LANES=7;var LANE_KEYS=["1","2","3","4","5","6","7"];var LANE_COLORS=["#ff5d6c","#ff9f43","#ffd93d","#5ec26a","#3fc7bb","#5b8def","#b06bff"];var LANE_NAMES=["Do","Re","Mi","Fa","Sol","La","Si"];var NEUTRAL_NOTE="#dfe3ea";var FRETBOARD_STYLES={rosewood:{label:"玫瑰木·圓點",wood:["#5b3b25","#38230f"],inlay:"dot",inlayColor:"rgba(243,238,222,0.55)",fretwire:"rgba(205,210,218,0.5)",nut:"#e9e1cd",string:"rgba(238,232,215,0.22)",noteBg:"#dfe3ea",noteFg:"#161616"},ebony:{label:"黑檀·圓點",wood:["#34343c","#141416"],inlay:"dot",inlayColor:"rgba(232,234,240,0.6)",fretwire:"rgba(200,205,215,0.6)",nut:"#d8d4c8",string:"rgba(215,218,228,0.25)",noteBg:"#dfe3ea",noteFg:"#161616"},maple:{label:"楓木·黑點",wood:["#e2c286","#c99f56"],inlay:"dot",inlayColor:"rgba(30,22,10,0.6)",fretwire:"rgba(110,95,70,0.75)",nut:"#4a3418",string:"rgba(70,52,28,0.32)",noteBg:"#2f2a20",noteFg:"#f2ede0"},block:{label:"黑檀·方塊",wood:["#34343c","#141416"],inlay:"block",inlayColor:"rgba(238,236,228,0.9)",fretwire:"rgba(200,205,215,0.6)",nut:"#d8d4c8",string:"rgba(215,218,228,0.25)",noteBg:"#dfe3ea",noteFg:"#161616"},shark:{label:"黑檀·鯊魚鰭",wood:["#241f2c","#100e18"],inlay:"shark",inlayColor:"rgba(226,230,240,0.9)",fretwire:"rgba(200,205,215,0.6)",nut:"#d8d4c8",string:"rgba(215,218,228,0.25)",noteBg:"#dfe3ea",noteFg:"#161616"},vine:{label:"生命樹·藤蔓",wood:["#3a2416","#201004"],inlay:"vine",inlayColor:"rgba(210,228,196,0.85)",fretwire:"rgba(210,190,120,0.55)",nut:"#e0c878",string:"rgba(235,225,200,0.24)",noteBg:"#dfe3ea",noteFg:"#161616"}};var INLAY_SINGLE=[3,5,7,9,15,17,19,21];var INLAY_DOUBLE=[12,24];var NOTE_NAMES=["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];var DIFFICULTY={easy:{vel:260,lead:1.6,label:"簡單"},normal:{vel:360,lead:1.2,label:"普通"},hard:{vel:500,lead:0.9,label:"困難"}};var W_PERFECT=0.100,W_GREAT=0.200,W_GOOD=0.290,W_MISS=0.350;var JUDGE_OFFSET=0.010;var OFFSET_KEY="jianpu_judge_offset";var MIC_PITCH_TOL=1;var SCORE={perfect:1000,great:650,good:300};var ACC={perfect:1,great:0.65,good:0.3,miss:0};var STORE_KEY="jianpu_mic_settings";var state="idle";var displayMode="tab";var inputMode="mic";var score,current,stats,travel,tonicPc;var timeline,tabTL,items,tabInfo={tuning:[64,59,55,50,45,40],stringCount:6};var speed=1,melodyNotes=[],songDuration=0;var barStartsScaled=[];var beatTimes=[],beatAccents=[],beatInBar=[],beatDurs=[],beatsPerBar=[],_metroIdx=0,_grooveIdx=0;var genre="none";var GENRE_KEY="jianpu_genre";var TONE_KEY="jianpu_tone";var CAB_KEY="jianpu_cab";var bgImage=null;var CHAR_BG_SRC={lulan:"assets/lulan-bg.webp",family:"assets/family-bg.webp"};var charBg={};Object.keys(CHAR_BG_SRC).forEach(function(k){var im=new Image();im.src=CHAR_BG_SRC[k];charBg[k]=im;});var lulanBg=charBg.lulan;var lulanSweat=[];var bgOpacity=0.55;var bigJudge=null;var charPulse=0;var guitaristId="beethoven";var GUITARIST_KEY="jianpu_guitarist";var hypeShown=0;var comboBurst={t:999,level:0};var countBeat=0.5;var stageProcedural=false;var stageOn=false;var popups,dpr=1;var canvas,ctx,W=0,H=0,judgeY=0;var els={};var micCand=-1,micStable=0,micLastPc=-1,micWasSilent=true,micDisp={midi:null,rms:0,t:0};var micSmooth=0,micPrevSmooth=0,micOnsetT=-9,micLastHit=-9;var micGate=0.012,micLatencyMs=50,micTesting=false;function $(id){return document.getElementById(id);}
+function init(){["fileInput","dropZone","trackSelect","keySelect","difficultySelect","displaySelect","inputSelect","melodyToggle","startBtn","pauseBtn","restartBtn","backBtn","songInfo","status","setupPanel","gameWrap","hudScore","hudCombo","hudAcc","hudTitle","progressFill","result","resultBody","micHud","micNote","micLevel","micSettings","sensRange","sensVal","latRange","latVal","micTestBtn","testNote","testLevel","autoCalBtn","leaderboard","calibModal","calibDot","calibProg","calibResult","calibClose","calibCancel","speedRange","speedVal","bottomSelect","fretWindowSelect","fretStyleSelect","bgInput","bgTip","guitaristSelect","metronomeToggle","genreSelect","bgOpacityRange","bgOpacityVal","audioInSelect","audioInTip","audioInCount","audioInNow","audioInList","audioInRescan","audioInUnlock","ampToggle","ampControls","ampDrive","ampDriveVal","ampLevel","ampLevelVal","ampBuffer","ampLatNow","gateToggle","gateControls","gateThresh","gateThreshVal","gateAutoBtn","gateMeter","gateLed","gateTip","odToggle","odControls","odDrive","odDriveVal","odTone","odToneVal","odLevel","odLevelVal","toneBass","toneBassVal","toneMid","toneMidVal","toneTreble","toneTrebleVal","tonePresence","tonePresenceVal","dlyToggle","dlyControls","dlyTime","dlyTimeVal","dlyFb","dlyFbVal","dlyMix","dlyMixVal","tunerToggle","tunerDisplay","tunerNote","tunerNeedle","tunerCents","liteToggle","liteControls","liteConnectBtn","liteTestBtn","liteStatus","liteColorMain","liteNextToggle","liteColorNext","liteBright","liteBrightVal","liteLead","liteLeadVal","liteReverse","liteTip"].forEach(function(id){els[id]=$(id);});canvas=$("gameCanvas");ctx=canvas.getContext("2d");var opts='<option value="auto">自動偵測</option>';T.KEY_OPTIONS.forEach(function(k){opts+='<option value="'+k.value+'">'+k.label+'</option>';});els.keySelect.innerHTML=opts;els.fileInput.addEventListener("change",function(e){if(e.target.files&&e.target.files[0])loadFile(e.target.files[0]);});["dragover","dragenter"].forEach(function(ev){els.dropZone.addEventListener(ev,function(e){e.preventDefault();els.dropZone.classList.add("drag");});});["dragleave","drop"].forEach(function(ev){els.dropZone.addEventListener(ev,function(e){e.preventDefault();els.dropZone.classList.remove("drag");});});els.dropZone.addEventListener("drop",function(e){var f=e.dataTransfer.files&&e.dataTransfer.files[0];if(f)loadFile(f);});els.dropZone.addEventListener("click",function(){ensureAlphaTab().catch(function(){});els.fileInput.click();});els.dropZone.addEventListener("pointerenter",function(){ensureAlphaTab().catch(function(){});},{once:true});buildSampleList();updateOwnGateTip();if(window.JianpuAuth&&window.JianpuAuth.onChange)window.JianpuAuth.onChange(updateOwnGateTip);loadPaidFolders();renderLibUnlock();renderAccountBox();if(accountEmail()){refreshAccountState();if(window.JianpuAuth&&window.JianpuAuth.onChange){var _p=false;window.JianpuAuth.onChange(function(){if(!_p){_p=true;refreshAccountState();}});}}
+checkForUpdate();setupAudioInputs();setupTosBar();setupMenuBgm();setupVirtualAmp();setupTuner();els.trackSelect.addEventListener("change",rebuildTimeline);els.keySelect.addEventListener("change",rebuildTimeline);els.displaySelect.addEventListener("change",rebuildTimeline);els.inputSelect.addEventListener("change",onInputModeChange);els.speedRange.addEventListener("input",function(){speed=parseFloat(els.speedRange.value)||1;updateSpeedLabel();if(window._score){buildItems();updateSongInfo();}});updateSpeedLabel();els.bottomSelect.addEventListener("change",updateFretControls);els.bgInput.addEventListener("change",function(e){var f=e.target.files&&e.target.files[0];if(!f)return;loadBackgroundPhoto(f);});els.bgOpacityRange.addEventListener("input",function(){bgOpacity=(parseInt(els.bgOpacityRange.value,10)||55)/100;els.bgOpacityVal.textContent=Math.round(bgOpacity*100)+"%";});try{var gv=localStorage.getItem(GUITARIST_KEY);if(gv&&els.guitaristSelect.querySelector('option[value="'+gv+'"]'))els.guitaristSelect.value=gv;}catch(e){}
+guitaristId=els.guitaristSelect.value;els.guitaristSelect.addEventListener("change",function(){if(!charUnlocked(els.guitaristSelect.value)){els.guitaristSelect.value=charUnlocked(guitaristId)?guitaristId:"beethoven";setStatus(els.guitaristSelect.value==="lulan"?"":"這個角色還沒解鎖喔。",true);return;}
+guitaristId=els.guitaristSelect.value;try{localStorage.setItem(GUITARIST_KEY,guitaristId);}catch(e){}});refreshGuitaristLocks();A.setTone("high");A.setCab("synth");try{var gv2=localStorage.getItem(GENRE_KEY);if(gv2&&els.genreSelect.querySelector('option[value="'+gv2+'"]'))els.genreSelect.value=gv2;}catch(e){}
+genre=els.genreSelect.value;els.genreSelect.addEventListener("change",function(){genre=els.genreSelect.value;try{localStorage.setItem(GENRE_KEY,genre);}catch(e){}});initLiteJam();loadMicSettings();onInputModeChange();els.sensRange.addEventListener("input",function(){applySens();saveMicSettings();});els.latRange.addEventListener("input",function(){applyLatency();saveMicSettings();});els.micTestBtn.addEventListener("click",toggleMicTest);els.autoCalBtn.addEventListener("click",autoCalibrate);els.calibCancel.addEventListener("click",cancelCalib);els.calibClose.addEventListener("click",cancelCalib);els.startBtn.addEventListener("click",startGame);els.pauseBtn.addEventListener("click",togglePause);els.restartBtn.addEventListener("click",startGame);els.backBtn.addEventListener("click",backToSetup);$("resultRetry").addEventListener("click",startGame);$("resultBack").addEventListener("click",backToSetup);window.addEventListener("keydown",onKeyDown);window.addEventListener("resize",resize);document.addEventListener("visibilitychange",function(){if(document.hidden&&state==="playing")togglePause();});resize();requestAnimationFrame(loop);setStatus("請載入一個 Guitar Pro 檔（.gp / .gpx / .gp5 / .gp4 / .gp3）開始。");}
+function setStatus(msg,isError){els.status.textContent=msg||"";els.status.className="status"+(isError?" error":"");}
+function onInputModeChange(){var mic=els.inputSelect.value==="mic";els.micSettings.classList.toggle("hidden",!mic);if(mic){refreshAudioInputs();}
+if(!mic&&micTesting)toggleMicTest();}
+function micDeviceId(){return(els.audioInSelect&&els.audioInSelect.value)||"";}
+var _devPrev=null;function shortDevName(label){return String(label||"").replace(/^\s*(預設|默认|默認|Default)\s*-\s*/i,"").replace(/\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$/i,"").trim();}
+function refreshAudioInputs(){if(!P.listInputs)return Promise.resolve();var sel=els.audioInSelect;if(!sel)return Promise.resolve();var prev=_devPrev||sel.value;return P.listInputs().then(function(list){var act=P.activeInput?P.activeInput():null;var real=list.filter(function(d){return d.id!=="default"&&d.id!=="communications";});var aliasDef=null;list.forEach(function(d){if(d.id==="default"&&d.label)aliasDef=d;});var defName=aliasDef?shortDevName(aliasDef.label):"";var named=0;var html='<option value="">預設輸入裝置'+
+(defName?'（系統目前：'+escapeHtml(defName)+'）':'（系統設定）')+'</option>';real.forEach(function(d,i){var nm=d.label?shortDevName(d.label):("輸入裝置 "+(i+1)+"（授權後顯示名稱）");if(d.label)named++;var using=act&&act.id&&d.id===act.id;html+='<option value="'+escapeHtml(d.id)+'">'+(using?"🎤 ":"")+escapeHtml(nm)+(using?"（使用中）":"")+'</option>';});sel.innerHTML=html;if(prev&&sel.querySelector('option[value="'+prev.replace(/"/g,'\\"')+'"]'))sel.value=prev;_devPrev=sel.value;if(els.audioInCount)els.audioInCount.textContent=real.length?"（找到 "+real.length+" 個）":"（找不到輸入裝置）";if(els.audioInList){if(!real.length)els.audioInList.innerHTML="";else if(!named)els.audioInList.innerHTML="🎚 偵測到 <b>"+real.length+"</b> 個音源，但名稱要授權後才看得到（按下面的「顯示裝置名稱」）。";else{var picked=sel.value;els.audioInList.innerHTML="🎚 偵測到的音源："+real.map(function(d){var nm=escapeHtml(shortDevName(d.label)||"未命名裝置");var isPick=picked?(d.id===picked):(aliasDef&&d.label===aliasDef.label.replace(/^\s*(預設|Default)\s*-\s*/i,""));return(d.id===picked)?'<span class="dev-pick">✓ '+nm+'</span>':nm;}).join('<span class="dev-dot">·</span>');}}
+if(els.audioInNow){if(act){els.audioInNow.className="ms-tip dev-now";els.audioInNow.innerHTML="🎤 目前收音：<b>"+escapeHtml(shortDevName(act.label)||"預設裝置")+"</b>　"+
+(act.sampleRate?(act.sampleRate/1000).toFixed(1)+" kHz":"")+
+(act.channels?" · "+act.channels+" ch":"");}else{els.audioInNow.className="ms-tip";els.audioInNow.innerHTML="尚未開始收音（按「測試麥克風」或開始遊戲後，這裡會顯示實際使用的裝置）。";}}
+var needUnlock=real.length>0&&named===0;if(els.audioInUnlock)els.audioInUnlock.style.display=needUnlock?"":"none";if(els.audioInTip){if(!real.length)els.audioInTip.innerHTML="⚠️ 沒偵測到任何音訊輸入裝置。請確認麥克風／錄音介面已接上，再按「重新掃描」。";else if(needUnlock)els.audioInTip.innerHTML="🔒 瀏覽器規定<b>授權麥克風後才能顯示裝置名稱</b>——按「顯示裝置名稱」授權一次即可（不會開始錄音）。";else els.audioInTip.innerHTML="💡 接錄音介面的話請在上面<b>直接選那一台</b>（音質與延遲最好）；選「預設」會跟著系統設定跑。插拔裝置會自動重新掃描。";}
+return real;}).catch(function(){return[];});}
+function unlockDeviceNames(){if(!P.unlockDeviceLabels)return;els.audioInUnlock.disabled=true;P.unlockDeviceLabels().then(function(){return refreshAudioInputs();}).catch(function(e){if(els.audioInTip)els.audioInTip.innerHTML="❌ 沒有取得麥克風權限："+escapeHtml((e&&e.message)||String(e))+"（可到瀏覽器網址列左邊的鎖頭圖示重新允許）";}).then(function(){els.audioInUnlock.disabled=false;});}
+function onAudioInChange(){_devPrev=els.audioInSelect.value;if(!P.isActive()){refreshAudioInputs();return;}
+if(els.audioInNow)els.audioInNow.innerHTML="切換裝置中…";P.restart(micDeviceId()).then(function(){if(els.ampToggle&&els.ampToggle.checked)P.setAmp(true);refreshAudioInputs();}).catch(function(e){if(els.audioInTip)els.audioInTip.innerHTML="❌ 切換裝置失敗："+escapeHtml((e&&e.message)||String(e));});}
+function setupAudioInputs(){if(!els.audioInSelect)return;els.audioInSelect.addEventListener("change",onAudioInChange);if(els.audioInRescan)els.audioInRescan.addEventListener("click",function(){refreshAudioInputs();});if(els.audioInUnlock)els.audioInUnlock.addEventListener("click",unlockDeviceNames);if(P.onDeviceChange)P.onDeviceChange(function(){refreshAudioInputs();});refreshAudioInputs();}
+function loadMicSettings(){try{var s=JSON.parse(localStorage.getItem(STORE_KEY)||"{}");if(typeof s.sens==="number")els.sensRange.value=s.sens;if(typeof s.lat==="number")els.latRange.value=s.lat;}catch(e){}
+applySens();applyLatency();}
+function saveMicSettings(){try{localStorage.setItem(STORE_KEY,JSON.stringify({sens:+els.sensRange.value,lat:+els.latRange.value}));}catch(e){}}
+var LITE_KEY="jianpu_litejam";var liteEnabled=false;var lite=(window.JianpuLite&&window.JianpuLite.instance)||null;var _liteCurIdx=-1;var _liteTesting=false;function liteLoad(){var s={};try{s=JSON.parse(localStorage.getItem(LITE_KEY)||"{}");}catch(e){}
+if(typeof s.enabled==="boolean")liteEnabled=s.enabled;if(els.liteColorMain&&s.colorMain)els.liteColorMain.value=s.colorMain;if(els.liteColorNext&&s.colorNext)els.liteColorNext.value=s.colorNext;if(els.liteNextToggle&&typeof s.showNext==="boolean")els.liteNextToggle.checked=s.showNext;if(els.liteBright&&typeof s.bright==="number")els.liteBright.value=s.bright;if(els.liteLead&&typeof s.lead==="number")els.liteLead.value=s.lead;if(els.liteReverse&&typeof s.reverse==="boolean")els.liteReverse.checked=s.reverse;}
+function liteSave(){try{localStorage.setItem(LITE_KEY,JSON.stringify({enabled:liteEnabled,colorMain:els.liteColorMain?els.liteColorMain.value:"#00e0ff",colorNext:els.liteColorNext?els.liteColorNext.value:"#ff9a3c",showNext:els.liteNextToggle?els.liteNextToggle.checked:true,bright:els.liteBright?+els.liteBright.value:80,lead:els.liteLead?+els.liteLead.value:0,reverse:els.liteReverse?els.liteReverse.checked:false,}));}catch(e){}}
+function liteBrightVal(){return(els.liteBright?+els.liteBright.value:80)/100;}
+function liteSetStatus(text,cls){if(!els.liteStatus)return;els.liteStatus.textContent=text;els.liteStatus.className="lite-status"+(cls?" "+cls:"");}
+function liteRefreshStatus(){if(!lite)return;var connected=lite.status==="connected";if(connected){var extra=(lite.battery!=null?"　🔋"+lite.battery+"%":"");liteSetStatus("已連線："+(lite.deviceName||"LiteJam")+extra,"connected");if(els.liteConnectBtn)els.liteConnectBtn.textContent="✂ 中斷連線";}else if(lite.status==="connecting"){liteSetStatus("連線中…","connecting");}else{liteSetStatus("未連線","");if(els.liteConnectBtn)els.liteConnectBtn.textContent="🔗 連接吉他";}
+if(els.liteTestBtn)els.liteTestBtn.disabled=!connected||_liteTesting;}
+function initLiteJam(){if(!els.liteToggle)return;liteLoad();if(!lite||!lite.supported()){liteEnabled=false;els.liteToggle.checked=false;els.liteToggle.disabled=true;if(els.liteTip)els.liteTip.innerHTML="⚠️ 這個瀏覽器不支援 Web Bluetooth，無法連動 LiteJam。請用<b>電腦版 Chrome / Edge</b>（Safari、iPhone 不支援）。";return;}
+els.liteToggle.checked=liteEnabled;els.liteControls.classList.toggle("hidden",!liteEnabled);if(els.liteBrightVal)els.liteBrightVal.textContent=els.liteBright.value+"%";if(els.liteLeadVal)els.liteLeadVal.textContent=els.liteLead.value+" ms";els.liteToggle.addEventListener("change",function(){liteEnabled=els.liteToggle.checked;els.liteControls.classList.toggle("hidden",!liteEnabled);liteSave();if(!liteEnabled)liteClear();});els.liteConnectBtn.addEventListener("click",function(){if(lite.status==="connected"){lite.disconnect();return;}
+liteSetStatus("連線中…","connecting");lite.connect().then(function(snap){if(snap)liteRefreshStatus();else liteRefreshStatus();}).catch(function(err){liteSetStatus((err&&err.message)||"連線失敗","error");});});on(els.liteTestBtn,"click",liteTest);on(els.liteColorMain,"input",liteSave);on(els.liteColorNext,"input",liteSave);on(els.liteNextToggle,"change",liteSave);on(els.liteReverse,"change",liteSave);on(els.liteBright,"input",function(){if(els.liteBrightVal)els.liteBrightVal.textContent=els.liteBright.value+"%";liteSave();});on(els.liteLead,"input",function(){if(els.liteLeadVal)els.liteLeadVal.textContent=els.liteLead.value+" ms";liteSave();});lite.on("state",liteRefreshStatus);lite.on("status",liteRefreshStatus);lite.on("error",function(d){if(lite.status!=="connected")liteSetStatus((d&&d.message)||"連線失敗","error");});liteRefreshStatus();}
+function on(el,type,fn){if(el)el.addEventListener(type,fn);}
+function liteHwString(atString){var guitar=7-atString;return(els.liteReverse&&els.liteReverse.checked)?(7-guitar):guitar;}
+function liteNotesOf(item){if(!item||!item.notes||!item.notes.length)return[];var out=[];for(var i=0;i<item.notes.length;i++){var n=item.notes[i];if(n.string==null||n.fret==null||n.fret<0)continue;out.push({string:liteHwString(n.string),fret:n.fret});}
+return out;}
+var LITE_BEND_STEP=0.085;function liteBendCount(bend){return Math.max(1,Math.min(5,Math.round((bend||0)/2)));}
+function liteBendStrings(item,elapsed){if(!item||!item.notes)return[];var step=1+Math.floor(Math.max(0,elapsed)/LITE_BEND_STEP);var out=[];for(var i=0;i<item.notes.length;i++){var n=item.notes[i];if(!(n.bend>0)||n.string==null||n.fret==null||n.fret<0)continue;var gstr=7-n.string;var dir=gstr<=3?1:-1;var lim=Math.min(step,liteBendCount(n.bend));for(var k=1;k<=lim;k++){var gs=gstr+dir*k;if(gs>=1&&gs<=6)out.push({string:liteHwString(7-gs),fret:n.fret});}}
+return out;}
+function liteBeatIndexAt(t){if(!items||!items.length)return-1;var i=_liteCurIdx;if(i<0||i>=items.length||items[i].time>t)i=-1;while(i+1<items.length&&items[i+1].time<=t)i++;_liteCurIdx=i;return i;}
+function liteFirstWithNotes(from,dir){for(var i=from;i>=0&&i<items.length;i+=dir)if(items[i].notes&&items[i].notes.length)return i;return-1;}
+function updateLite(songTime){if(!lite||!liteEnabled||lite.status!=="connected"||_liteTesting)return;var lead=(els.liteLead?+els.liteLead.value:0)/1000;songTime+=lead;var b=liteBrightVal();var mainCol=window.JianpuLite.scaleColor(window.JianpuLite.hexToRgb(els.liteColorMain?els.liteColorMain.value:"#00e0ff"),b);var groups=[];var curRaw=liteBeatIndexAt(songTime);var curIdx=(curRaw>=0&&items[curRaw].notes&&items[curRaw].notes.length)?curRaw:liteFirstWithNotes(curRaw,-1);var now=curIdx>=0?liteNotesOf(items[curIdx]):[];if(curIdx>=0){var bendLeds=liteBendStrings(items[curIdx],songTime-items[curIdx].time);for(var q=0;q<bendLeds.length;q++)now.push(bendLeds[q]);}
+if(now.length)groups.push({leds:window.JianpuLite.packNotes(now),color:mainCol});if(els.liteNextToggle&&els.liteNextToggle.checked){var nextIdx=liteFirstWithNotes((curRaw<0?0:curRaw+1),1);if(nextIdx>=0){var next=liteNotesOf(items[nextIdx]);var taken={};for(var t=0;t<now.length;t++)taken[now[t].string+":"+now[t].fret]=1;var preview=next.filter(function(n){return!taken[n.string+":"+n.fret];});if(preview.length){var nextCol=window.JianpuLite.scaleColor(window.JianpuLite.hexToRgb(els.liteColorNext?els.liteColorNext.value:"#ff9a3c"),b*0.45);groups.push({leds:window.JianpuLite.packNotes(preview),color:nextCol});}}}
+lite.sendSegment(groups);}
+function liteTest(){if(!lite||lite.status!=="connected"||_liteTesting)return;_liteTesting=true;if(els.liteTestBtn)els.liteTestBtn.disabled=true;var col=window.JianpuLite.scaleColor(window.JianpuLite.hexToRgb(els.liteColorMain?els.liteColorMain.value:"#00e0ff"),liteBrightVal());var k=1;(function step(){if(k>6){lite.ledOff();_liteTesting=false;liteRefreshStatus();return;}
+var hw=(els.liteReverse&&els.liteReverse.checked)?(7-k):k;lite.sendNotes([{string:hw,fret:3}],col);liteSetStatus("測試亮燈：第 "+k+" 弦（1=最細高音弦）· 第 3 格","connected");k++;setTimeout(step,480);})();}
+function liteClear(){_liteCurIdx=-1;if(lite&&lite.status==="connected")lite.ledOff();}
+function applySens(){var s=+els.sensRange.value;micGate=0.03-(s/100)*0.026;P.setFloor(Math.min(micGate,0.006));els.sensVal.textContent=s<34?"低":s<67?"中":"高";}
+function applyLatency(){micLatencyMs=+els.latRange.value;els.latVal.textContent=micLatencyMs+" ms";}
+var _testRAF=0;function toggleMicTest(){if(micTesting){micTesting=false;els.micTestBtn.textContent="▶ 測試麥克風";if(_testRAF)cancelAnimationFrame(_testRAF);stopMicIfIdle();els.testNote.textContent="—";els.testLevel.style.width="0%";return;}
+if(!P.isSupported()){setStatus("此環境無法取用麥克風（需 https 或 http://localhost）。",true);return;}
+els.micTestBtn.textContent="● 測試中…（點此停止）";P.start(micDeviceId()).then(function(){refreshAudioInputs();refreshAudioInputs();micTesting=true;var tick=function(){if(!micTesting)return;var p=P.read();if(p.midi!=null){var d=T.midiToDegree(p.midi,tonicPc!=null?tonicPc:0);els.testNote.textContent=noteName(p.midi)+" · "+T.accSymbol(d.alter)+d.degree;}else els.testNote.textContent="—";els.testLevel.style.width=Math.max(0,Math.min(100,p.rms*700))+"%";_testRAF=requestAnimationFrame(tick);};tick();}).catch(function(err){els.micTestBtn.textContent="▶ 測試麥克風";setStatus("無法取用麥克風："+(err&&err.message?err.message:err),true);});}
+var calib=null;function autoCalibrate(){if(micTesting)toggleMicTest();if(!P.isSupported()){setStatus("需要麥克風（https 或 http://localhost）才能自動校正。",true);return;}
+A.now();if(A.ctx&&A.ctx.state==="suspended")A.ctx.resume();els.calibResult.textContent="";els.calibProg.textContent="要求麥克風…";els.calibClose.classList.add("hidden");els.calibCancel.classList.remove("hidden");els.calibModal.classList.remove("hidden");P.start(micDeviceId()).then(startCalibRun).catch(function(err){els.calibProg.textContent="無法取用麥克風";els.calibResult.textContent=String(err&&err.message?err.message:err);els.calibClose.classList.remove("hidden");els.calibCancel.classList.add("hidden");});}
+function startCalibRun(){var interval=0.6,count=8,prep=4,lead=1.0;var prepStart=A.now()+lead;var t0=prepStart+prep*interval;var beats=[];for(var pp=0;pp<prep;pp++)A.metroTick(prepStart+pp*interval);for(var i=0;i<count;i++){beats.push(t0+i*interval);A.metroTick(t0+i*interval);}
+calib={beats:beats,interval:interval,count:count,prep:prep,prepStart:prepStart,offsets:[],matched:new Array(count).fill(false),prevRms:0,gate:Math.max(0.01,Math.min(micGate,0.02)),lastPulse:-1,raf:0};calibLoop();}
+function calibLoop(){if(!calib)return;var now=A.now(),p=P.read();if(calib.prevRms<calib.gate&&p.rms>=calib.gate){var bi=-1,bd=1e9;for(var i=0;i<calib.beats.length;i++){var d=Math.abs(now-calib.beats[i]);if(d<bd){bd=d;bi=i;}}
+if(bi>=0&&bd<calib.interval*0.6&&!calib.matched[bi]){calib.matched[bi]=true;calib.offsets.push(now-calib.beats[bi]);}}
+calib.prevRms=p.rms;var passed=0;for(var j=0;j<calib.count;j++)if(now>=calib.beats[j])passed=j+1;var gi=(now>=calib.prepStart)?(Math.floor((now-calib.prepStart)/calib.interval)+1):0;if(gi!==calib.lastPulse&&gi>0){calib.lastPulse=gi;els.calibDot.classList.add("pulse");setTimeout(function(){els.calibDot.classList.remove("pulse");},120);}
+if(now<calib.beats[0]){if(now<calib.prepStart)els.calibProg.textContent="準備…";else els.calibProg.textContent="預備 "+Math.max(1,calib.prep-Math.floor((now-calib.prepStart)/calib.interval));}else{els.calibProg.textContent=Math.min(passed,calib.count)+" / "+calib.count+"　已收到 "+calib.offsets.length+" 次";}
+if(now>calib.beats[calib.count-1]+calib.interval*0.8){finishCalib();return;}
+calib.raf=requestAnimationFrame(calibLoop);}
+function finishCalib(){var offs=calib.offsets.slice().sort(function(a,b){return a-b;});if(offs.length>=3){var med=offs[Math.floor(offs.length/2)];var ms=Math.round(Math.max(0,Math.min(0.2,med))*1000);els.latRange.value=ms;applyLatency();saveMicSettings();els.calibProg.textContent="完成";els.calibResult.textContent="測得延遲 ≈ "+ms+" ms，已套用（收到 "+offs.length+"/"+calib.count+" 拍）";}else{els.calibProg.textContent="資料不足";els.calibResult.textContent="只收到 "+offs.length+" 拍，未調整。請彈大聲些或把靈敏度調高再試。";}
+stopMicIfIdle();els.calibClose.classList.remove("hidden");els.calibCancel.classList.add("hidden");calib=null;}
+function cancelCalib(){if(calib&&calib.raf)cancelAnimationFrame(calib.raf);calib=null;stopMicIfIdle();els.calibModal.classList.add("hidden");els.calibDot.classList.remove("pulse");}
+var SCORE_KEY="jianpu_scores";function loadAllScores(){try{return JSON.parse(localStorage.getItem(SCORE_KEY)||"{}");}catch(e){return{};}}
+function songKeyOf(){return((timeline&&timeline.title)||"?")+" ｜ "+((timeline&&timeline.trackName)||"?");}
+function modeLabel(){return dispName()+"/"+(inputMode==="mic"?"收音":"鍵盤")+"/"+DIFFICULTY[els.difficultySelect.value].label+(speed!==1?" "+fmtSpeed(speed):"");}
+function saveScoreRecord(rec){var all=loadAllScores(),list=all[rec.key]||[];list.push(rec);list.sort(function(a,b){return b.score-a.score;});list=list.slice(0,20);all[rec.key]=list;try{localStorage.setItem(SCORE_KEY,JSON.stringify(all));}catch(e){}
+return list;}
+function gradeColor(g){return{S:"#ffd93d",A:"#5ec26a",B:"#3fc7bb",C:"#5b8def",D:"#ff5d6c"}[g]||"#fff";}
+function fmtDate(ts){try{var d=new Date(ts);return(d.getMonth()+1)+"/"+d.getDate();}catch(e){return"";}}
+function renderLeaderboard(){if(!timeline){els.leaderboard.classList.add("hidden");return;}
+var list=(loadAllScores()[songKeyOf()]||[]).slice(0,5);var html='<div class="lb-head">🏆 本曲最佳成績</div>';if(!list.length)html+='<div class="lb-empty">還沒有紀錄，玩一場就會出現在這裡。</div>';else list.forEach(function(r,i){html+='<div class="lb-row"><span class="lb-rank">'+(i+1)+'</span>'+'<span class="lb-grade" style="color:'+gradeColor(r.grade)+'">'+r.grade+'</span>'+'<span class="lb-score">'+r.score.toLocaleString()+'</span>'+'<span class="lb-meta">'+r.acc.toFixed(1)+'%・'+escapeHtml(r.mode)+'・'+fmtDate(r.date)+'</span></div>';});els.leaderboard.innerHTML=html;els.leaderboard.classList.remove("hidden");}
+var FREE_GROUPS=window.FREE_GROUPS||[];function countSongs(group){if(group.songs)return group.songs.length;return(group.groups||[]).reduce(function(n,g){return n+countSongs(g);},0);}
+function renderSampleGroup(group,depth,ctx){ctx=ctx||{};var det=document.createElement("details");det.className="sample-group"+(depth>0?" sub":"");if(depth===0)det.open=true;var sum=document.createElement("summary");var isFolder=(ctx.tier==="paid"&&depth===0&&ctx.grp!=null);var locked=isFolder?(folderIsLocked(ctx.grp)&&!folderUnlocked(ctx.grp)):false;var lock=locked?"🔒 ":"";sum.innerHTML=lock+escapeHtml(group.title)+' <span class="sample-count">'+countSongs(group)+'</span>';det.appendChild(sum);if(isFolder&&locked){var fw=document.createElement("div");fw.innerHTML=folderUnlockHtml(ctx.grp);det.appendChild(fw.firstChild);}
+if(group.groups){group.groups.forEach(function(sub){det.appendChild(renderSampleGroup(sub,depth+1,ctx));});}else if(group.songs){var inner=document.createElement("div");inner.className="sample-list-inner";group.songs.forEach(function(song){var b=document.createElement("button");b.type="button";b.className="btn small ghost sample-btn";b.textContent=song.label;b.title=song.label;b.addEventListener("click",function(){loadSample(song.path,song.label,ctx);});inner.appendChild(b);});det.appendChild(inner);}
+return det;}
+function buildSampleList(){var box=$("sampleList");if(!box)return;box.innerHTML="";if(FREE_GROUPS.length&&location.protocol==="file:"){var warn=document.createElement("div");warn.className="lib-empty";warn.style.color="#ffb454";warn.innerHTML="⚠ 你是用「檔案(file://)」直接開啟的，本地免費示範曲無法載入。<br>請改用資料夾裡的「啟動遊戲.command」（會用本機伺服器開）。<br>（「我的曲庫」自己上傳的曲子不受影響。）";box.appendChild(warn);}
+var tok=++_buildTok;FREE_GROUPS.forEach(function(group){box.appendChild(renderSampleGroup(group,0,{local:true,tier:"free"}));});appendDbCatalog(box,tok);}
+var _buildTok=0;function appendDbCatalog(box,tok){var A=window.JianpuAuth;if(!A||!A.fetchCatalog||!box)return;A.fetchCatalog().then(function(rows){if(tok!==_buildTok)return;if(!rows||!rows.length)return;function toSong(r){return{label:r.title,path:r.path};}
+var free=rows.filter(function(r){return r.tier==="free";});var paid=rows.filter(function(r){return r.tier!=="free";});if(free.length)box.appendChild(renderSampleGroup({title:"自訂免費曲",songs:free.map(toSong)},0,{tier:"free",bucket:"free-songs"}));var byGrp={};paid.forEach(function(r){var g=r.grp||"自訂教材";(byGrp[g]=byGrp[g]||[]).push(r);});if(Object.keys(byGrp).length){var note=document.createElement("div");note.className="lib-empty";note.style.cssText="color:#9aa3b2;font-size:12px;line-height:1.6;margin:6px 0";note.innerHTML="📘 以下為<b>老師原創之教學練習譜例</b>（音階／和弦／指法／節奏練習），非第三方歌曲之改編或轉錄，僅供購課學員個人練習使用。";box.appendChild(note);}
+Object.keys(byGrp).forEach(function(g){box.appendChild(renderSampleGroup({title:g,songs:byGrp[g].map(toSong)},0,{tier:"paid",bucket:"paid-songs",grp:g}));});wireFolderUnlock(box);});}
+function encodePath(p){return String(p).split("/").map(encodeURIComponent).join("/");}
+function loadSample(path,label,ctx){ensureAlphaTab().catch(function(){});ctx=ctx||{};var base=String(path).split("/").pop();var name=label||base.replace(/\.gp\d?$/i,"");if(ctx.local){var url="songs/"+encodePath(path);setStatus("載入範例："+name+" …");fetch(url,{cache:"no-store"}).then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.arrayBuffer();}).then(function(buf){loadArrayBuffer(buf,base);}).catch(function(e){setStatus("載入範例失敗（"+decodeURIComponent(url)+"）："+(e&&e.message?e.message:e),true);});return;}
+loadBucketSong(path,name,base,ctx);}
+function loadBucketSong(path,name,base,ctx){var A=window.JianpuAuth,paid=ctx.tier==="paid";if(!A||!A.isReady()){setStatus("需要連線後端才能載入這首；但服務尚未設定或無法連線。",true);return;}
+if(paid&&ctx.grp!=null&&folderIsLocked(ctx.grp)&&!folderUnlocked(ctx.grp)){setStatus("這個資料夾需要密碼 🔒 請在「"+ctx.grp+"」上方輸入該資料夾的解鎖密碼。",true);var fi=document.querySelector('.paid-unlock[data-grp] .fu-input');if(fi){try{fi.focus();fi.scrollIntoView({block:"center"});}catch(e){}}
+return;}
+setStatus((paid?"載入教材：":"載入：")+name+" …");A.downloadSong(ctx.bucket||"paid-songs",path).then(function(buf){loadArrayBuffer(buf,base);}).catch(function(e){var code=e&&e.code;if(code==="NOT_ENTITLED"&&paid)setStatus("教材檔讀取失敗：請確認後台已把 paid-songs 設為可讀取（見設定指南），稍後再試 🙂",true);else setStatus("載入失敗："+(e&&e.message?e.message:e),true);});}
+var TOS_KEY="jianpu_tos_agreed_v1";function setupTosBar(){var bar=document.getElementById("tosBar"),ok=document.getElementById("tosOk");if(!bar||!ok)return;var agreed=false;try{agreed=localStorage.getItem(TOS_KEY)==="1";}catch(e){}
+if(agreed)return;bar.classList.remove("hidden");ok.addEventListener("click",function(){try{localStorage.setItem(TOS_KEY,"1");}catch(e){}
+bar.classList.add("hidden");});}
+var DAILY_FREE=5,FREE_CAP=30,CREDIT_KEY="jianpu_free_credits";function isPaid(){return isEmailUnlocked()||(function(){var A=window.JianpuAuth;return!!(A&&A.isEntitled&&A.isEntitled());})();}
+function epochDay(){var d=new Date();return Math.floor((d.getTime()-d.getTimezoneOffset()*60000)/86400000);}
+function saveCredits(st){try{localStorage.setItem(CREDIT_KEY,JSON.stringify(st));}catch(e){}}
+function readCredits(){var st;try{st=JSON.parse(localStorage.getItem(CREDIT_KEY)||"null");}catch(e){st=null;}
+var today=epochDay();if(!st||typeof st.bal!=="number"||typeof st.day!=="number"){st={bal:DAILY_FREE,day:today};saveCredits(st);}
+else if(today>st.day){st.bal=Math.min(FREE_CAP,st.bal+(today-st.day)*DAILY_FREE);st.day=today;saveCredits(st);}
+return st;}
+function remainFree(){return readCredits().bal;}
+function bumpUsage(){var st=readCredits();if(st.bal>0){st.bal--;saveCredits(st);}}
+function ownGateBlockedMsg(){return"今天的樂譜解析額度已用完。每天自動 +"+DAILY_FREE+" 次（可累積到 "+FREE_CAP+" 次）；升級進階版可解除每日次數上限與曲庫容量限制。";}
+function gateOwnUse(){if(isPaid())return true;var st=readCredits();if(st.bal>0){st.bal--;saveCredits(st);updateOwnGateTip();return true;}
+updateOwnGateTip();return false;}
+function updateOwnGateTip(){var el=document.getElementById("ownGateTip");if(!el)return;if(isPaid())el.innerHTML="樂譜解析額度：<b style='color:#7CFC9B'>進階版 ✓ 無次數上限</b>";else el.innerHTML="樂譜解析額度：剩 <b>"+remainFree()+"</b> 次（每天自動 +"+DAILY_FREE+"、可累積到 "+FREE_CAP+"；升級進階版無上限）";}
+var UNLOCK_KEY="jianpu_unlocked_v1";var EMAIL_UNLOCK_KEY="jianpu_email_unlocked";var FAMILY_KEY="jianpu_family_unlocked";var ACCOUNT_KEY="jianpu_account_email";function isUnlocked(){try{return localStorage.getItem(UNLOCK_KEY)==="1";}catch(e){return false;}}
+function setUnlocked(v){try{if(v)localStorage.setItem(UNLOCK_KEY,"1");else localStorage.removeItem(UNLOCK_KEY);}catch(e){}}
+function isFamilyUnlocked(){try{return localStorage.getItem(FAMILY_KEY)==="1";}catch(e){return false;}}
+function setFamilyUnlocked(v){try{if(v)localStorage.setItem(FAMILY_KEY,"1");else localStorage.removeItem(FAMILY_KEY);}catch(e){}}
+function isEmailUnlocked(){try{return localStorage.getItem(EMAIL_UNLOCK_KEY)==="1";}catch(e){return false;}}
+function setEmailUnlocked(v){try{if(v)localStorage.setItem(EMAIL_UNLOCK_KEY,"1");else localStorage.removeItem(EMAIL_UNLOCK_KEY);}catch(e){}}
+function accountEmail(){try{return localStorage.getItem(ACCOUNT_KEY)||"";}catch(e){return"";}}
+function setAccountEmail(e){try{if(e)localStorage.setItem(ACCOUNT_KEY,e);else localStorage.removeItem(ACCOUNT_KEY);}catch(x){}}
+function sha256hex(str){try{var buf=new TextEncoder().encode(str);return crypto.subtle.digest("SHA-256",buf).then(function(h){return[].map.call(new Uint8Array(h),function(b){return b.toString(16).padStart(2,"0");}).join("");});}catch(e){return Promise.reject(e);}}
+var LOCKED_CHARS=["einstein","mozart","bach","newton","napoleon","lincoln","vangogh","davinci","shakespeare","tesla","paganini","confucius"];var SCLEAR_KEY="jianpu_s_songs";function sClears(){try{var a=JSON.parse(localStorage.getItem(SCLEAR_KEY)||"[]");return Array.isArray(a)?a:[];}catch(e){return[];}}
+function sClearCount(){return sClears().length;}
+function addSClear(key){var a=sClears();if(a.indexOf(key)<0){a.push(key);try{localStorage.setItem(SCLEAR_KEY,JSON.stringify(a));}catch(e){}pushCharUnlocks();}return a.length;}
+function charNeed(id){var i=LOCKED_CHARS.indexOf(id);return i<0?0:(i+1);}
+function charUnlocked(id){if(id==="none"||id==="beethoven")return true;if(id==="lulan")return isUnlocked();if(id==="family")return isFamilyUnlocked();var i=LOCKED_CHARS.indexOf(id);return i<0?true:sClearCount()>=(i+1);}
+function refreshGuitaristLocks(){var sel=els.guitaristSelect;if(!sel)return;[].forEach.call(sel.options,function(op){if(!op.getAttribute("data-base"))op.setAttribute("data-base",op.textContent);var id=op.value,base=op.getAttribute("data-base");if(charUnlocked(id)){op.textContent=base;op.disabled=false;}
+else{op.disabled=true;op.textContent="🔒 "+base+((id==="lulan"||id==="family")?"｜需老師開通帳號":"｜需 "+charNeed(id)+" 首 S 級");}});if(sel.value&&!charUnlocked(sel.value)){sel.value="beethoven";guitaristId="beethoven";try{localStorage.setItem(GUITARIST_KEY,"beethoven");}catch(e){}}}
+function charName(id){var sel=els.guitaristSelect;if(!sel)return id;var op=sel.querySelector('option[value="'+id+'"]');return op?(op.getAttribute("data-base")||op.textContent):id;}
+function applyLulanGrant(autoSelect){applyCharGrant("lulan",autoSelect);}
+function applyCharGrant(id,autoSelect){if(id==="lulan")setUnlocked(true);else if(id==="family")setFamilyUnlocked(true);pushCharUnlocks();refreshGuitaristLocks();renderAccountBox();if(autoSelect&&els.guitaristSelect){els.guitaristSelect.value=id;guitaristId=id;try{localStorage.setItem(GUITARIST_KEY,id);}catch(e){}}}
+function applyEmailUnlock(){setEmailUnlocked(true);updateOwnGateTip();renderLibUnlock();}
+function pushCharUnlocks(){var email=accountEmail();if(!email)return;var A=window.JianpuAuth;if(!A||!A.saveCharUnlocks)return;A.saveCharUnlocks(email,{s:sClears(),lulan:isUnlocked(),family:isFamilyUnlocked()});}
+function pullCharUnlocks(email){email=(email||accountEmail()).trim().toLowerCase();if(!email)return;var A=window.JianpuAuth;if(!A||!A.getCharUnlocks)return;A.getCharUnlocks(email).then(function(remote){if(!remote){pushCharUnlocks();return;}
+var changed=false,set={};sClears().forEach(function(k){set[k]=1;});var before=Object.keys(set).length;(remote.s||[]).forEach(function(k){if(k)set[k]=1;});var merged=Object.keys(set);if(merged.length!==before){try{localStorage.setItem(SCLEAR_KEY,JSON.stringify(merged));}catch(e){}changed=true;}
+if(remote.lulan&&!isUnlocked()){setUnlocked(true);changed=true;}
+if(!remote.lulan&&isUnlocked()){setUnlocked(false);changed=true;}
+if(remote.family&&!isFamilyUnlocked()){setFamilyUnlocked(true);changed=true;}
+if(!remote.family&&isFamilyUnlocked()){setFamilyUnlocked(false);changed=true;}
+if(remote.all)unlockAllChars();if(changed){refreshGuitaristLocks();}
+renderAccountBox();pushCharUnlocks();});}
+var ALL_UNLOCK_EMAILS=["logoman2015@gmail.com"];function isAllUnlockEmail(email){return ALL_UNLOCK_EMAILS.indexOf((email||"").trim().toLowerCase())>=0;}
+function unlockAllChars(){var a=sClears(),need=LOCKED_CHARS.length+2;for(var i=0;a.length<need&&i<100;i++){var k="vip_all_"+i;if(a.indexOf(k)<0)a.push(k);}
+try{localStorage.setItem(SCLEAR_KEY,JSON.stringify(a));}catch(e){}
+setUnlocked(true);setFamilyUnlocked(true);refreshGuitaristLocks();renderAccountBox();pushCharUnlocks();}
+var ORDER_FORM_URL="https://docs.google.com/forms/d/e/1FAIpQLScwb4iexfUwKLuf5AHumcz0NpPJfcYM6W5V7fJDw5_1sxqrXQ/viewform";function renderAccountBox(){var box=document.getElementById("accountBox");if(!box)return;var mail=accountEmail();if(!mail){box.innerHTML='<div class="paid-unlock">'+'<div class="pu-tip">👤 <b>尚未登入</b>：在左邊「我的曲庫」用 Email 登入後（免費），'+'你解鎖的角色就會<b>跟著帳號跨裝置記住</b>。'+'<br><span style="opacity:.8">「閃電嚕嚕安」需老師在後台開通你的 Email。</span></div></div>';return;}
+var chars=[];if(isUnlocked())chars.push("閃電嚕嚕安");if(isFamilyUnlocked())chars.push("太太＆女兒");var extra=Math.min(sClearCount(),LOCKED_CHARS.length);if(extra>0)chars.push("樂手 +"+extra+" 位");box.innerHTML='<div class="paid-unlock unlocked">'+'<div>👤 <b>'+escapeHtml(mail)+'</b>　<span style="opacity:.8;font-size:12px">角色解鎖會自動記住</span></div>'+'<div class="pu-tip" style="margin-top:4px">已記住的角色：<b>'+(chars.length?escapeHtml(chars.join("、")):"尚無")+'</b>'+'　<span style="opacity:.75">（換裝置用同一 Email 登入就會帶過去）</span></div>'+
+((isUnlocked()&&isFamilyUnlocked())?"":'<div class="pu-tip" style="margin-top:2px">🔒 專屬角色（閃電嚕嚕安／太太＆女兒）需老師開通這個 Email，開通後按一下右邊按鈕即可。'+'<button type="button" class="btn small ghost acct-sync" style="margin-left:6px">重新同步</button></div>')+'</div>';var sync=box.querySelector(".acct-sync");if(sync)sync.addEventListener("click",function(){sync.disabled=true;setStatus("同步中…",false);pullCharUnlocks(mail);setTimeout(function(){sync.disabled=false;},1200);});}
+function deviceId(){var k="jianpu_device_id",v;try{v=localStorage.getItem(k);}catch(e){}
+if(!v){v=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():(Date.now()+"-"+Math.random().toString(36).slice(2));try{localStorage.setItem(k,v);}catch(e){}}
+return v;}
+var PROMO_DEADLINE=new Date("2026-08-31T23:59:59+08:00").getTime();var _promoTimer=null;function promoBoxHtml(){return'<div class="promo">'+'<div class="promo-h">⏰ 限時優惠．8/31 前</div>'+'<div class="promo-price">進階版（工具解鎖） <b>NT$590</b> <s>原價 990</s> <span class="promo-off">現折 400 元</span></div>'+'<div class="promo-feat">解除每日<b>樂譜解析次數</b>上限 · 本機<b>曲庫容量</b>不限 · <b>進階譜面檢視</b>功能 · 最多 4 台裝置</div>'+'<div class="promo-cd-wrap">倒數計時 <span class="promo-cd">—</span></div>'+'<a class="pu-buy pu-buy-promo" href="'+ORDER_FORM_URL+'" target="_blank" rel="noopener">🔓 升級進階版（填訂購單）</a>'+'<div class="promo-legal">※ 本站為<b>樂譜解析工具</b>，付費項目<b>不包含任何音樂內容或樂曲授權</b>；樂譜請自行提供並確認你有合法權利。</div>'+'</div>';}
+function promoLeftStr(){var ms=PROMO_DEADLINE-Date.now();if(ms<=0)return null;var s=Math.floor(ms/1000),d=Math.floor(s/86400);s-=d*86400;var h=Math.floor(s/3600);s-=h*3600;var m=Math.floor(s/60);s-=m*60;function p(n){return(n<10?"0":"")+n;}
+return d+" 天 "+p(h)+":"+p(m)+":"+p(s);}
+function updatePromoUI(){var list=document.querySelectorAll(".promo-cd");if(!list.length)return;var t=promoLeftStr(),active=!!t,i;for(i=0;i<list.length;i++){list[i].textContent=active?t:"優惠已結束";var pb=list[i].closest(".promo");if(pb)pb.classList.toggle("ended",!active);}
+var pro=document.querySelectorAll(".pu-buy-promo"),org=document.querySelectorAll(".pu-buy-orig");for(i=0;i<pro.length;i++)pro[i].style.display=active?"":"none";for(i=0;i<org.length;i++)org[i].style.display=active?"none":"";}
+function startPromoTimer(){if(!_promoTimer)_promoTimer=setInterval(updatePromoUI,1000);}
+function accountLogin(email,ui){email=(email||"").trim().toLowerCase();var A=window.JianpuAuth;var setMsg=(ui&&ui.setMsg)||function(){};if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){setMsg("請輸入正確的 Email。","#ff9a9a");return;}
+setAccountEmail(email);setMsg("登入中…");if(isAllUnlockEmail(email))unlockAllChars();else if(A&&A.getCharUnlocks){A.getCharUnlocks(email).then(function(remote){if(remote&&remote.all)unlockAllChars();else if(remote&&(remote.lulan||remote.family)){if(remote.lulan)applyCharGrant("lulan",false);if(remote.family)applyCharGrant("family",false);applyCharGrant(remote.family?"family":"lulan",true);}
+else pullCharUnlocks(email);renderAccountBox();}).catch(function(){renderAccountBox();});}else renderAccountBox();function freeAccount(note){setEmailUnlocked(false);updateOwnGateTip();renderLibUnlock();setStatus("已登入 "+email+"（免費帳號）"+(note?"："+note:"")+"。角色解鎖會記在這個帳號。",false);}
+function paidAccount(){try{localStorage.setItem("jianpu_unlock_email",email);}catch(e){}
+applyEmailUnlock();renderLibUnlock();setStatus("已登入 "+email+"：進階版已啟用，樂譜解析無上限 ✓",false);}
+if(!A||!A.registerDevice){freeAccount("目前連不到伺服器");return;}
+A.registerDevice(email,deviceId()).then(function(r){if(r==="ok"){paidAccount();return;}
+if(r==="limit"){if(confirm("這個 Email 已在 4 台裝置登入（已滿）。\n是否要「清除全部裝置」後，用這台重新登入？\n\n（會把先前登入的裝置全部登出）")){setMsg("重置裝置中…");A.resetDevices(email).then(function(n){if(typeof n==="number"&&n>=0){A.registerDevice(email,deviceId()).then(function(r2){if(r2==="ok")paidAccount();else freeAccount("已重置裝置，請再按一次「登入」");});}else freeAccount("重置失敗，請洽老師 LINE：paul780516");});}else freeAccount("已取消裝置重置");return;}
+if(r==="not_entitled"){freeAccount("尚未升級進階版，仍可用每日免費額度");return;}
+if(!A.checkEmailUnlock){freeAccount("後端尚未設定進階版驗證");return;}
+A.checkEmailUnlock(email).then(function(ok){if(ok===true)paidAccount();else freeAccount(ok===false?"尚未升級進階版，仍可用每日免費額度":"後端尚未設定進階版驗證");}).catch(function(){freeAccount("驗證失敗");});}).catch(function(){freeAccount("連線失敗");});}
+function refreshAccountState(){var email=accountEmail();if(!email)return;var A=window.JianpuAuth;if(!A)return;if(A.getCharUnlocks)pullCharUnlocks(email);if(!A.registerDevice)return;A.registerDevice(email,deviceId()).then(function(r){if(r==="ok"){if(!isEmailUnlocked()){applyEmailUnlock();renderLibUnlock();}}
+else if(r==="not_entitled"){if(isEmailUnlocked()){setEmailUnlocked(false);updateOwnGateTip();renderLibUnlock();}}}).catch(function(){});}
+function renderLibUnlock(){var box=document.getElementById("libUnlock");if(!box)return;var mail=accountEmail();if(mail){var paid=isPaid();box.innerHTML='<div class="paid-unlock unlocked">'+'<div>👤 <b>'+escapeHtml(mail)+'</b>'+'<button type="button" class="btn small ghost lu-logout" style="margin-left:8px">登出</button></div>'+'<div class="acct-stat">'+'<div>'+(paid?'🔓 <b>樂譜</b>：進階版，解析次數與曲庫容量<b>無上限</b>':'🔒 <b>樂譜</b>：免費帳號，每天有解析次數額度')+'</div>'+'<div>🎭 <b>角色</b>：解鎖狀態會記在這個帳號（<b>不管有沒有付費</b>都會記住）</div>'+'</div>'+
+(paid?'':promoBoxHtml()+'<a class="pu-buy pu-buy-orig" href="'+ORDER_FORM_URL+'" target="_blank" rel="noopener">🔓 升級進階版（填訂購單）</a>')+'<div class="lu-msg"></div>'+'</div>';if(!paid){updatePromoUI();startPromoTimer();}
+var lo=box.querySelector(".lu-logout");if(lo)lo.addEventListener("click",function(){if(!confirm("登出後：\n・樂譜會回到每日免費額度\n・角色解鎖仍留在這台裝置，但不再與帳號同步\n・會釋放這個 Email 的一個裝置名額\n\n確定要登出嗎？"))return;var A=window.JianpuAuth;if(A&&A.unregisterDevice){try{A.unregisterDevice(mail,deviceId());}catch(e){}}
+setEmailUnlocked(false);setAccountEmail("");try{localStorage.removeItem("jianpu_unlock_email");}catch(e){}
+if(A&&A.signOut){try{A.signOut();}catch(e){}}
+updateOwnGateTip();renderLibUnlock();renderAccountBox();setStatus("已登出帳號（已釋放這台的裝置名額）。",false);});return;}
+box.innerHTML='<div class="paid-unlock">'+
+promoBoxHtml()+'<div class="pu-tip">👤 <b>用 Email 登入（只需輸入一次）</b>——同一個帳號同時管兩件事：'+'<div class="acct-stat" style="margin-top:4px">'+'<div>🎼 <b>樂譜</b>：已付款開通 → 解析次數無上限；<b>沒付款也可以登入</b>，就是免費帳號（保留每日額度）</div>'+'<div>🎭 <b>角色</b>：解鎖的角色<b>一律記在帳號裡</b>，換裝置用同一 Email 登入就帶過去</div>'+'</div>'+'<span style="opacity:.8">※ 一個 Email 最多 4 台裝置。解鎖的是工具功能，<b>不含任何音樂內容</b>。</span></div>'+'<div class="pu-row"><input type="email" class="lu-email" placeholder="輸入 Email 登入" autocomplete="email" />'+'<button type="button" class="btn small lu-btn">登入</button></div>'+'<div class="lu-msg"></div>'+'<a class="pu-buy pu-buy-orig" href="'+ORDER_FORM_URL+'" target="_blank" rel="noopener">🔓 升級進階版（填訂購單）</a>'+'</div>';updatePromoUI();startPromoTimer();var inp=box.querySelector(".lu-email"),btn=box.querySelector(".lu-btn"),msg=box.querySelector(".lu-msg");function setMsg(t,c){msg.textContent=t;msg.style.color=c||"#d7c9ac";}
+function go(){accountLogin(inp.value,{setMsg:setMsg});}
+btn.addEventListener("click",go);inp.addEventListener("keydown",function(e){if(e.key==="Enter")go();});}
+var _paidFolders={};function loadPaidFolders(){var A=window.JianpuAuth;if(A&&A.fetchFolders)A.fetchFolders().then(function(m){_paidFolders=m||{};buildSampleList();}).catch(function(){});}
+function folderIsLocked(grp){var f=_paidFolders[grp];return!!(f&&f.locked);}
+function folderUnlocked(grp){try{return localStorage.getItem("jianpu_folder_"+grp)==="1";}catch(e){return false;}}
+function setFolderUnlocked(grp){try{localStorage.setItem("jianpu_folder_"+grp,"1");}catch(e){}}
+function verifyFolderPw(grp,pw){var f=_paidFolders[grp];if(!f||!f.pw_hash)return Promise.resolve(false);return sha256hex((pw||"").trim()).then(function(h){return h===String(f.pw_hash).toLowerCase();}).catch(function(){return false;});}
+function folderUnlockHtml(grp){return'<div class="paid-unlock" data-grp="'+escapeHtml(grp)+'">'+'<div class="pu-tip">🔒 這個資料夾需要密碼才能玩。輸入本資料夾的解鎖密碼：</div>'+'<div class="pu-row"><input type="password" class="fu-input" placeholder="輸入密碼" autocomplete="off" />'+'<button type="button" class="btn small fu-btn">解鎖</button></div>'+'<div class="fu-msg"></div></div>';}
+function wireFolderUnlock(root){(root||document).querySelectorAll(".paid-unlock[data-grp] .fu-btn").forEach(function(btn){var wrap=btn.closest(".paid-unlock"),grp=wrap.getAttribute("data-grp");var inp=wrap.querySelector(".fu-input"),msg=wrap.querySelector(".fu-msg");function go(){verifyFolderPw(grp,inp.value).then(function(ok){if(ok){setFolderUnlocked(grp);buildSampleList();}
+else{msg.textContent="密碼不對，再確認一下～";msg.style.color="#ff9a9a";}});}
+btn.addEventListener("click",go);inp.addEventListener("keydown",function(e){if(e.key==="Enter")go();});});}
+function loadFile(file){if(!gateOwnUse()){setStatus(ownGateBlockedMsg(),true);return;}
+setStatus("解析中："+file.name+" …");var reader=new FileReader();reader.onload=function(){loadArrayBuffer(reader.result,file.name);};reader.onerror=function(){setStatus("讀取檔案失敗。",true);};reader.readAsArrayBuffer(file);}
+var _alphaTabPromise=null;function ensureAlphaTab(){if(window.alphaTab&&window.alphaTab.importer)return Promise.resolve();if(_alphaTabPromise)return _alphaTabPromise;_alphaTabPromise=new Promise(function(resolve,reject){var s=document.createElement("script");s.src="lib/alphaTab.min.js?v=20260801b";s.onload=function(){resolve();};s.onerror=function(){_alphaTabPromise=null;reject(new Error("無法載入樂譜解析引擎（alphaTab）"));};document.head.appendChild(s);});return _alphaTabPromise;}
+function loadArrayBuffer(arrayBuffer,name){setStatus("載入樂譜解析引擎中…");ensureAlphaTab().then(function(){parseLoadedBuffer(arrayBuffer,name);}).catch(function(err){setStatus("解析失敗："+(err&&err.message?err.message:err),true);els.startBtn.disabled=true;});}
+function parseLoadedBuffer(arrayBuffer,name){try{var scoreObj=GP.parseBytes(arrayBuffer);window._score=scoreObj;var tracks=GP.listTracks(scoreObj);var best=-1,bestCount=-1,html="";tracks.forEach(function(tr){var tag=tr.isPercussion?"（打擊）":"";html+='<option value="'+tr.index+'">'+escapeHtml(tr.name)+tag+'｜'+tr.noteCount+' 音</option>';if(!tr.isPercussion&&tr.noteCount>bestCount){bestCount=tr.noteCount;best=tr.index;}});els.trackSelect.innerHTML=html;if(best>=0)els.trackSelect.value=String(best);els.keySelect.value="auto";rebuildTimeline();setStatus("已載入「"+(scoreObj.title||name||"")+"」，可調整設定後開始。");els.startBtn.disabled=false;state="ready";}catch(err){console.error(err);setStatus("解析失敗："+(err&&err.message?err.message:err),true);els.startBtn.disabled=true;}}
+function rebuildTimeline(){if(!window._score)return;displayMode=els.displaySelect.value;var ti=parseInt(els.trackSelect.value,10)||0;timeline=GP.buildTimeline(window._score,ti);tabTL=GP.buildTabTimeline(window._score,ti);if(tabTL)tabInfo={tuning:tabTL.tuning,stringCount:tabTL.stringCount};tonicPc=(els.keySelect.value==="auto")?timeline.tonicPc:T.keyValueToPc(els.keySelect.value);speed=parseFloat(els.speedRange.value)||1;buildItems();updateSongInfo();renderLeaderboard();}
+function buildItems(){var inv=1/speed;melodyNotes=timeline.notes.map(function(n){return{time:n.time*inv,dur:n.dur*inv,midi:n.midi,bend:n.bend||0};});songDuration=timeline.durationSec*inv;if(usesTabData()){items=tabTL.beats.map(function(beat){var deadNotes=(beat.dead||[]).map(function(dn){var drow=Math.max(0,Math.min(tabTL.stringCount-1,tabTL.stringCount-dn.string));return{string:dn.string,fret:dn.fret,row:drow};});var isGraceBeat=!!beat.grace;var notes=beat.notes.map(function(n){var d=T.midiToDegree(n.midi,tonicPc);var row=tabTL.tuning.indexOf(n.midi-n.fret);if(row<0)row=tabTL.stringCount-n.string;row=Math.max(0,Math.min(tabTL.stringCount-1,row));var linkRow=null,linkTime=null,linkFret=null;if(n.link){var lr=tabTL.tuning.indexOf(n.link.midi-n.link.fret);if(lr<0)lr=tabTL.stringCount-n.link.string;linkRow=Math.max(0,Math.min(tabTL.stringCount-1,lr));linkTime=n.link.time*inv;linkFret=n.link.fret;}
+return{string:n.string,fret:n.fret,midi:n.midi,pc:pc(n.midi),degree:d.degree,alter:d.alter,row:row,bend:n.bend||0,hammerOrigin:n.hammerOrigin,hammerDest:n.hammerDest,slideOut:n.slideOut||0,slideIn:n.slideIn||0,vibrato:n.vibrato||0,palmMute:n.palmMute,harmonic:n.harmonic||0,trill:!!n.trill,letRing:!!n.letRing,staccato:!!n.staccato,tap:!!(n.tapLH||beat.tap),tremolo:!!beat.tremolo,slap:!!beat.slap,pop:!!beat.pop,chordNote:!!beat.chord,grace:isGraceBeat,linkRow:linkRow,linkTime:linkTime,linkFret:linkFret};});if(!notes.length){return{time:beat.time*inv,dur:beat.dur*inv,notes:[],deadNotes:deadNotes,deadOnly:true,pcs:[],degSet:[],lane:-1,midi:null,bend:0,topTech:false,bar:beat.bar,nv:beat.nv,dots:beat.dots||0,tuplet:beat.tuplet||null,judged:true,hit:false,missed:false,tier:null};}
+var pcs=[],degs=[],top=notes[0];notes.forEach(function(n){if(pcs.indexOf(n.pc)<0)pcs.push(n.pc);if(degs.indexOf(n.degree)<0)degs.push(n.degree);if(n.midi>top.midi)top=n;});return{time:beat.time*inv,dur:beat.dur*inv,notes:notes,deadNotes:deadNotes,pcs:pcs,degSet:degs,lane:top.degree-1,midi:top.midi,bend:top.bend||0,topTech:noteHasTech(top),bar:beat.bar,chord:beat.chord||"",chordFrets:beat.chordFrets||null,chordFirst:beat.chordFirst||0,nv:beat.nv,dots:beat.dots||0,tuplet:beat.tuplet||null,grace:isGraceBeat,judged:isGraceBeat,hit:false,missed:false,tier:null};});var topMidis=items.filter(function(it){return!it.deadOnly;}).map(function(it){return it.midi;});var octFn2=T.makeOctaveOffsetFn(topMidis,tonicPc);items.forEach(function(it){if(it.deadOnly)return;var d=T.midiToDegree(it.midi,tonicPc);it.jianpu={degree:d.degree,alter:d.alter,symbol:T.accSymbol(d.alter),octaveOffset:octFn2(it.midi),tech:it.topTech};});var _chordCol={},_pal=["#e0a44b","#5ec26a","#5b8def","#c06cff","#ff7aa2","#3fc7bb","#ffd23d","#ff9a3c"],_ci=0,_lastChord=null;items.forEach(function(it){if(!it.chord)return;if(!_chordCol[it.chord]){_chordCol[it.chord]=_pal[_ci%_pal.length];_ci++;}
+it.chordColor=_chordCol[it.chord];it.chordRepeat=(it.chord===_lastChord);_lastChord=it.chord;if(it.notes)it.notes.forEach(function(nn){nn.chordColor=it.chordColor;});});}else{var midis=timeline.notes.map(function(n){return n.midi;});var octFn=T.makeOctaveOffsetFn(midis,tonicPc);items=timeline.notes.map(function(n){var d=T.midiToDegree(n.midi,tonicPc);return{time:n.time*inv,dur:n.dur*inv,midi:n.midi,degree:d.degree,alter:d.alter,octaveOffset:octFn(n.midi),lane:d.degree-1,symbol:T.accSymbol(d.alter),pc:pc(n.midi),pcs:[pc(n.midi)],degSet:[d.degree],bend:n.bend||0,judged:false,hit:false,missed:false,tier:null};});}
+barStartsScaled=(tabTL.barStarts||[]).map(function(t){return t*inv;});buildBeatGrid();}
+function buildBeatGrid(){beatTimes=[];beatAccents=[];beatInBar=[];beatDurs=[];beatsPerBar=[];var spb=60/(timeline.tempo||120)/speed;if(spb<=0)return;var bars=barStartsScaled,end=songDuration||(bars.length?bars[bars.length-1]+spb*4:0);for(var i=0;i<bars.length;i++){var start=bars[i],next=(i+1<bars.length)?bars[i+1]:end;var nb=Math.max(1,Math.round((next-start)/spb)),bd=(next-start)/nb;for(var b=0;b<nb;b++){beatTimes.push(start+b*bd);beatAccents.push(b===0);beatInBar.push(b);beatDurs.push(bd);beatsPerBar.push(nb);}}
+if(!beatTimes.length&&end>0){for(var t=0,k=0;t<end;t+=spb,k++){beatTimes.push(t);beatAccents.push(k%4===0);beatInBar.push(k%4);beatDurs.push(spb);beatsPerBar.push(4);}}}
+var GROOVES={rock:function(b){var h=[{f:0,v:"hat"},{f:0.5,v:"hat"}];h.push({f:0,v:(b%2===0)?"kick":"snare"});return h;},metal:function(b){var h=[{f:0,v:"hat"},{f:0.5,v:"hat"},{f:0,v:"kick"},{f:0.5,v:"kick"}];if(b%2===1)h.push({f:0,v:"snare"});return h;},folk:function(b){var h=[{f:0,v:"hat",g:0.7}];h.push({f:0,v:(b%2===0)?"kick":"snare",g:0.8});return h;},funk:function(b){var h=[{f:0,v:"hat"},{f:0.25,v:"hat",g:0.55},{f:0.5,v:"hat"},{f:0.75,v:"hat",g:0.55}];if(b%2===1)h.push({f:0,v:"snare"});if(b===0)h.push({f:0,v:"kick"});if(b===1)h.push({f:0.75,v:"kick",g:0.8});if(b===2){h.push({f:0,v:"kick"});h.push({f:0.5,v:"kick",g:0.7});}
+if(b===3)h.push({f:0.25,v:"kick",g:0.75});return h;}};function scheduleGroove(idx){var bt=beatTimes[idx],bd=beatDurs[idx]||0.5,b=beatInBar[idx]||0;var fn=GROOVES[genre];if(!fn)return;var hits=fn(b);for(var i=0;i<hits.length;i++){var hh=hits[i],at=A.songTimeToCtx(bt+hh.f*bd),g=hh.g||1;if(hh.v==="kick")A.kick(at,g);else if(hh.v==="snare")A.snare(at,g);else if(hh.v==="hat")A.hat(at,g);else if(hh.v==="crash")A.crash(at,g);}}
+function fmtSpeed(s){return(Math.round(s*100)/100)+"×";}
+function updateSpeedLabel(){els.speedVal.textContent=(speed===1)?"1×（正常）":fmtSpeed(speed);}
+function updateSongInfo(){var keyName=keyDisplay(tonicPc);var playable=items.filter(function(it){return!it.grace;}).length;var countLabel=usesTabData()?(playable+" 拍（"+dispName()+"）"):(playable+" 音（簡譜）");var speedTxt=(speed===1)?"":('　｜　倍速：'+fmtSpeed(speed)+'（實際 '+fmtTime(songDuration)+'）');els.songInfo.innerHTML='<div class="si-title">'+escapeHtml(timeline.title)+
+(timeline.artist?' <span class="si-artist">— '+escapeHtml(timeline.artist)+'</span>':'')+'</div>'+'<div class="si-meta">軌道：'+escapeHtml(timeline.trackName)+'　｜　調性：'+keyName+' 大調（1='+keyName+'）'+'　｜　速度：'+Math.round(timeline.tempo)+' BPM'+'　｜　'+countLabel+'　｜　長度：'+fmtTime(timeline.durationSec)+speedTxt+'</div>';}
+function pc(midi){return((midi%12)+12)%12;}
+function noteHasTech(n){return!!(n&&(n.bend>0||n.hammerOrigin||n.hammerDest||n.slideOut||n.slideIn||n.vibrato||n.palmMute||n.harmonic||n.trill||n.tremolo||n.tap||n.letRing||n.staccato));}
+function keyDisplay(p){return T.tonicPcToKeyValue(p).replace("#","♯").replace("b","♭");}
+function noteName(midi){return NOTE_NAMES[pc(midi)]+(Math.floor(midi/12)-1);}
+function windows(){var slack=inputMode==="mic"?0.05:0;return{perfect:W_PERFECT+slack*0.6,great:W_GREAT+slack,good:W_GOOD+slack};}
+function startGame(){if(!items||!items.length){setStatus("這個軌道／模式沒有可玩的音符，換一軌試試。",true);return;}
+if(micTesting)toggleMicTest();inputMode=els.inputSelect.value;displayMode=els.displaySelect.value;if(inputMode==="mic"){if(!P.isSupported()){setStatus("此環境無法取用麥克風（需 https 或 http://localhost）。請改用鍵盤，或用本機伺服器開啟頁面。",true);return;}
+setStatus("正在要求麥克風權限…");P.start(micDeviceId()).then(function(){beginGame();}).catch(function(err){setStatus("無法取用麥克風："+(err&&err.message?err.message:err),true);});}else{stopMicIfIdle();beginGame();}}
+function beginGame(){items.forEach(function(n){n.hit=false;n.missed=false;n.tier=null;n.judged=!!(n.deadOnly||n.grace);});score=0;current={combo:0,maxCombo:0};comboBurst={t:999,level:0};hypeShown=0;stats={perfect:0,great:0,good:0,miss:0};popups=[];micCand=-1;micStable=0;micLastPc=-1;micWasSilent=true;micDisp={midi:null,rms:0,t:0};micSmooth=0;micPrevSmooth=0;micOnsetT=-9;micLastHit=-9;_metroIdx=0;_grooveIdx=0;els.setupPanel.classList.add("hidden");els.gameWrap.classList.remove("hidden");els.result.classList.add("hidden");els.micHud.classList.toggle("hidden",inputMode!=="mic");updateFretControls();resize();var melodyOn=els.melodyToggle.checked;var bp=(beatTimes&&beatTimes.length>=2)?(beatTimes[1]-beatTimes[0]):0.5;countBeat=Math.min(1.1,Math.max(0.34,bp||0.5));var countIn=4*countBeat;var leadIn=Math.max(travel+0.3,countIn+1.3);A.start(melodyNotes,leadIn,melodyOn);A.setMelodyOn(melodyOn);var modeTxt=dispName()+"／"+(inputMode==="mic"?"收音":"鍵盤");els.hudTitle.textContent=timeline.title+"（1="+keyDisplay(tonicPc)+"・"+modeTxt+"）";els.pauseBtn.textContent="⏸ 暫停";state="playing";_lastBeep=99;}
+function backToSetup(){state="ready";A.pause();liteClear();stopMicIfIdle();els.gameWrap.classList.add("hidden");els.result.classList.add("hidden");els.setupPanel.classList.remove("hidden");setStatus("已載入「"+(timeline?timeline.title:"")+"」，可調整設定後開始。");renderLeaderboard();}
+function togglePause(){if(state==="playing"){state="paused";A.pause();liteClear();els.pauseBtn.textContent="▶ 繼續";}
+else if(state==="paused"){state="playing";A.resume();els.pauseBtn.textContent="⏸ 暫停";}}
+function onKeyDown(e){if(e.repeat)return;if(e.code==="Space"){if(state==="playing"||state==="paused"){e.preventDefault();togglePause();}
+return;}
+if(e.code==="Escape"){if(state==="playing"||state==="paused")backToSetup();return;}
+if(state!=="playing")return;var lane=LANE_KEYS.indexOf(e.key);if(lane<0){var m=e.code.match(/^(?:Digit|Numpad)([1-7])$/);if(m)lane=parseInt(m[1],10)-1;}
+if(lane<0)return;e.preventDefault();var deg=lane+1;attemptHit(function(it){return it.degSet.indexOf(deg)>=0;},lane);}
+function attemptHit(matchFn,flashLane){var win=windows();var songTime=A.getSongTime()-(inputMode==="mic"?micLatencyMs/1000:0)-JUDGE_OFFSET;var best=null,bestDelta=1e9;for(var i=0;i<items.length;i++){var it=items[i];if(it.judged||!matchFn(it))continue;var d=Math.abs(it.time-songTime);if(d<bestDelta){bestDelta=d;best=it;}}
+if(best&&bestDelta<=win.good){judge(best,bestDelta,win);return true;}
+if(inputMode!=="mic")A.click(false);return false;}
+function comboMult(c){return Math.min(5,1+Math.floor(c/10));}
+function judge(n,delta,win){var tier=delta<=win.perfect?"perfect":delta<=win.great?"great":"good";n.judged=true;n.hit=true;n.tier=tier;stats[tier]++;var prevMult=comboMult(current.combo);current.combo++;if(current.combo>current.maxCombo)current.maxCombo=current.combo;if(comboMult(current.combo)>prevMult){comboBurst={t:0,level:comboMult(current.combo)};if(inputMode!=="mic")A.crash(A.now());}
+score+=Math.round(SCORE[tier]*comboMult(current.combo));if(inputMode!=="mic")A.click(true);if(inputMode!=="mic"&&!els.melodyToggle.checked)A.playNote(n.midi,n.dur||0.25,(n.bend||0)/2);popups.push({lane:n.lane,tier:tier,t:0});bigJudge={tier:tier,t:0,combo:current.combo};charPulse=1;}
+var _lastBeep=99;var _loopErrLogged=false;function loop(){try{loopBody();}
+catch(e){if(!_loopErrLogged){_loopErrLogged=true;try{console.error("[loop error]",e);}catch(_){}}}
+requestAnimationFrame(loop);}
+function loopBody(){if(state==="playing"){A.update();var songTime=A.getSongTime();if(inputMode==="mic"&&P.isActive())micTick(songTime);updateLite(songTime);if(songTime<0){var countIn=4*countBeat;if(songTime>=-countIn){var c=Math.min(4,Math.ceil(-songTime/countBeat));if(c!==_lastBeep){A.beep(false);_lastBeep=c;}}}else if(_lastBeep!==0){A.beep(true);_lastBeep=0;}
+var metroOn=true;if(metroOn){while(_metroIdx<beatTimes.length&&beatTimes[_metroIdx]<=songTime+0.12){var bt=beatTimes[_metroIdx];if(bt>=songTime-0.05)A.metronomeAt(A.songTimeToCtx(bt),beatAccents[_metroIdx]);_metroIdx++;}}else{while(_metroIdx<beatTimes.length&&beatTimes[_metroIdx]<=songTime+0.12)_metroIdx++;}
+if(genre!=="none"){while(_grooveIdx<beatTimes.length&&beatTimes[_grooveIdx]<=songTime+0.25){if(beatTimes[_grooveIdx]>=songTime-0.05)scheduleGroove(_grooveIdx);_grooveIdx++;}}else{while(_grooveIdx<beatTimes.length&&beatTimes[_grooveIdx]<=songTime+0.25)_grooveIdx++;}
+for(var i=0;i<items.length;i++){var n=items[i];if(!n.judged&&(songTime-JUDGE_OFFSET)-n.time>W_MISS){n.judged=true;n.missed=true;n.tier="miss";stats.miss++;current.combo=0;popups.push({lane:n.lane,tier:"miss",t:0});bigJudge={tier:"miss",t:0,combo:0};}}
+if(songTime>songDuration+1.2){var pending=false;for(var j=0;j<items.length;j++)if(!items[j].judged){pending=true;break;}
+if(!pending)endGame();}}
+render();}
+function micTick(songTime){var p=P.read();micDisp={midi:p.midi,rms:p.rms,t:0};updateMicHud(p);var rms=p.rms||0;micSmooth=(micSmooth<=0)?rms:(micSmooth*0.35+rms*0.65);var ONSET_RATIO=1.25;if(rms>micGate&&micSmooth>micPrevSmooth*ONSET_RATIO&&(songTime-micOnsetT)>0.05)micOnsetT=songTime;micPrevSmooth=micSmooth;if(p.midi!=null&&rms>micGate){if(p.pc===micCand)micStable++;else{micCand=p.pc;micStable=1;}
+var pitchChanged=(p.pc!==micLastPc);var freshOnset=(songTime-micOnsetT)<0.08;if(micStable>=2&&(pitchChanged||freshOnset)&&(songTime-micLastHit)>0.06){micLastPc=p.pc;micWasSilent=false;micLastHit=songTime;micOnsetT=-9;var detectedPc=p.pc;attemptHit(function(it){return it.pcs.some(function(pc){var dd=Math.abs(pc-detectedPc);return Math.min(dd,12-dd)<=MIC_PITCH_TOL;});},T.midiToDegree(p.midi,tonicPc).degree-1);}}else{micCand=-1;micStable=0;micWasSilent=true;micLastPc=-1;}}
+function updateMicHud(p){if(p&&p.midi!=null){var d=T.midiToDegree(p.midi,tonicPc);els.micNote.textContent=noteName(p.midi)+" · "+T.accSymbol(d.alter)+d.degree;}else{els.micNote.textContent="—";}
+var lvl=Math.max(0,Math.min(100,(p?p.rms:0)*700));els.micLevel.style.width=lvl+"%";}
+function endGame(){state="result";A.pause();liteClear();stopMicIfIdle();var total=stats.perfect+stats.great+stats.good+stats.miss;var accSum=stats.perfect*ACC.perfect+stats.great*ACC.great+stats.good*ACC.good;var acc=total?(accSum/total*100):0;var grade=acc>=95?"S":acc>=88?"A":acc>=78?"B":acc>=65?"C":"D";var gc=gradeColor(grade);var prevList=loadAllScores()[songKeyOf()]||[];var prevBest=prevList.length?prevList[0].score:0;var rec={key:songKeyOf(),song:timeline.title,track:timeline.trackName,mode:modeLabel(),score:score,acc:acc,grade:grade,combo:current.maxCombo,date:Date.now()};var list=saveScoreRecord(rec);var isNew=score>prevBest;var rank=list.indexOf(rec)+1;var unlockMsg="";if(grade==="S"){var before=sClearCount();var after=addSClear(songKeyOf());if(after>before){refreshGuitaristLocks();if(after>=1&&after<=LOCKED_CHARS.length){var newId=LOCKED_CHARS[after-1];unlockMsg='<div class="new-record" style="color:#ffd93d">🎉 累積 '+after+' 首 S 級，解鎖新角色：'+escapeHtml(charName(newId))+'！</div>';}
+var nextNeed=after+1;if(!unlockMsg&&nextNeed<=LOCKED_CHARS.length)
+unlockMsg='<div class="racc">已 '+after+' 首 S 級 · 再 1 首解鎖「'+escapeHtml(charName(LOCKED_CHARS[nextNeed-1]))+'」</div>';}}
+els.resultBody.innerHTML='<div class="grade" style="color:'+gc+'">'+grade+'</div>'+
+(isNew?'<div class="new-record">🎉 新紀錄！</div>':'')+
+unlockMsg+'<div class="rscore">'+score.toLocaleString()+' 分</div>'+'<div class="racc">準確率 '+acc.toFixed(2)+'%　｜　最大連段 '+current.maxCombo+'</div>'+
+(!isNew&&prevBest?'<div class="racc">本曲最佳 '+prevBest.toLocaleString()+'　｜　本次排名第 '+rank+'</div>':'')+'<div class="rjudge">'+
+chip("Perfect",stats.perfect,"#ffd93d")+chip("Great",stats.great,"#5ec26a")+
+chip("Good",stats.good,"#5b8def")+chip("Miss",stats.miss,"#ff5d6c")+'</div>';els.result.classList.remove("hidden");}
+function chip(name,n,color){return'<div class="chip"><span style="color:'+color+'">'+name+'</span><b>'+n+'</b></div>';}
+var BGM_OFF_KEY="jianpu_bgm_off";function setupMenuBgm(){var bgm=document.getElementById("menuBgm"),btn=document.getElementById("bgmToggle"),panel=document.getElementById("setupPanel");if(!bgm||!panel)return;bgm.volume=0.45;var off=false;try{off=localStorage.getItem(BGM_OFF_KEY)==="1";}catch(e){}
+function inMenu(){return!panel.classList.contains("hidden");}
+function want(){return!off&&inMenu();}
+function syncBtn(){if(btn){btn.textContent=off?"🔇":"🎵";btn.classList.toggle("off",off);}}
+function apply(){if(want()){var p=bgm.play();if(p&&p.catch)p.catch(function(){});}else{bgm.pause();}syncBtn();}
+["pointerdown","keydown","touchstart"].forEach(function(ev){document.addEventListener(ev,function(){if(want()&&bgm.paused)apply();},{passive:true});});new MutationObserver(apply).observe(panel,{attributes:true,attributeFilter:["class"]});if(btn)btn.addEventListener("click",function(){off=!off;try{localStorage.setItem(BGM_OFF_KEY,off?"1":"0");}catch(e){}apply();});syncBtn();if(off)bgm.pause();}
+function micNeeded(){return(els.ampToggle&&els.ampToggle.checked)||(els.tunerToggle&&els.tunerToggle.checked)||micTesting||state==="playing";}
+function ensureMic(){return P.isActive()?Promise.resolve():P.start(micDeviceId());}
+function stopMicIfIdle(){if(!micNeeded())P.stop();}
+function currentAppVersion(){try{var sc=document.querySelector('script[src*="game.js"]');var m=sc&&sc.src.match(/[?&]v=([^&]+)/);return m?m[1]:"";}catch(e){return"";}}
+function checkForUpdate(){var cur=currentAppVersion();if(!cur)return;fetch("version.json",{cache:"no-store"}).then(function(r){return r.ok?r.json():null;}).then(function(j){var latest=j&&j.v;if(!latest||latest===cur)return;var key="jianpu_reloaded_for";var tried="";try{tried=sessionStorage.getItem(key)||"";}catch(e){}
+if(tried===latest){setStatus("有新版本（"+latest+"）但瀏覽器仍在用快取，請手動強制重新整理（⌘⇧R）。",true);return;}
+try{sessionStorage.setItem(key,latest);}catch(e){}
+var base=location.href.split("?")[0].split("#")[0];location.replace(base+"?u="+encodeURIComponent(latest));}).catch(function(){});}
+var MAX_BG_PX=2560;function setBgTip(html,isErr){if(!els.bgTip)return;els.bgTip.innerHTML=html||"";els.bgTip.style.color=isErr?"#ff9a9a":"";}
+function shrinkForBg(src,w,h){var m=Math.max(w,h);if(m<=MAX_BG_PX)return src;var k=MAX_BG_PX/m;var cv=document.createElement("canvas");cv.width=Math.max(1,Math.round(w*k));cv.height=Math.max(1,Math.round(h*k));cv.getContext("2d").drawImage(src,0,0,cv.width,cv.height);return cv;}
+function applyBg(src,w,h,note){bgImage=shrinkForBg(src,w,h);setBgTip("🖼 已套用背景照：<b>"+w+"×"+h+"</b>"+
+(bgImage!==src?"（已縮到 "+bgImage.width+"×"+bgImage.height+" 以省資源）":"")+
+(note?"　"+note:""));}
+function loadBackgroundPhoto(file){var isHeic=window.HeicDecoder&&window.HeicDecoder.looksLikeHeic(file);setBgTip(isHeic?"🖼 正在解 HEIC 照片…":"🖼 讀取中…");var native=(typeof createImageBitmap==="function")?createImageBitmap(file,{imageOrientation:"from-image"}):Promise.reject(new Error("no createImageBitmap"));native.then(function(bmp){applyBg(bmp,bmp.width,bmp.height);}).catch(function(){if(isHeic&&window.HeicDecoder){window.HeicDecoder.isSupported().then(function(ok){if(!ok)throw new Error("unsupported");return window.HeicDecoder.decode(file);}).then(function(cv){applyBg(cv,cv.width,cv.height,"（HEIC）");}).catch(function(err){setBgTip("❌ 這台瀏覽器沒辦法解這張 HEIC"+
+(err&&err.message&&err.message!=="unsupported"?"（"+escapeHtml(err.message)+"）":"")+"。<br>替代做法：用 <b>Safari</b> 開這個網頁，或在 Mac 上對照片按右鍵 →「快速動作」→「轉換影像」→ JPEG。",true);});return;}
+var r=new FileReader();r.onload=function(){var im=new Image();im.onload=function(){applyBg(im,im.naturalWidth,im.naturalHeight);};im.onerror=function(){setBgTip("❌ 這個圖片格式沒辦法讀取，請改用 JPG / PNG。",true);};im.src=r.result;};r.onerror=function(){setBgTip("❌ 檔案讀取失敗。",true);};r.readAsDataURL(file);});}
+function dbToLin(db){return Math.pow(10,db/20);}
+function linToDb(v){return 20*Math.log10(Math.max(1e-6,v));}
+function setupVirtualAmp(){var t=els.ampToggle;if(!t)return;function driveV(){return(parseInt(els.ampDrive.value,10)||0)/100;}
+function levelV(){return(parseInt(els.ampLevel.value,10)||0)/100;}
+function pct(el){return(parseInt(el.value,10)||0)/100;}
+function gateThreshLin(){return dbToLin(parseInt(els.gateThresh.value,10)||-38);}
+function showGateThresh(){els.gateThreshVal.textContent=(parseInt(els.gateThresh.value,10)||-38)+" dB";}
+els.gateToggle.addEventListener("change",function(){P.setGateOn(els.gateToggle.checked);els.gateControls.classList.toggle("hidden",!els.gateToggle.checked);});els.gateThresh.addEventListener("input",function(){P.setGateThreshold(gateThreshLin());showGateThresh();});els.gateAutoBtn.addEventListener("click",function(){if(!P.isActive()){els.gateTip.innerHTML="⚠️ 請先勾選上面的「虛擬音箱」把麥克風打開，再按自動偵測。";return;}
+els.gateAutoBtn.disabled=true;els.gateTip.innerHTML="🎧 偵測中…請<b>手離開弦、保持安靜</b>（1.2 秒）";P.autoDetectGate(1200).then(function(r){els.gateAutoBtn.disabled=false;if(!r){els.gateTip.innerHTML="偵測失敗，請確認麥克風已開啟。";return;}
+var db=Math.round(linToDb(r.threshold));els.gateThresh.value=Math.max(-70,Math.min(-15,db));showGateThresh();P.setGateThreshold(dbToLin(parseInt(els.gateThresh.value,10)));if(!els.gateToggle.checked){els.gateToggle.checked=true;P.setGateOn(true);els.gateControls.classList.remove("hidden");}
+els.gateTip.innerHTML="✅ 偵測完成：底噪約 <b>"+Math.round(linToDb(r.noise))+" dB</b>，門檻已設為 <b>"+
+els.gateThresh.value+" dB</b>（已自動開啟雜訊閘）。若彈輕音被切掉，就把門檻往左調低一點。";});});els.odToggle.addEventListener("change",function(){P.setOdOn(els.odToggle.checked);els.odControls.classList.toggle("hidden",!els.odToggle.checked);});els.odDrive.addEventListener("input",function(){P.setOdDrive(pct(els.odDrive));els.odDriveVal.textContent=els.odDrive.value+"%";});els.odTone.addEventListener("input",function(){P.setOdTone(pct(els.odTone));els.odToneVal.textContent=els.odTone.value+"%";});els.odLevel.addEventListener("input",function(){P.setOdLevel(pct(els.odLevel));els.odLevelVal.textContent=els.odLevel.value+"%";});[["toneBass","bass"],["toneMid","mid"],["toneTreble","treble"],["tonePresence","presence"]].forEach(function(pair){var el=els[pair[0]],lab=els[pair[0]+"Val"];el.addEventListener("input",function(){P.setTone(pair[1],pct(el));lab.textContent=el.value+"%";});});var fxMeterTimer=null;function startFxMeter(){if(fxMeterTimer)return;fxMeterTimer=setInterval(function(){if(!P.isActive()||!P.isAmpOn()){els.gateMeter.style.width="0%";els.gateLed.classList.remove("open");return;}
+var rms=P.getInputRms?P.getInputRms():0;var db=linToDb(rms);els.gateMeter.style.width=Math.max(0,Math.min(100,(db+70)/70*100))+"%";els.gateLed.classList.toggle("open",!!(P.isGateOpen&&P.isGateOpen()));},60);}
+function stopFxMeter(){if(fxMeterTimer){clearInterval(fxMeterTimer);fxMeterTimer=null;}els.gateMeter.style.width="0%";els.gateLed.classList.remove("open");}
+function pushAllFx(){P.setAmpDrive(driveV());P.setAmpLevel(levelV());P.setGateThreshold(gateThreshLin());P.setGateOn(els.gateToggle.checked);P.setOdDrive(pct(els.odDrive));P.setOdTone(pct(els.odTone));P.setOdLevel(pct(els.odLevel));P.setOdOn(els.odToggle.checked);P.setTone("bass",pct(els.toneBass));P.setTone("mid",pct(els.toneMid));P.setTone("treble",pct(els.toneTreble));P.setTone("presence",pct(els.tonePresence));P.setDelayOn(els.dlyToggle.checked);P.setDelayTime(dlyTimeV());P.setDelayFb(dlyFbV());P.setDelayMix(dlyMixV());}
+showGateThresh();function dlyTimeV(){return parseInt(els.dlyTime.value,10)||0;}
+function dlyFbV(){return(parseInt(els.dlyFb.value,10)||0)/100;}
+function dlyMixV(){return(parseInt(els.dlyMix.value,10)||0)/100;}
+function showLat(){if(els.ampLatNow)els.ampLatNow.textContent="目前延遲："+(P.isActive()?(P.getLatencyMs()+" ms"):"—");}
+function showCtl(on){if(els.ampControls)els.ampControls.classList.toggle("hidden",!on);}
+els.ampDrive.addEventListener("input",function(){P.setAmpDrive(driveV());els.ampDriveVal.textContent=Math.round(driveV()*100)+"%";});els.ampLevel.addEventListener("input",function(){P.setAmpLevel(levelV());els.ampLevelVal.textContent=Math.round(levelV()*100)+"%";});els.dlyToggle.addEventListener("change",function(){P.setDelayOn(els.dlyToggle.checked);els.dlyControls.classList.toggle("hidden",!els.dlyToggle.checked);});els.dlyTime.addEventListener("input",function(){P.setDelayTime(dlyTimeV());els.dlyTimeVal.textContent=dlyTimeV()+" ms";});els.dlyFb.addEventListener("input",function(){P.setDelayFb(dlyFbV());els.dlyFbVal.textContent=Math.round(dlyFbV()*100)+"%";});els.dlyMix.addEventListener("input",function(){P.setDelayMix(dlyMixV());els.dlyMixVal.textContent=Math.round(dlyMixV()*100)+"%";});els.ampBuffer.addEventListener("change",function(){P.setBuffer(els.ampBuffer.value);if(P.isActive())P.restart().then(function(){pushAllFx();showLat();});else showLat();});t.addEventListener("change",function(){if(t.checked){P.setBuffer(els.ampBuffer.value);ensureMic().then(function(){pushAllFx();P.setAmp(true);showCtl(true);showLat();startFxMeter();}).catch(function(e){t.checked=false;showCtl(false);setStatus("無法開啟麥克風（虛擬音箱）："+((e&&e.message)||e),true);});}else{P.setAmp(false);showCtl(false);stopFxMeter();stopMicIfIdle();}});}
+var tunerRAF=null;function setupTuner(){var t=els.tunerToggle;if(!t)return;t.addEventListener("change",function(){if(t.checked){ensureMic().then(function(){els.tunerDisplay.classList.remove("hidden");if(!tunerRAF)tunerTick();}).catch(function(e){t.checked=false;setStatus("無法開啟麥克風（調音器）："+((e&&e.message)||e),true);});}else{if(tunerRAF){cancelAnimationFrame(tunerRAF);tunerRAF=null;}
+els.tunerDisplay.classList.add("hidden");stopMicIfIdle();}});}
+function tunerTick(){var p=P.read(),f=p.freq||0;if(f>0){var midiF=69+12*Math.log2(f/440),near=Math.round(midiF),cents=Math.round((midiF-near)*100);els.tunerNote.textContent=noteName(near);els.tunerCents.textContent=(cents>0?"+":"")+cents+" ¢";els.tunerNeedle.style.left=(50+Math.max(-50,Math.min(50,cents)))+"%";var intune=Math.abs(cents)<=5;els.tunerNeedle.classList.toggle("intune",intune);els.tunerNote.classList.toggle("intune",intune);}else{els.tunerNote.textContent="—";els.tunerCents.textContent="—";els.tunerNeedle.classList.remove("intune");els.tunerNote.classList.remove("intune");}
+tunerRAF=requestAnimationFrame(tunerTick);}
+function updateFretControls(){var tab=(displayMode==="tab");els.bottomSelect.style.display=tab?"":"none";var showFret=tab&&els.bottomSelect.value==="fretboard";els.fretWindowSelect.style.display=showFret?"":"none";els.fretStyleSelect.style.display=showFret?"":"none";}
+function resize(){dpr=window.devicePixelRatio||1;var rect=canvas.getBoundingClientRect();W=rect.width;H=rect.height;canvas.width=Math.round(W*dpr);canvas.height=Math.round(H*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);judgeY=H-96;travel=computeTravel();}
+function computeTravel(){var f=DIFFICULTY[els.difficultySelect.value]||DIFFICULTY.normal;var dist;if(displayMode==="tab"){var hitX=54+(W-54)*0.18;dist=W-hitX;}
+else dist=judgeY;if(!dist||dist<=0)return f.lead;return Math.max(f.lead,dist/f.vel);}
+function laneX(l){return l*(W/LANES);}
+function laneW(){return W/LANES;}
+function usesTabData(){return displayMode==="tab";}
+function dispName(){return"六線譜";}
+function drawBackground(){var g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,"#1b1030");g.addColorStop(0.55,"#120a1e");g.addColorStop(1,"#0a0710");ctx.fillStyle=g;ctx.fillRect(0,0,W,H);var st=(state==="playing")?A.getSongTime():0;var cbg=charBg[guitaristId];var lockBg=(cbg&&cbg.complete&&cbg.naturalWidth)?cbg:null;var bg=lockBg||bgImage;stageProcedural=!bg;stageOn=!bg||!!lockBg;if(bg){var alpha=lockBg?1.0:bgOpacity;var ir=bg.width/bg.height,cr=W/H,dw,dh;if(ir>cr){dh=H;dw=H*ir;}else{dw=W;dh=W/ir;}
+ctx.save();ctx.globalAlpha=alpha;ctx.drawImage(bg,(W-dw)/2,(H-dh)/2,dw,dh);ctx.restore();}else{var hy=hypeShown;drawSpotlight(W*0.28+Math.sin(st*0.7)*45,"255,150,70",1+hy*0.6);drawSpotlight(W*0.72+Math.sin(st*0.9+1)*45,"90,150,255",1+hy*0.6);var extra=Math.round(hy*4);var cols=["255,80,120","120,255,150","255,220,80","180,120,255"];for(var i=0;i<extra;i++){var bx=W*(0.12+0.76*((i+0.5)/4))+Math.sin(st*(1.1+i*0.35)+i)*80;drawSpotlight(bx,cols[i%cols.length],0.55+hy*0.9);}
+if(guitaristId==="lulan")drawGymBackdrop(st,hy);var fY=H*0.82;var fg=ctx.createLinearGradient(0,fY,0,H);fg.addColorStop(0,"rgba(255,255,255,"+(0.05+hy*0.05)+")");fg.addColorStop(1,"rgba(255,255,255,0.01)");ctx.fillStyle=fg;ctx.fillRect(0,fY,W,H-fY);ctx.fillStyle="rgba(150,180,255,"+(0.15+hy*0.25)+")";ctx.fillRect(0,fY,W,2);}
+ctx.fillStyle="rgba(8,8,14,0.42)";ctx.fillRect(0,0,W,H);var v=ctx.createRadialGradient(W/2,H/2,H*0.28,W/2,H/2,H*0.78);v.addColorStop(0,"rgba(0,0,0,0)");v.addColorStop(1,"rgba(0,0,0,0.5)");ctx.fillStyle=v;ctx.fillRect(0,0,W,H);}
+function drawSpotlight(topX,rgb,k){k=(k==null)?1:k;var grad=ctx.createLinearGradient(topX,0,W/2,H);grad.addColorStop(0,"rgba("+rgb+","+(0.18*k)+")");grad.addColorStop(1,"rgba("+rgb+",0)");ctx.fillStyle=grad;ctx.beginPath();ctx.moveTo(topX,-10);ctx.lineTo(topX-170,H);ctx.lineTo(topX+170,H);ctx.closePath();ctx.fill();}
+function drawGymBackdrop(st,hy){var baseY=H*0.80;var u=Math.min(W,H)*0.11;var fill="rgba(14,16,26,0.94)",edge="rgba(120,150,255,"+(0.22+hy*0.25)+")";ctx.save();ctx.lineCap="round";ctx.lineJoin="round";function bar(x,y,w,h,r){ctx.fillStyle=fill;roundRect(x,y,w,h,r||3);ctx.fill();ctx.strokeStyle=edge;ctx.lineWidth=1.5;roundRect(x,y,w,h,r||3);ctx.stroke();}
+function plate(cx,cy,rw,rh){ctx.fillStyle=fill;ctx.beginPath();ctx.ellipse(cx,cy,rw,rh,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle=edge;ctx.lineWidth=1.5;ctx.beginPath();ctx.ellipse(cx,cy,rw,rh,0,0,Math.PI*2);ctx.stroke();}
+(function(){var x=W*0.06,w=u*1.7,top=baseY-u*2.6;bar(x,top,u*0.16,u*2.6,4);bar(x+w,top,u*0.16,u*2.6,4);bar(x-u*0.1,top+u*0.2,w+u*0.36,u*0.16,4);var by=top+u*1.0;bar(x-u*0.5,by,w+u*1.16,u*0.12,6);plate(x+u*0.05,by+u*0.06,u*0.12,u*0.5);plate(x-u*0.15,by+u*0.06,u*0.1,u*0.42);plate(x+w+u*0.11,by+u*0.06,u*0.12,u*0.5);plate(x+w+u*0.31,by+u*0.06,u*0.1,u*0.42);})();(function(){var x=W*0.62,w=u*2.2,top=baseY-u*1.0;bar(x,top,w,u*0.14,4);bar(x,top+u*0.5,w,u*0.14,4);bar(x-u*0.05,top-u*0.05,u*0.1,u*1.1,3);bar(x+w-u*0.05,top-u*0.05,u*0.1,u*1.1,3);for(var i=0;i<4;i++){var dx=x+u*0.35+i*u*0.5;plate(dx-u*0.14,top-u*0.02,u*0.12,u*0.16);plate(dx+u*0.14,top-u*0.02,u*0.12,u*0.16);bar(dx-u*0.12,top-u*0.06,u*0.24,u*0.08,3);plate(dx-u*0.13,top+u*0.48,u*0.11,u*0.14);plate(dx+u*0.13,top+u*0.48,u*0.11,u*0.14);}})();(function(){var x=W*0.86,w=u*1.4,y=baseY-u*0.35;bar(x,y,w,u*0.2,5);ctx.strokeStyle=edge;ctx.lineWidth=Math.max(2,u*0.08);ctx.fillStyle=fill;ctx.beginPath();ctx.moveTo(x+u*0.15,y+u*0.2);ctx.lineTo(x,baseY+u*0.15);ctx.stroke();ctx.beginPath();ctx.moveTo(x+w-u*0.15,y+u*0.2);ctx.lineTo(x+w,baseY+u*0.15);ctx.stroke();})();(function(){var kx=W*0.30,ky=baseY-u*0.1;for(var i=0;i<2;i++){var x=kx+i*u*0.7,r=u*(0.28-i*0.05);ctx.fillStyle=fill;ctx.beginPath();ctx.arc(x,ky,r,0,Math.PI*2);ctx.fill();ctx.strokeStyle=edge;ctx.lineWidth=Math.max(2,u*0.06);ctx.beginPath();ctx.arc(x,ky-r*0.9,r*0.55,Math.PI,0);ctx.stroke();ctx.beginPath();ctx.arc(x,ky,r,0,Math.PI*2);ctx.stroke();}})();ctx.restore();}
+function drawSmithMachine(cx,baseY,h){var w=h*0.62,x0=cx-w/2,x1=cx+w/2,topY=baseY-h,pw=w*0.075;ctx.save();ctx.lineJoin="round";ctx.lineCap="round";ctx.globalAlpha=0.93;var steel="#12141c",edge="rgba(150,172,220,0.55)",chrome="rgba(222,230,242,0.92)";function slab(x,y,ww,hh,r){ctx.fillStyle=steel;roundRect(x,y,ww,hh,r||3);ctx.fill();ctx.strokeStyle=edge;ctx.lineWidth=1.5;roundRect(x,y,ww,hh,r||3);ctx.stroke();ctx.fillStyle="rgba(255,255,255,0.05)";ctx.fillRect(x+1.5,y+1.5,Math.max(2,ww*0.22),Math.max(2,hh-3));}
+ctx.strokeStyle=steel;ctx.lineWidth=Math.max(6,pw*0.95);ctx.beginPath();ctx.moveTo(x0+pw*0.5,topY+h*0.14);ctx.lineTo(x0-w*0.11,baseY);ctx.stroke();ctx.beginPath();ctx.moveTo(x1-pw*0.5,topY+h*0.14);ctx.lineTo(x1+w*0.11,baseY);ctx.stroke();slab(x0-w*0.17,baseY-h*0.035,w*0.36,h*0.045,4);slab(x1-w*0.19,baseY-h*0.035,w*0.36,h*0.045,4);slab(x0,topY,pw,h,3);slab(x1-pw,topY,pw,h,3);slab(x0-2,topY-h*0.02,w+4,h*0.05,3);slab(cx-w*0.17,topY-h*0.055,w*0.075,h*0.035,2);slab(cx+w*0.095,topY-h*0.055,w*0.075,h*0.035,2);var gL=cx-w*0.13,gR=cx+w*0.13,gTop=topY+h*0.05,gBot=baseY-h*0.05;ctx.strokeStyle=chrome;ctx.lineWidth=Math.max(2,w*0.013);ctx.beginPath();ctx.moveTo(gL,gTop);ctx.lineTo(gL,gBot);ctx.stroke();ctx.beginPath();ctx.moveTo(gR,gTop);ctx.lineTo(gR,gBot);ctx.stroke();var by=topY+h*0.44;ctx.strokeStyle=chrome;ctx.lineWidth=Math.max(3,w*0.021);ctx.beginPath();ctx.moveTo(x0+pw*0.4,by);ctx.lineTo(x1-pw*0.4,by);ctx.stroke();function barPlate(px,ph,pww){ctx.fillStyle=steel;roundRect(px-pww/2,by-ph/2,pww,ph,3);ctx.fill();ctx.strokeStyle=edge;ctx.lineWidth=1.4;roundRect(px-pww/2,by-ph/2,pww,ph,3);ctx.stroke();}
+barPlate(gL-w*0.02,h*0.21,w*0.055);barPlate(gL-w*0.08,h*0.16,w*0.04);barPlate(gR+w*0.02,h*0.21,w*0.055);barPlate(gR+w*0.08,h*0.16,w*0.04);for(var i=0;i<3;i++){var hy2=topY+h*(0.30+i*0.17);slab(x1+pw*0.2,hy2,w*0.15,h*0.02,2);ctx.fillStyle=steel;ctx.beginPath();ctx.ellipse(x1+w*0.14,hy2+h*0.01,w*0.032,h*0.058,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle=edge;ctx.lineWidth=1.4;ctx.beginPath();ctx.ellipse(x1+w*0.14,hy2+h*0.01,w*0.032,h*0.058,0,0,Math.PI*2);ctx.stroke();}
+ctx.restore();}
+function guitaristHeight(){return Math.min(H*0.72,W*0.82,470);}
+function drawCrowd(hy,st,ghgt){if(hy<=0.001)return;var unit=(ghgt||320)/2.3;var rows=1+Math.round(hy*5);ctx.save();ctx.lineCap="round";for(var r=rows-1;r>=0;r--){var depth=rows>1?r/(rows-1):0;var sc=1-depth*0.5;var dark=0.96-depth*0.32;var pH=unit*sc;var hr=pH*0.3;var sp=pH*0.62;var baseB=(H-4)-depth*(unit*0.55);var headY0=baseB-pH*0.5;var offset=(r%2)*sp*0.5;var n=Math.min(60,Math.ceil((W+sp*2)/sp));for(var i=0;i<n;i++){var x=i*sp-sp+offset;var bounce=(Math.sin(st*4.0+i*1.3+r*0.9)*0.5+0.5)*(hr*0.5)*(0.4+hy);var y=headY0-bounce;ctx.fillStyle="rgba(10,8,15,"+dark+")";ctx.beginPath();ctx.ellipse(x,y+hr*1.5,hr*1.35,hr*1.7,0,Math.PI,0);ctx.fill();ctx.beginPath();ctx.arc(x,y,hr,0,Math.PI*2);ctx.fill();ctx.strokeStyle=(i%2?"rgba(120,150,255,"+(0.4*dark)+")":"rgba(255,120,160,"+(0.4*dark)+")");ctx.lineWidth=Math.max(1,hr*0.16);ctx.beginPath();ctx.arc(x,y,hr,Math.PI*1.1,Math.PI*2);ctx.stroke();if(hy>0.4&&i%3===0){ctx.strokeStyle="rgba(10,8,15,"+dark+")";ctx.lineWidth=hr*0.34;ctx.beginPath();ctx.moveTo(x-hr*0.6,y+hr*0.3);ctx.lineTo(x-hr*1.1,y-hr*1.9-bounce);ctx.stroke();ctx.beginPath();ctx.moveTo(x+hr*0.6,y+hr*0.3);ctx.lineTo(x+hr*1.1,y-hr*1.9-bounce);ctx.stroke();}}}
+ctx.restore();}
+function stageLeftX(){return W*0.46;}
+function drawStageDeck(topY,floorY,hy,st){var L=stageLeftX(),R=W+6,bodyBot=floorY+64;ctx.save();ctx.fillStyle="rgba(13,10,19,0.98)";ctx.fillRect(L,topY+12,R-L,bodyBot-(topY+12));var sg=ctx.createLinearGradient(L,0,R,0);sg.addColorStop(0,"rgba(255,255,255,0.06)");sg.addColorStop(0.5,"rgba(255,255,255,0)");sg.addColorStop(1,"rgba(0,0,0,0.3)");ctx.fillStyle=sg;ctx.fillRect(L,topY+12,R-L,bodyBot-(topY+12));ctx.strokeStyle="rgba(255,255,255,0.05)";ctx.lineWidth=2;for(var v=L+30;v<R;v+=44){ctx.beginPath();ctx.moveTo(v,topY+18);ctx.lineTo(v,bodyBot);ctx.stroke();}
+ctx.fillStyle="rgba(46,41,60,0.98)";roundRect(L-6,topY-6,(R-L)+12,24,7);ctx.fill();ctx.fillStyle="rgba(255,255,255,0.07)";roundRect(L-6,topY-6,(R-L)+12,6,4);ctx.fill();var pulse=0.5+0.5*Math.sin(st*6);var neon=hy>0.66?"120,200,255":hy>0.33?"255,180,90":"255,120,160";ctx.fillStyle="rgba("+neon+","+(0.55+pulse*0.4*hy)+")";ctx.fillRect(L-6,topY-8,(R-L)+12,4);ctx.shadowColor="rgba("+neon+",0.9)";ctx.shadowBlur=16+hy*18;ctx.fillRect(L-6,topY-8,(R-L)+12,3);ctx.shadowBlur=0;ctx.fillStyle="rgba("+neon+",0.9)";for(var x=L+16;x<R;x+=30){ctx.beginPath();ctx.arc(x,topY+15,2.6,0,Math.PI*2);ctx.fill();}
+ctx.restore();}
+var AMP_STYLE={british:{body:"#0b0b0d",grille:"#1b1b20",accent:"#d9b24a",panel:"#d9b24a"},amber:{body:"#d5641b",grille:"#0c0c0c",accent:"#f2f2f2",panel:"#f4f4f4"},tweed:{body:"#111319",grille:"#3a4150",accent:"#c7ccd6",panel:"#c7ccd6"},retro:{body:"#14110d",grille:"#c9bfa6",accent:"#8a6a2a",panel:"#e9dcc0"},boutique:{body:"#0c0c0e",grille:"#161616",accent:"#7a1414",panel:"#7a1414"}};function drawAmp(x,baseY,w,h,brand,hy,st){var s=AMP_STYLE[brand]||AMP_STYLE.british,top=baseY-h;hy=hy||0;st=st||0;var puls=0.5+0.5*Math.sin(st*9+x*0.05);ctx.save();ctx.fillStyle=s.body;roundRect(x-w/2,top,w,h,7);ctx.fill();ctx.fillStyle="rgba(255,255,255,0.05)";roundRect(x-w/2,top,w,6,4);ctx.fill();ctx.fillStyle=s.panel;ctx.fillRect(x-w/2+7,top+8,w-14,Math.max(4,h*0.08));ctx.fillStyle=s.grille;roundRect(x-w/2+7,top+h*0.22,w-14,h*0.7,5);ctx.fill();ctx.strokeStyle="rgba(255,255,255,0.05)";ctx.lineWidth=1;for(var gy=top+h*0.3;gy<top+h*0.88;gy+=6){ctx.beginPath();ctx.moveTo(x-w/2+9,gy);ctx.lineTo(x+w/2-9,gy);ctx.stroke();}
+ctx.fillStyle=s.accent;roundRect(x-w*0.19,top+h*0.45,w*0.38,h*0.1,3);ctx.fill();var coneY=top+h*0.58,coneR=w*0.2;ctx.fillStyle="rgba(255,180,90,"+(0.06+0.08*puls)+")";ctx.beginPath();ctx.arc(x,coneY,coneR,0,Math.PI*2);ctx.fill();ctx.fillStyle="rgba(255,70,60,"+(0.5+0.4*puls)+")";ctx.beginPath();ctx.arc(x+w/2-12,top+8+Math.max(4,h*0.08)/2,2.4,0,Math.PI*2);ctx.fill();ctx.restore();}
+function drawAmpBackline(cx,deckTopY,hgt,hy,st){var styles=["british","amber","tweed","retro","boutique"];var n=4+(hy>0.5?1:0);var ah=hgt*0.46,aw=hgt*0.38,baseY=deckTopY+4;var startX=stageLeftX()+aw*0.55,endX=W-aw*0.55;var gap=n>1?(endX-startX)/(n-1):0;for(var i=0;i<n;i++)drawAmp(startX+gap*i,baseY,aw,ah,styles[i%styles.length],hy,st||0);}
+function bandBody(cx,footY,h,st,phase){var bob=Math.sin(st*6.3+phase)*(h*0.02);var hipY=footY-h*0.42,shY=footY-h*0.80-bob,hr=h*0.12,headY=shY-hr*1.15;ctx.fillStyle="rgba(9,9,13,0.98)";ctx.fillRect(cx-h*0.11,hipY,h*0.08,footY-hipY);ctx.fillRect(cx+h*0.03,hipY,h*0.08,footY-hipY);roundRect(cx-h*0.15,shY,h*0.30,hipY-shY+h*0.05,h*0.06);ctx.fill();ctx.beginPath();ctx.arc(cx,headY,hr,0,Math.PI*2);ctx.fill();ctx.strokeStyle=(phase%2?"rgba(150,175,255,0.32)":"rgba(255,140,175,0.30)");ctx.lineWidth=2;ctx.beginPath();ctx.arc(cx,headY,hr,Math.PI*1.08,Math.PI*1.95);ctx.stroke();return{shY:shY,headY:headY,hr:hr,hipY:hipY,bob:bob};}
+function drawBandMembers(gcx,groundY,hgt,hy,st){var dark="rgba(9,9,13,0.98)";ctx.save();ctx.lineCap="round";ctx.lineJoin="round";(function(){var h=hgt*0.5,cx=gcx-hgt*0.26,footY=groundY-hgt*0.28;var b=bandBody(cx,footY,h,st,0);ctx.fillStyle=dark;ctx.beginPath();ctx.ellipse(cx,footY+h*0.02,h*0.28,h*0.24,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle="rgba(150,175,255,0.28)";ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(cx,footY+h*0.02,h*0.28,h*0.24,0,0,Math.PI*2);ctx.stroke();ctx.fillStyle=dark;ctx.beginPath();ctx.ellipse(cx-h*0.4,b.shY-h*0.02,h*0.16,h*0.035,-0.25,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.ellipse(cx+h*0.4,b.shY+h*0.05,h*0.16,h*0.035,0.25,0,Math.PI*2);ctx.fill();ctx.strokeStyle=dark;ctx.lineWidth=2.5;ctx.beginPath();ctx.moveTo(cx-h*0.4,b.shY);ctx.lineTo(cx-h*0.3,footY);ctx.stroke();ctx.beginPath();ctx.moveTo(cx+h*0.4,b.shY+h*0.07);ctx.lineTo(cx+h*0.3,footY);ctx.stroke();var hit=Math.abs(Math.sin(st*8));ctx.lineWidth=Math.max(2,h*0.04);ctx.beginPath();ctx.moveTo(cx-h*0.06,b.shY+h*0.12);ctx.lineTo(cx-h*0.36,b.shY-h*0.04-hit*h*0.12);ctx.stroke();ctx.beginPath();ctx.moveTo(cx+h*0.06,b.shY+h*0.12);ctx.lineTo(cx+h*0.36,b.shY+h*0.03-(1-hit)*h*0.12);ctx.stroke();})();(function(){var h=hgt*0.76,cx=gcx-hgt*0.62,footY=groundY;var b=bandBody(cx,footY,h,st,1);ctx.save();ctx.translate(cx+h*0.02,b.shY+h*0.22);ctx.rotate(-0.5);ctx.fillStyle=dark;roundRect(-h*0.07,-h*0.11,h*0.17,h*0.22,h*0.05);ctx.fill();ctx.fillRect(-h*0.02,-h*0.52,h*0.05,h*0.44);ctx.strokeStyle="rgba(150,175,255,0.3)";ctx.lineWidth=1.5;roundRect(-h*0.07,-h*0.11,h*0.17,h*0.22,h*0.05);ctx.stroke();ctx.restore();ctx.strokeStyle=dark;ctx.lineWidth=Math.max(2,h*0.05);ctx.beginPath();ctx.moveTo(cx+h*0.07,b.shY+h*0.06);ctx.lineTo(cx+h*0.04+Math.sin(st*7)*h*0.03,b.shY+h*0.26);ctx.stroke();})();(function(){var h=hgt*0.68,cx=gcx+hgt*0.55,footY=groundY;var b=bandBody(cx,footY,h,st,2);var kw=h*0.54,ky=b.hipY+h*0.02;ctx.fillStyle=dark;roundRect(cx-kw/2,ky,kw,h*0.09,4);ctx.fill();ctx.strokeStyle="rgba(150,175,255,0.3)";ctx.lineWidth=1.5;roundRect(cx-kw/2,ky,kw,h*0.09,4);ctx.stroke();ctx.fillStyle="rgba(210,215,230,0.45)";for(var kx=cx-kw/2+h*0.03;kx<cx+kw/2-h*0.02;kx+=h*0.05)ctx.fillRect(kx,ky+3,h*0.01,h*0.05);ctx.strokeStyle=dark;ctx.lineWidth=2.5;ctx.beginPath();ctx.moveTo(cx-kw*0.32,ky+h*0.09);ctx.lineTo(cx-kw*0.28,footY);ctx.stroke();ctx.beginPath();ctx.moveTo(cx+kw*0.32,ky+h*0.09);ctx.lineTo(cx+kw*0.28,footY);ctx.stroke();ctx.lineWidth=Math.max(2,h*0.05);ctx.beginPath();ctx.moveTo(cx-h*0.05,b.shY+h*0.12);ctx.lineTo(cx-h*0.09+Math.sin(st*9)*h*0.02,ky);ctx.stroke();ctx.beginPath();ctx.moveTo(cx+h*0.05,b.shY+h*0.12);ctx.lineTo(cx+h*0.09+Math.cos(st*9)*h*0.02,ky);ctx.stroke();})();ctx.restore();}
+function drawFollowSpot(cx,headY,footY,hy,st,hgt){var k=0.5+hy*0.9;var aimX=cx+Math.sin(st*1.15)*(hgt*0.045);ctx.save();ctx.globalCompositeOperation="lighter";var beams=[[cx-hgt*0.52,"255,236,196"],[cx+hgt*0.44,"202,224,255"]];for(var i=0;i<beams.length;i++){var sx=beams[i][0],rgb=beams[i][1];var g=ctx.createLinearGradient(sx,-20,aimX,footY);g.addColorStop(0,"rgba("+rgb+","+(0.17*k)+")");g.addColorStop(0.8,"rgba("+rgb+","+(0.05*k)+")");g.addColorStop(1,"rgba("+rgb+",0)");ctx.fillStyle=g;ctx.beginPath();ctx.moveTo(sx-12,-20);ctx.lineTo(sx+12,-20);ctx.lineTo(aimX+hgt*0.3,footY+6);ctx.lineTo(aimX-hgt*0.3,footY+6);ctx.closePath();ctx.fill();}
+var midY=(headY+footY)/2;var pool=ctx.createRadialGradient(aimX,midY,8,aimX,midY,hgt*0.6);pool.addColorStop(0,"rgba(255,248,224,"+(0.16*k)+")");pool.addColorStop(1,"rgba(255,248,224,0)");ctx.fillStyle=pool;ctx.beginPath();ctx.ellipse(aimX,midY,hgt*0.42,hgt*0.66,0,0,Math.PI*2);ctx.fill();var fl=ctx.createRadialGradient(cx,footY+6,4,cx,footY+6,hgt*0.5);fl.addColorStop(0,"rgba(255,240,196,"+(0.24*k)+")");fl.addColorStop(1,"rgba(255,240,196,0)");ctx.fillStyle=fl;ctx.beginPath();ctx.ellipse(cx,footY+6,hgt*0.42,hgt*0.1,0,0,Math.PI*2);ctx.fill();ctx.restore();}
+function curlCluster(spec,color){ctx.fillStyle=color;for(var i=0;i<spec.length;i++){ctx.beginPath();ctx.arc(spec[i][0],spec[i][1],spec[i][2],0,Math.PI*2);ctx.fill();}}
+function drawLimb(a,b,c,sleeve,skin,wUp,wFore){ctx.lineCap="round";ctx.lineJoin="round";ctx.strokeStyle=sleeve;ctx.lineWidth=wUp;ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();ctx.strokeStyle=skin;ctx.lineWidth=wFore;ctx.beginPath();ctx.moveTo(b[0],b[1]);ctx.lineTo(c[0],c[1]);ctx.stroke();ctx.fillStyle=skin;ctx.beginPath();ctx.arc(c[0],c[1],wFore*0.72,0,Math.PI*2);ctx.fill();}
+function drawGuitar(type){ctx.save();ctx.translate(2,-70);ctx.rotate(-0.62);var maple=(type==="strat"||type==="striped"||type==="headless");var neckCol=maple?"#c99a5a":"#2a1a0c";ctx.fillStyle=neckCol;ctx.fillRect(-9,-150,18,120);if(type==="headless"){ctx.fillStyle="#b8894a";roundRect(-11,-156,22,12,2);ctx.fill();ctx.fillStyle="#c8ccd2";for(var hh=-8;hh<=8;hh+=8){ctx.beginPath();ctx.arc(hh,-150,2.4,0,Math.PI*2);ctx.fill();}}else{ctx.fillStyle=maple?"#b8894a":"#0d0d0d";roundRect(-13,-170,26,24,3);ctx.fill();}
+if(type==="strat"){ctx.fillStyle="#f4f4f4";ctx.beginPath();ctx.ellipse(0,6,40,50,0,0,Math.PI*2);ctx.fill();ctx.fillStyle="#dcdcdc";ctx.beginPath();ctx.ellipse(5,12,25,33,0,0,Math.PI*2);ctx.fill();ctx.fillStyle="#111";ctx.fillRect(-8,2,20,5);ctx.fillRect(-8,14,20,5);ctx.fillRect(-8,26,20,5);}else if(type==="sg"){ctx.fillStyle="#7a1420";ctx.beginPath();ctx.ellipse(0,12,36,44,0,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.moveTo(-32,-22);ctx.lineTo(-4,-34);ctx.lineTo(-6,-4);ctx.closePath();ctx.fill();ctx.beginPath();ctx.moveTo(32,-22);ctx.lineTo(4,-34);ctx.lineTo(6,-4);ctx.closePath();ctx.fill();ctx.fillStyle="#111";ctx.fillRect(-11,2,22,7);ctx.fillRect(-11,18,22,7);}else if(type==="red"){var rg=ctx.createRadialGradient(0,6,4,0,6,46);rg.addColorStop(0,"#c33742");rg.addColorStop(0.7,"#7d1620");rg.addColorStop(1,"#3a0a10");ctx.fillStyle=rg;ctx.beginPath();ctx.ellipse(0,6,40,50,0,0,Math.PI*2);ctx.fill();ctx.fillStyle="#d8b24a";ctx.fillRect(-12,-4,24,7);ctx.fillRect(-12,14,24,7);}else if(type==="striped"){ctx.fillStyle="#d63a3a";ctx.beginPath();ctx.ellipse(0,6,40,50,0,0,Math.PI*2);ctx.fill();ctx.save();ctx.beginPath();ctx.ellipse(0,6,40,50,0,0,Math.PI*2);ctx.clip();ctx.strokeStyle="#f4f4f4";ctx.lineWidth=6;for(var k=-60;k<70;k+=22){ctx.beginPath();ctx.moveTo(k,-52);ctx.lineTo(k+42,62);ctx.stroke();}
+ctx.strokeStyle="#111";ctx.lineWidth=4;for(var k2=-50;k2<70;k2+=22){ctx.beginPath();ctx.moveTo(k2,-52);ctx.lineTo(k2+42,62);ctx.stroke();}
+ctx.restore();ctx.fillStyle="#111";ctx.fillRect(-10,4,22,7);}else if(type==="offset"){var og=ctx.createLinearGradient(-40,-44,40,56);og.addColorStop(0,"#3f74ad");og.addColorStop(1,"#16324f");ctx.fillStyle=og;ctx.beginPath();ctx.ellipse(-3,4,42,50,0.12,0,Math.PI*2);ctx.fill();ctx.fillStyle="#e8e4d8";ctx.beginPath();ctx.ellipse(7,14,20,26,0.1,0,Math.PI*2);ctx.fill();ctx.fillStyle="#111";ctx.fillRect(-4,6,18,5);ctx.fillRect(-4,20,18,5);}else if(type==="hollow"){ctx.fillStyle="#0e0e12";ctx.beginPath();ctx.ellipse(0,8,42,52,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#33333a";ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(0,8,42,52,0,0,Math.PI*2);ctx.stroke();ctx.strokeStyle="#c9a24a";ctx.lineWidth=3;ctx.lineCap="round";ctx.beginPath();ctx.arc(-22,10,13,-0.6,1.9);ctx.stroke();ctx.beginPath();ctx.arc(22,10,13,1.2,3.7);ctx.stroke();ctx.fillStyle="#c9a24a";ctx.fillRect(-11,-6,22,5);}else if(type==="bullseye"){ctx.save();ctx.beginPath();ctx.ellipse(0,6,40,50,0,0,Math.PI*2);ctx.clip();var rr=[58,49,40,31,22,13,6];for(var b=0;b<rr.length;b++){ctx.fillStyle=(b%2===0)?"#f2f2f2":"#0d0d0d";ctx.beginPath();ctx.arc(-4,2,rr[b],0,Math.PI*2);ctx.fill();}
+ctx.restore();ctx.fillStyle="#1a1a1a";ctx.fillRect(-12,-4,24,7);}else if(type==="nylon"){var ng=ctx.createRadialGradient(0,6,4,0,6,48);ng.addColorStop(0,"#e9cd93");ng.addColorStop(0.7,"#cf9f57");ng.addColorStop(1,"#9c6e30");ctx.fillStyle=ng;ctx.beginPath();ctx.ellipse(0,6,40,50,0,0,Math.PI*2);ctx.fill();ctx.fillStyle="#4a2f14";ctx.beginPath();ctx.arc(0,10,12,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#2e1c0c";ctx.lineWidth=2.5;ctx.beginPath();ctx.arc(0,10,15,0,Math.PI*2);ctx.stroke();ctx.strokeStyle="#6a4a24";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(-14,-18);ctx.lineTo(14,-18);ctx.stroke();}else if(type==="headless"){ctx.save();ctx.beginPath();ctx.ellipse(-2,8,34,42,0.14,0,Math.PI*2);ctx.clip();var yg=ctx.createLinearGradient(-34,-34,34,50);yg.addColorStop(0,"#4ec9c0");yg.addColorStop(0.5,"#e86a9a");yg.addColorStop(1,"#6a5acd");ctx.fillStyle=yg;ctx.fillRect(-40,-44,80,96);ctx.strokeStyle="rgba(255,255,255,0.5)";ctx.lineWidth=3;ctx.lineCap="round";ctx.beginPath();ctx.arc(-6,6,20,0.3,4.2);ctx.moveTo(16,2);ctx.arc(6,12,12,-0.4,2.8);ctx.stroke();ctx.restore();ctx.fillStyle="#111";ctx.fillRect(-8,4,20,5);ctx.fillStyle="#c8ccd2";roundRect(-12,40,24,8,2);ctx.fill();}else{var lg=ctx.createRadialGradient(0,6,4,0,6,46);lg.addColorStop(0,"#f2b64e");lg.addColorStop(0.6,"#c6761c");lg.addColorStop(1,"#37200a");ctx.fillStyle=lg;ctx.beginPath();ctx.ellipse(0,6,40,50,0,0,Math.PI*2);ctx.fill();ctx.fillStyle="#1a1a1a";ctx.fillRect(-12,-4,24,8);ctx.fillRect(-12,14,24,8);}
+ctx.restore();}
+var GUITARISTS={beethoven:{skin:"#e7c6a3",legs:"#20222c",torso:"#2a2530",sleeve:"#2a2530",chest:"#ece7d8",tie:"#ece7d8",guitar:"lespaul",head:function(hy){curlCluster([[-44,hy-20,24],[-18,hy-40,24],[10,hy-42,24],[40,hy-22,25],[-56,hy+6,22],[56,hy+6,22],[-46,hy+42,20],[48,hy+42,20],[0,hy-50,24],[-30,hy-46,20],[30,hy-46,20]],"#4c4842");ctx.strokeStyle="#2a2620";ctx.lineWidth=4;ctx.lineCap="round";ctx.beginPath();ctx.moveTo(-22,hy-3);ctx.lineTo(-6,hy-8);ctx.moveTo(22,hy-3);ctx.lineTo(6,hy-8);ctx.stroke();ctx.fillStyle="#241a12";ctx.beginPath();ctx.arc(-14,hy+6,4,0,Math.PI*2);ctx.arc(14,hy+6,4,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#8a5a4a";ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(-9,hy+23);ctx.lineTo(9,hy+23);ctx.stroke();}},einstein:{skin:"#e9cbb0",legs:"#3a3a42",torso:"#5a5a64",sleeve:"#5a5a64",chest:"#d6d6dc",guitar:"strat",head:function(hy){curlCluster([[-48,hy-12,22],[-24,hy-34,22],[6,hy-38,22],[34,hy-28,22],[52,hy-8,22],[-60,hy+18,22],[60,hy+18,22],[-50,hy+48,19],[50,hy+48,19],[0,hy-46,22]],"#ececee");ctx.fillStyle="#241a12";ctx.beginPath();ctx.arc(-14,hy+4,4,0,Math.PI*2);ctx.arc(14,hy+4,4,0,Math.PI*2);ctx.fill();ctx.fillStyle="#e4e4e8";ctx.beginPath();ctx.moveTo(-17,hy+19);ctx.quadraticCurveTo(0,hy+25,17,hy+19);ctx.quadraticCurveTo(0,hy+31,-17,hy+19);ctx.fill();}},mozart:{skin:"#eecdb2",legs:"#2a2230",torso:"#7a2540",sleeve:"#7a2540",chest:"#f0e6cf",guitar:"hollow",head:function(hy){ctx.fillStyle="#ece7dc";ctx.beginPath();ctx.arc(0,hy-14,49,Math.PI,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(-45,hy+12,16,0,Math.PI*2);ctx.arc(45,hy+12,16,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(-45,hy+32,13,0,Math.PI*2);ctx.arc(45,hy+32,13,0,Math.PI*2);ctx.fill();ctx.fillStyle="#241a12";ctx.beginPath();ctx.arc(-14,hy+6,4,0,Math.PI*2);ctx.arc(14,hy+6,4,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#c86a6a";ctx.lineWidth=2.5;ctx.lineCap="round";ctx.beginPath();ctx.arc(0,hy+18,7,0.12*Math.PI,0.88*Math.PI);ctx.stroke();}},bach:{skin:"#e7c6a3",legs:"#20201c",torso:"#241f1a",sleeve:"#241f1a",chest:"#e6e0d2",guitar:"hollow",head:function(hy){curlCluster([[-50,hy+2,22],[-52,hy+40,22],[-46,hy+76,20],[50,hy+2,22],[52,hy+40,22],[46,hy+76,20],[-30,hy-34,22],[0,hy-42,22],[30,hy-34,22],[-48,hy-14,20],[48,hy-14,20]],"#c9c3b4");ctx.fillStyle="#241a12";ctx.beginPath();ctx.arc(-14,hy+6,4,0,Math.PI*2);ctx.arc(14,hy+6,4,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#3a2a1a";ctx.lineWidth=3;ctx.lineCap="round";ctx.beginPath();ctx.moveTo(-22,hy-1);ctx.lineTo(-6,hy-2);ctx.moveTo(22,hy-1);ctx.lineTo(6,hy-2);ctx.stroke();}},newton:{skin:"#e9cbb0",legs:"#241a20",torso:"#3a2030",sleeve:"#3a2030",chest:"#d8cbb0",guitar:"lespaul",head:function(hy){ctx.fillStyle="#6a4a30";ctx.beginPath();ctx.arc(0,hy-12,50,Math.PI,0);ctx.fill();roundRect(-56,hy-14,30,128,15);ctx.fill();roundRect(26,hy-14,30,128,15);ctx.fill();curlCluster([[-46,hy+30,16],[-48,hy+70,15],[46,hy+30,16],[48,hy+70,15]],"#5a3e28");ctx.fillStyle="#e9cbb0";ctx.beginPath();ctx.arc(0,hy+2,30,0,Math.PI*2);ctx.fill();ctx.fillStyle="#241a12";ctx.beginPath();ctx.arc(-12,hy+2,4,0,Math.PI*2);ctx.arc(12,hy+2,4,0,Math.PI*2);ctx.fill();}},napoleon:{skin:"#e7c6a3",legs:"#1a1c26",torso:"#20305a",sleeve:"#20305a",chest:"#d8b24a",guitar:"sg",head:function(hy){ctx.fillStyle="#2a2a22";ctx.beginPath();ctx.arc(0,hy-4,46,Math.PI*1.05,Math.PI*1.95);ctx.fill();ctx.fillStyle="#14141a";ctx.beginPath();ctx.moveTo(-64,hy-30);ctx.quadraticCurveTo(0,hy-74,64,hy-30);ctx.quadraticCurveTo(30,hy-40,0,hy-40);ctx.quadraticCurveTo(-30,hy-40,-64,hy-30);ctx.closePath();ctx.fill();ctx.fillStyle="#c9a24a";ctx.fillRect(-6,hy-62,12,22);ctx.fillStyle="#241a12";ctx.beginPath();ctx.arc(-14,hy+4,4,0,Math.PI*2);ctx.arc(14,hy+4,4,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#7a4a3a";ctx.lineWidth=2.5;ctx.beginPath();ctx.moveTo(-8,hy+20);ctx.lineTo(8,hy+20);ctx.stroke();}},lincoln:{skin:"#d8b48a",legs:"#161620",torso:"#1a1a20",sleeve:"#1a1a20",chest:"#e6e0d2",tie:"#14141a",guitar:"hollow",head:function(hy){ctx.fillStyle="#14100c";ctx.beginPath();ctx.arc(0,hy-6,46,Math.PI*1.04,Math.PI*1.96);ctx.fill();ctx.fillStyle="#0e0e10";ctx.fillRect(-46,hy-66,92,12);roundRect(-33,hy-150,66,90,4);ctx.fill();ctx.fillStyle="#241a12";ctx.beginPath();ctx.arc(-14,hy+4,4,0,Math.PI*2);ctx.arc(14,hy+4,4,0,Math.PI*2);ctx.fill();ctx.fillStyle="#1c150f";ctx.beginPath();ctx.moveTo(-30,hy+6);ctx.quadraticCurveTo(-32,hy+44,0,hy+50);ctx.quadraticCurveTo(32,hy+44,30,hy+6);ctx.quadraticCurveTo(20,hy+24,0,hy+24);ctx.quadraticCurveTo(-20,hy+24,-30,hy+6);ctx.closePath();ctx.fill();}},vangogh:{skin:"#e2b48c",legs:"#2a3a44",torso:"#33566a",sleeve:"#33566a",chest:"#7fa0ad",guitar:"strat",head:function(hy){ctx.fillStyle="#b5652a";ctx.beginPath();ctx.arc(0,hy-6,46,Math.PI*1.02,Math.PI*1.98);ctx.fill();ctx.fillStyle="#c9722e";ctx.beginPath();ctx.moveTo(-34,hy+2);ctx.quadraticCurveTo(-30,hy+46,0,hy+50);ctx.quadraticCurveTo(30,hy+46,34,hy+2);ctx.quadraticCurveTo(0,hy+26,-34,hy+2);ctx.closePath();ctx.fill();ctx.fillStyle="#e8c85a";ctx.beginPath();ctx.ellipse(0,hy-40,60,14,0,0,Math.PI*2);ctx.fill();ctx.fillStyle="#dcb840";ctx.beginPath();ctx.ellipse(0,hy-48,34,16,0,Math.PI,0);ctx.fill();ctx.fillStyle="#241a12";ctx.beginPath();ctx.arc(-14,hy+4,4,0,Math.PI*2);ctx.arc(14,hy+4,4,0,Math.PI*2);ctx.fill();}},davinci:{skin:"#e2b48c",legs:"#241c18",torso:"#3a2c20",sleeve:"#3a2c20",chest:"#5a4632",guitar:"nylon",head:function(hy){ctx.fillStyle="#b8b2a6";ctx.beginPath();ctx.arc(0,hy-8,50,Math.PI,0);ctx.fill();roundRect(-54,hy-12,26,90,12);ctx.fill();roundRect(28,hy-12,26,90,12);ctx.fill();ctx.fillStyle="#241a12";ctx.beginPath();ctx.arc(-13,hy+2,4,0,Math.PI*2);ctx.arc(13,hy+2,4,0,Math.PI*2);ctx.fill();ctx.fillStyle="#c4bfb4";ctx.beginPath();ctx.moveTo(-32,hy+8);ctx.quadraticCurveTo(-24,hy+70,0,hy+92);ctx.quadraticCurveTo(24,hy+70,32,hy+8);ctx.quadraticCurveTo(0,hy+34,-32,hy+8);ctx.closePath();ctx.fill();}},shakespeare:{skin:"#e7c6a3",legs:"#201820",torso:"#241820",sleeve:"#241820",chest:"#f0ece2",guitar:"hollow",head:function(hy){ctx.fillStyle="#3a2a1e";ctx.beginPath();ctx.arc(-40,hy-4,16,0,Math.PI*2);ctx.arc(40,hy-4,16,0,Math.PI*2);ctx.fill();ctx.fillRect(-52,hy-6,16,30);ctx.fillRect(36,hy-6,16,30);ctx.fillStyle="#241a12";ctx.beginPath();ctx.arc(-13,hy+4,4,0,Math.PI*2);ctx.arc(13,hy+4,4,0,Math.PI*2);ctx.fill();ctx.fillStyle="#3a2a1e";ctx.fillRect(-9,hy+18,18,4);ctx.beginPath();ctx.moveTo(-7,hy+24);ctx.lineTo(7,hy+24);ctx.lineTo(0,hy+38);ctx.closePath();ctx.fill();ctx.fillStyle="#e8c84a";ctx.beginPath();ctx.arc(-40,hy+20,3,0,Math.PI*2);ctx.fill();}},tesla:{skin:"#e7c6a3",legs:"#1a1a1e",torso:"#20201e",sleeve:"#20201e",chest:"#e6e0d2",tie:"#14141a",guitar:"offset",head:function(hy){ctx.fillStyle="#14100e";ctx.beginPath();ctx.arc(0,hy-8,48,Math.PI,0);ctx.fill();ctx.fillStyle="#e7c6a3";ctx.beginPath();ctx.moveTo(0,hy-40);ctx.lineTo(-6,hy-8);ctx.lineTo(6,hy-8);ctx.closePath();ctx.fill();ctx.fillStyle="#241a12";ctx.beginPath();ctx.arc(-14,hy+4,4,0,Math.PI*2);ctx.arc(14,hy+4,4,0,Math.PI*2);ctx.fill();ctx.fillStyle="#1a140f";ctx.beginPath();ctx.moveTo(-15,hy+19);ctx.quadraticCurveTo(0,hy+23,15,hy+19);ctx.quadraticCurveTo(0,hy+27,-15,hy+19);ctx.fill();}},paganini:{skin:"#dcbc96",legs:"#141118",torso:"#161018",sleeve:"#161018",chest:"#2a1420",guitar:"red",head:function(hy){ctx.fillStyle="#0e0c12";ctx.beginPath();ctx.arc(0,hy-10,50,Math.PI,0);ctx.fill();roundRect(-56,hy-14,28,150,14);ctx.fill();roundRect(28,hy-14,28,150,14);ctx.fill();curlCluster([[-46,hy+120,14],[-52,hy+80,14],[46,hy+120,14],[52,hy+80,14]],"#0e0c12");ctx.fillStyle="#dcbc96";ctx.beginPath();ctx.arc(0,hy+2,30,0,Math.PI*2);ctx.fill();ctx.fillStyle="#1a1016";ctx.beginPath();ctx.arc(-12,hy,4,0,Math.PI*2);ctx.arc(12,hy,4,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#8a5060";ctx.lineWidth=2.5;ctx.lineCap="round";ctx.beginPath();ctx.arc(0,hy+12,10,0.15*Math.PI,0.85*Math.PI);ctx.stroke();}},confucius:{skin:"#e6c49a",legs:"#241f16",torso:"#3a2f1e",sleeve:"#3a2f1e",chest:"#5a4a2e",guitar:"nylon",head:function(hy){ctx.fillStyle="#14120e";ctx.beginPath();ctx.arc(0,hy-6,44,Math.PI*1.06,Math.PI*1.94);ctx.fill();ctx.fillStyle="#20201a";ctx.beginPath();ctx.moveTo(-40,hy-26);ctx.lineTo(40,hy-26);ctx.lineTo(34,hy-58);ctx.lineTo(-34,hy-58);ctx.closePath();ctx.fill();ctx.fillRect(-14,hy-74,28,20);ctx.strokeStyle="#2a2a20";ctx.lineWidth=4;ctx.lineCap="round";ctx.beginPath();ctx.moveTo(-24,hy-2);ctx.lineTo(-6,hy+1);ctx.moveTo(24,hy-2);ctx.lineTo(6,hy+1);ctx.stroke();ctx.fillStyle="#241a12";ctx.beginPath();ctx.arc(-13,hy+8,3.6,0,Math.PI*2);ctx.arc(13,hy+8,3.6,0,Math.PI*2);ctx.fill();ctx.fillStyle="#c4bfb0";ctx.beginPath();ctx.moveTo(-28,hy+16);ctx.quadraticCurveTo(-20,hy+78,0,hy+98);ctx.quadraticCurveTo(20,hy+78,28,hy+16);ctx.quadraticCurveTo(0,hy+40,-28,hy+16);ctx.closePath();ctx.fill();}},lulan:{skin:"#e8c4a0",legs:"#16161c",torso:"#3f3f36",sleeve:"#3f3f36",chest:"#3f3f36",lift:true,head:function(hy){ctx.fillStyle="#1c1813";ctx.beginPath();ctx.arc(0,hy-4,47,Math.PI*1.03,Math.PI*1.97);ctx.fill();ctx.fillRect(-45,hy-12,90,10);ctx.fillStyle="#1c1813";ctx.lineWidth=4;ctx.strokeStyle="#1c1813";ctx.lineCap="round";ctx.beginPath();ctx.moveTo(-28,hy-7);ctx.lineTo(-9,hy-3);ctx.stroke();ctx.beginPath();ctx.moveTo(28,hy-7);ctx.lineTo(9,hy-3);ctx.stroke();ctx.strokeStyle="#d7d9de";ctx.lineWidth=3;ctx.beginPath();ctx.ellipse(-17,hy+7,15,12,0,0,Math.PI*2);ctx.stroke();ctx.beginPath();ctx.ellipse(17,hy+7,15,12,0,0,Math.PI*2);ctx.stroke();ctx.beginPath();ctx.moveTo(-2,hy+6);ctx.lineTo(2,hy+6);ctx.stroke();ctx.beginPath();ctx.moveTo(-32,hy+5);ctx.lineTo(-45,hy+2);ctx.stroke();ctx.beginPath();ctx.moveTo(32,hy+5);ctx.lineTo(45,hy+2);ctx.stroke();ctx.fillStyle="rgba(190,205,225,0.16)";ctx.beginPath();ctx.ellipse(-17,hy+7,13,10,0,0,Math.PI*2);ctx.ellipse(17,hy+7,13,10,0,0,Math.PI*2);ctx.fill();ctx.fillStyle="#241a14";ctx.beginPath();ctx.arc(-17,hy+7,3.4,0,Math.PI*2);ctx.arc(17,hy+7,3.4,0,Math.PI*2);ctx.fill();ctx.fillStyle="#2a2018";ctx.fillRect(-9,hy+24,18,3);ctx.strokeStyle="#7a4a38";ctx.lineWidth=2.5;ctx.beginPath();ctx.moveTo(-8,hy+31);ctx.lineTo(8,hy+31);ctx.stroke();}},mom:{skin:"#f0d2b6",legs:"#c9ccd2",torso:"#c8d6c9",sleeve:"#c8d6c9",chest:"#bccdbd",shoe:"#f4f4f2",ya:true,yaHands:1,phone:true,scale:1.0,head:function(hy){var HAIR="#2b1d16";ctx.fillStyle=HAIR;ctx.beginPath();ctx.ellipse(0,hy-2,58,54,0,Math.PI*0.98,Math.PI*2.02);ctx.fill();ctx.beginPath();ctx.ellipse(-46,hy+22,20,26,-0.25,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.ellipse(46,hy+20,19,25,0.25,0,Math.PI*2);ctx.fill();var curls=[[-52,-16,13],[-38,-36,14],[-14,-46,15],[12,-46,15],[36,-34,14],[52,-14,12],[-56,6,11],[56,4,11],[-50,30,10],[50,28,10]];for(var i=0;i<curls.length;i++){ctx.beginPath();ctx.arc(curls[i][0],hy+curls[i][1],curls[i][2],0,Math.PI*2);ctx.fill();}
+ctx.fillStyle="#15151a";ctx.beginPath();ctx.ellipse(-17,hy+6,16,13,-0.05,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.ellipse(17,hy+6,16,13,0.05,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#15151a";ctx.lineWidth=3.4;ctx.lineCap="round";ctx.beginPath();ctx.moveTo(-3,hy+3);ctx.lineTo(3,hy+3);ctx.stroke();ctx.beginPath();ctx.moveTo(-33,hy+3);ctx.lineTo(-47,hy-1);ctx.stroke();ctx.beginPath();ctx.moveTo(33,hy+3);ctx.lineTo(47,hy-1);ctx.stroke();ctx.fillStyle="rgba(255,255,255,0.22)";ctx.beginPath();ctx.ellipse(-22,hy+1,6,4,-0.5,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.ellipse(12,hy+1,6,4,-0.5,0,Math.PI*2);ctx.fill();ctx.fillStyle="rgba(240,140,140,0.42)";ctx.beginPath();ctx.arc(-30,hy+22,8,0,Math.PI*2);ctx.arc(30,hy+22,8,0,Math.PI*2);ctx.fill();ctx.fillStyle="#b5535c";ctx.beginPath();ctx.moveTo(-13,hy+26);ctx.quadraticCurveTo(0,hy+42,13,hy+26);ctx.closePath();ctx.fill();ctx.fillStyle="#fff";ctx.beginPath();ctx.moveTo(-11,hy+27);ctx.quadraticCurveTo(0,hy+32,11,hy+27);ctx.closePath();ctx.fill();}},girl:{skin:"#f8dcc4",legs:"#f8dcc4",torso:"#f2f2f0",sleeve:"#f8dcc4",chest:"#f2f2f0",skirt:"#f2f2f0",shoe:"#1b1b20",gingham:true,dress:true,ya:true,yaHands:2,scale:0.72,head:function(hy){var HAIR="#2f2119";ctx.fillStyle=HAIR;ctx.beginPath();ctx.arc(0,hy-2,52,Math.PI*0.99,Math.PI*2.01);ctx.fill();ctx.beginPath();ctx.arc(-34,hy-44,17,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(34,hy-44,17,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.moveTo(-50,hy-6);ctx.lineTo(-50,hy+2);ctx.quadraticCurveTo(-25,hy+8,0,hy+5);ctx.quadraticCurveTo(25,hy+8,50,hy+2);ctx.lineTo(50,hy-6);ctx.closePath();ctx.fill();ctx.fillStyle="#e03b32";for(var a=0;a<5;a++){var ang=a/5*Math.PI*2;ctx.beginPath();ctx.arc(-50+Math.cos(ang)*7,hy-20+Math.sin(ang)*7,5.5,0,Math.PI*2);ctx.fill();}
+ctx.fillStyle="#f5c73c";ctx.beginPath();ctx.arc(-50,hy-20,5,0,Math.PI*2);ctx.fill();ctx.fillStyle="#17171c";ctx.beginPath();ctx.ellipse(-16,hy+12,17,14,-0.05,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.ellipse(18,hy+12,17,14,0.05,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#17171c";ctx.lineWidth=3.2;ctx.lineCap="round";ctx.beginPath();ctx.moveTo(-1,hy+9);ctx.lineTo(3,hy+9);ctx.stroke();ctx.beginPath();ctx.moveTo(-33,hy+9);ctx.lineTo(-47,hy+6);ctx.stroke();ctx.beginPath();ctx.moveTo(35,hy+9);ctx.lineTo(48,hy+6);ctx.stroke();ctx.fillStyle="rgba(255,255,255,0.2)";ctx.beginPath();ctx.ellipse(-21,hy+7,6,4,-0.5,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.ellipse(13,hy+7,6,4,-0.5,0,Math.PI*2);ctx.fill();ctx.fillStyle="rgba(245,145,150,0.5)";ctx.beginPath();ctx.arc(-32,hy+28,10,0,Math.PI*2);ctx.arc(32,hy+28,10,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#c06a68";ctx.lineWidth=2.6;ctx.lineCap="round";ctx.beginPath();ctx.arc(1,hy+30,6,0.15*Math.PI,0.85*Math.PI);ctx.stroke();}},zengxuan:{skin:"#f2d6bd",legs:"#bcd8ee",torso:"#cfe3f2",sleeve:"#eef4fb",chest:"#dfeaf5",skirt:"#bcd8ee",sash:"#8fc0e6",shoe:"#6fa8d6",guitar:"strat",dress:true,bow:true,scale:0.9,head:function(hy){var HAIR="#3b2a1d";ctx.fillStyle=HAIR;ctx.beginPath();ctx.arc(0,hy-6,50,Math.PI,0);ctx.fill();roundRect(-58,hy+8,17,76,9);ctx.fill();roundRect(41,hy+8,17,76,9);ctx.fill();ctx.beginPath();ctx.moveTo(-50,hy-8);ctx.lineTo(-50,hy-1);ctx.quadraticCurveTo(-25,hy+4,0,hy+1);ctx.quadraticCurveTo(25,hy+4,50,hy-1);ctx.lineTo(50,hy-8);ctx.closePath();ctx.fill();ctx.fillStyle="#e0555f";ctx.beginPath();ctx.arc(-49,hy+14,5,0,Math.PI*2);ctx.arc(49,hy+14,5,0,Math.PI*2);ctx.fill();ctx.fillStyle="#2a1e16";ctx.beginPath();ctx.arc(-15,hy+12,5,0,Math.PI*2);ctx.arc(15,hy+12,5,0,Math.PI*2);ctx.fill();ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(-13.5,hy+10.5,1.6,0,Math.PI*2);ctx.arc(16.5,hy+10.5,1.6,0,Math.PI*2);ctx.fill();ctx.fillStyle="rgba(240,140,150,0.5)";ctx.beginPath();ctx.arc(-27,hy+22,7,0,Math.PI*2);ctx.arc(27,hy+22,7,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#c86a6a";ctx.lineWidth=2.5;ctx.lineCap="round";ctx.beginPath();ctx.arc(0,hy+24,7,0.15*Math.PI,0.85*Math.PI);ctx.stroke();}},lemon:{skin:"#f2d6bd",legs:"#f6c9d6",torso:"#f7d3dd",sleeve:"#fdeef3",chest:"#f7d3dd",skirt:"#f6c9d6",sash:"#ec9bb4",shoe:"#e58aa6",guitar:"nylon",dress:true,scale:0.9,head:function(hy){var HAIR="#191512";ctx.fillStyle=HAIR;ctx.beginPath();ctx.arc(0,hy-6,50,Math.PI,0);ctx.fill();roundRect(-57,hy+10,16,66,8);ctx.fill();roundRect(41,hy+10,16,66,8);ctx.fill();ctx.beginPath();ctx.moveTo(-50,hy-8);ctx.lineTo(-50,hy-1);ctx.quadraticCurveTo(-25,hy+4,0,hy+1);ctx.quadraticCurveTo(25,hy+4,50,hy-1);ctx.lineTo(50,hy-8);ctx.closePath();ctx.fill();ctx.fillStyle="#ec9bb4";roundRect(-19,hy+46,38,10,4);ctx.fill();ctx.fillStyle="#f4d03f";ctx.beginPath();ctx.ellipse(51,hy-3,9,6,0.4,0,Math.PI*2);ctx.fill();ctx.fillStyle="#3c8a3c";ctx.beginPath();ctx.arc(45,hy-8,2,0,Math.PI*2);ctx.fill();ctx.fillStyle="#2a1e16";ctx.beginPath();ctx.arc(-15,hy+12,5,0,Math.PI*2);ctx.arc(15,hy+12,5,0,Math.PI*2);ctx.fill();ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(-13.5,hy+10.5,1.6,0,Math.PI*2);ctx.arc(16.5,hy+10.5,1.6,0,Math.PI*2);ctx.fill();ctx.fillStyle="rgba(240,140,150,0.5)";ctx.beginPath();ctx.arc(-27,hy+22,7,0,Math.PI*2);ctx.arc(27,hy+22,7,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#c86a6a";ctx.lineWidth=2.5;ctx.lineCap="round";ctx.beginPath();ctx.arc(0,hy+24,7,0.15*Math.PI,0.85*Math.PI);ctx.stroke();}}};function drawBarbell(cx,cy,tr){ctx.save();ctx.translate(cx+tr,cy);ctx.strokeStyle="#9aa0a6";ctx.lineCap="round";ctx.lineWidth=7;ctx.beginPath();ctx.moveTo(-92,0);ctx.lineTo(92,0);ctx.stroke();var plates=[-82,-70,70,82];for(var i=0;i<plates.length;i++){ctx.fillStyle="#141418";ctx.beginPath();ctx.ellipse(plates[i],0,8,32,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#2c2c34";ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(plates[i],0,8,32,0,0,Math.PI*2);ctx.stroke();}
+ctx.restore();}
+function drawBoltIcon(cx,cy,s){ctx.beginPath();ctx.moveTo(cx+5*s,cy-16*s);ctx.lineTo(cx-9*s,cy+1*s);ctx.lineTo(cx-1*s,cy+1*s);ctx.lineTo(cx-5*s,cy+16*s);ctx.lineTo(cx+10*s,cy-4*s);ctx.lineTo(cx+1*s,cy-4*s);ctx.closePath();ctx.fill();}
+function updateAndDrawSweat(lift,hy){if(lift>0.72&&Math.random()<0.4){var side=Math.random()<0.5?-1:1;lulanSweat.push({x:side*(34+Math.random()*14),y:hy-22+Math.random()*26,vx:side*(1.1+Math.random()*1.6),vy:-1.4-Math.random()*1.6,life:22+Math.random()*12});}
+ctx.fillStyle="#a6d4ff";for(var i=lulanSweat.length-1;i>=0;i--){var d=lulanSweat[i];d.x+=d.vx;d.y+=d.vy;d.vy+=0.34;d.life--;if(d.life<=0||d.y>40){lulanSweat.splice(i,1);continue;}
+ctx.globalAlpha=Math.min(0.9,d.life/16);ctx.beginPath();ctx.ellipse(d.x,d.y,2.3,3.4,0,0,Math.PI*2);ctx.fill();}
+ctx.globalAlpha=1;}
+function drawLifter(char,songTime){var lift=(1-Math.cos(songTime*4.0))/2;var dip=(1-lift)*12;var hipY=-84+dip,shoulderY=hipY-88,hy=shoulderY-34;var kneeX=20+dip*0.7,kneeY=hipY*0.5+dip*0.5,footL=-26,footR=26;var trem=lift*Math.sin(songTime*42)*2.6;ctx.lineCap="round";ctx.lineJoin="round";ctx.strokeStyle=char.legs;ctx.lineWidth=24;ctx.beginPath();ctx.moveTo(-15,hipY);ctx.lineTo(-kneeX,kneeY);ctx.lineTo(footL,0);ctx.stroke();ctx.beginPath();ctx.moveTo(15,hipY);ctx.lineTo(kneeX,kneeY);ctx.lineTo(footR,0);ctx.stroke();ctx.fillStyle="#39b06a";roundRect(footL-16,-8,34,12,5);ctx.fill();roundRect(footR-18,-8,34,12,5);ctx.fill();ctx.fillStyle=char.torso;roundRect(-44,shoulderY,88,hipY-shoulderY+8,18);ctx.fill();ctx.fillStyle="#ffd23d";drawBoltIcon(0,shoulderY+35,1);var barY=hipY+((hy-62)-hipY)*lift;var handX=30,elbowX=40-lift*12,elbowY=shoulderY+12-lift*46;drawLimb([-28,shoulderY+8],[-elbowX,elbowY],[-handX+trem,barY],char.sleeve,char.skin,15,12);drawLimb([28,shoulderY+8],[elbowX,elbowY],[handX-trem,barY],char.sleeve,char.skin,15,12);drawBarbell(0,barY,trem);var hxt=lift*Math.sin(songTime*46)*1.4;ctx.fillStyle=char.skin;ctx.beginPath();ctx.arc(hxt,hy,46,0,Math.PI*2);ctx.fill();ctx.save();ctx.translate(hxt,0);char.head(hy);ctx.restore();if(lift>0.8){var e=(lift-0.8)/0.2;ctx.save();var fg=ctx.createRadialGradient(0,barY-8,4,0,barY-8,74);fg.addColorStop(0,"rgba(255,225,120,"+(0.5*e)+")");fg.addColorStop(1,"rgba(255,225,120,0)");ctx.fillStyle=fg;ctx.beginPath();ctx.arc(0,barY-8,74,0,Math.PI*2);ctx.fill();var pulse=1+Math.sin(songTime*40)*0.14;ctx.fillStyle="#ffd23d";ctx.globalAlpha=0.78+0.22*e;drawBoltIcon(0,barY-34,1.6*pulse);drawBoltIcon(-36,barY-14,0.85*pulse);drawBoltIcon(36,barY-16,0.9*pulse);ctx.restore();}
+updateAndDrawSweat(lift,hy);}
+function drawGuitarist(songTime){if(guitaristId==="none")return;var char=GUITARISTS[guitaristId]||GUITARISTS.slash;var hgt=guitaristHeight();var rise=30+hypeShown*(H*0.16);var cx=(stageLeftX()+W)/2,floorY=H*0.88,groundY=floorY-rise,headY=groundY-hgt*0.86;if(stageOn){drawFollowSpot(cx,headY,groundY,hypeShown,songTime,hgt);drawStageDeck(groundY,floorY,hypeShown,songTime);drawAmpBackline(cx,groundY,hgt,hypeShown,songTime);}
+if(guitaristId==="lulan")drawSmithMachine(cx,groundY,hgt*1.06);if(guitaristId==="sisters"){drawSisters(cx,groundY,hgt,songTime);return;}
+if(guitaristId==="family"){drawFamily(cx,groundY,hgt,songTime);return;}
+var bob=Math.sin(songTime*6.3)*4,sway=Math.sin(songTime*3.1)*0.04;var s=hgt/320*(char.scale||1)*(1+charPulse*0.07);ctx.save();ctx.translate(cx,groundY-bob-charPulse*10);ctx.scale(s,s);ctx.rotate(sway);ctx.globalAlpha=0.97;if(hypeShown>0.02){var hl=hypeShown;var halo=ctx.createRadialGradient(0,-150,20,0,-150,150);halo.addColorStop(0,"rgba(255,240,180,"+(0.05+hl*0.10)+")");halo.addColorStop(1,"rgba(255,240,180,0)");ctx.fillStyle=halo;ctx.beginPath();ctx.arc(0,-150,150,0,Math.PI*2);ctx.fill();}
+if(comboBurst.t<0.7){var p=comboBurst.t/0.7,fade=1-p;ctx.save();ctx.translate(0,-150);ctx.rotate(songTime*1.2);ctx.strokeStyle="rgba(255,224,130,"+(0.3*fade)+")";ctx.lineWidth=4;for(var rb=0;rb<12;rb++){var ang=rb/12*Math.PI*2,r0=50+p*40,r1=100+p*110;ctx.beginPath();ctx.moveTo(Math.cos(ang)*r0,Math.sin(ang)*r0);ctx.lineTo(Math.cos(ang)*r1,Math.sin(ang)*r1);ctx.stroke();}
+ctx.strokeStyle="rgba(255,240,190,"+(0.4*fade)+")";ctx.lineWidth=5;ctx.beginPath();ctx.arc(0,0,70+p*150,0,Math.PI*2);ctx.stroke();ctx.restore();}
+if(char.lift){drawLifter(char,songTime);ctx.restore();return;}
+paintGuitaristBody(char,songTime);ctx.restore();if(stageOn){ctx.save();ctx.globalCompositeOperation="lighter";var lit=0.05+hypeShown*0.13,cyMid=groundY-hgt*0.5;var hg=ctx.createRadialGradient(cx-hgt*0.06,cyMid-hgt*0.08,8,cx,cyMid,hgt*0.5);hg.addColorStop(0,"rgba(255,246,214,"+lit+")");hg.addColorStop(1,"rgba(255,246,214,0)");ctx.fillStyle=hg;ctx.beginPath();ctx.ellipse(cx,cyMid,hgt*0.34,hgt*0.5,0,0,Math.PI*2);ctx.fill();ctx.restore();}}
+function drawPeaceHand(x,y,r,skin,flip,tilt){flip=flip||1;tilt=tilt||0;ctx.save();ctx.translate(x,y);ctx.rotate(tilt*flip);ctx.fillStyle=skin;ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.fill();var fw=r*0.44,fl=r*1.65;ctx.save();ctx.rotate(-0.30*flip);roundRect(-fw/2-r*0.30*flip,-fl,fw,fl,fw/2);ctx.fill();ctx.restore();ctx.save();ctx.rotate(0.30*flip);roundRect(-fw/2+r*0.30*flip,-fl,fw,fl,fw/2);ctx.fill();ctx.restore();ctx.fillStyle="rgba(0,0,0,0.10)";ctx.beginPath();ctx.arc(r*0.34*flip,r*0.36,r*0.42,0,Math.PI*2);ctx.fill();ctx.restore();}
+function paintYaBody(char,songTime){var wig=Math.sin(songTime*5.2)*3,wig2=Math.sin(songTime*5.2+1.1)*3;ctx.fillStyle=char.torso;roundRect(-46,-150,92,char.dress?70:150,20);ctx.fill();if(char.dress){if(char.gingham)ginghamClip(function(){roundRect(-46,-150,92,70,20);},-46,-150,92,70,7);ctx.fillStyle=char.skirt||char.legs;ctx.beginPath();ctx.moveTo(-44,-86);ctx.lineTo(44,-86);ctx.lineTo(74,4);ctx.quadraticCurveTo(0,20,-74,4);ctx.closePath();ctx.fill();if(char.gingham)ginghamClip(function(){ctx.moveTo(-44,-86);ctx.lineTo(44,-86);ctx.lineTo(74,4);ctx.quadraticCurveTo(0,20,-74,4);ctx.closePath();},-74,-86,148,106,7);ctx.fillStyle="#ffffff";roundRect(-31,-153,62,7,3);ctx.fill();ctx.fillStyle=char.skin;roundRect(-25,4,17,20,6);ctx.fill();roundRect(8,4,17,20,6);ctx.fill();ctx.fillStyle=char.shoe||"#1b1b20";roundRect(-29,18,23,10,4);ctx.fill();roundRect(6,18,23,10,4);ctx.fill();ctx.fillStyle="#f2f2f2";ctx.fillRect(-29,25,23,4);ctx.fillRect(6,25,23,4);}else{ctx.fillStyle=char.legs;roundRect(-40,-40,34,40,8);ctx.fill();roundRect(6,-40,34,40,8);ctx.fill();ctx.fillStyle=char.shoe||"#f2f2f2";roundRect(-44,-6,40,12,5);ctx.fill();roundRect(4,-6,40,12,5);ctx.fill();ctx.fillStyle=char.chest;roundRect(-30,-160,60,18,8);ctx.fill();ctx.strokeStyle="rgba(0,0,0,0.18)";ctx.lineWidth=2.5;ctx.beginPath();ctx.moveTo(0,-146);ctx.lineTo(0,-34);ctx.stroke();ctx.fillStyle="rgba(255,255,255,0.5)";roundRect(-3,-150,6,9,3);ctx.fill();}
+if(char.yaHands<2){drawLimb([-34,-140],[-50,-100],[-40,-58],char.sleeve,char.skin,15,12);if(char.phone){ctx.fillStyle="#22242a";roundRect(-50,-62,15,26,4);ctx.fill();ctx.fillStyle="#5f6b7a";roundRect(-48,-60,11,20,2);ctx.fill();}}
+var hy=-206;ctx.fillStyle=char.skin;ctx.beginPath();ctx.arc(0,hy,50,0,Math.PI*2);ctx.fill();char.head(hy);if(char.yaHands>=2){drawLimb([-36,-140],[-62,-172],[-70+wig,-206],char.sleeve,char.skin,13,11);drawLimb([36,-140],[62,-172],[70+wig2,-206],char.sleeve,char.skin,13,11);drawPeaceHand(-70+wig,-212,12,char.skin,-1,0.16);drawPeaceHand(70+wig2,-212,12,char.skin,1,0.16);}else{drawLimb([36,-140],[66,-168],[72+wig,-200],char.sleeve,char.skin,15,12);drawPeaceHand(72+wig,-207,13,char.skin,1,0.18);}}
+function ginghamClip(pathFn,x,y,w,h,cell){cell=cell||8;ctx.save();ctx.beginPath();pathFn();ctx.clip();for(var gy=y;gy<y+h;gy+=cell){for(var gx=x;gx<x+w;gx+=cell){var odd=(Math.floor((gx-x)/cell)+Math.floor((gy-y)/cell))%2;ctx.fillStyle=odd?"rgba(22,22,26,0.88)":"rgba(22,22,26,0.26)";ctx.fillRect(gx,gy,cell,cell);}}
+ctx.restore();}
+function paintGuitaristBody(char,songTime){if(char.ya){paintYaBody(char,songTime);return;}
+ctx.fillStyle=char.torso;roundRect(-46,-150,92,char.shorts?118:(char.dress?70:150),20);ctx.fill();if(char.dress){ctx.fillStyle=char.skirt||char.legs;ctx.beginPath();ctx.moveTo(-44,-86);ctx.lineTo(44,-86);ctx.lineTo(78,6);ctx.quadraticCurveTo(0,22,-78,6);ctx.closePath();ctx.fill();ctx.fillStyle="rgba(255,255,255,0.26)";ctx.beginPath();ctx.moveTo(-40,-78);ctx.lineTo(40,-78);ctx.lineTo(90,14);ctx.quadraticCurveTo(0,32,-90,14);ctx.closePath();ctx.fill();ctx.fillStyle=char.skin;roundRect(-24,6,15,16,5);ctx.fill();roundRect(9,6,15,16,5);ctx.fill();ctx.fillStyle=char.shoe||"#e8748f";roundRect(-27,18,20,8,4);ctx.fill();roundRect(7,18,20,8,4);ctx.fill();if(char.sash){ctx.fillStyle=char.sash;roundRect(-45,-90,90,11,4);ctx.fill();}
+if(char.bow){ctx.fillStyle=char.sash||"#8fc0e6";ctx.beginPath();ctx.moveTo(0,-84);ctx.lineTo(-22,-95);ctx.lineTo(-22,-73);ctx.closePath();ctx.fill();ctx.beginPath();ctx.moveTo(0,-84);ctx.lineTo(22,-95);ctx.lineTo(22,-73);ctx.closePath();ctx.fill();ctx.beginPath();ctx.arc(0,-84,6,0,Math.PI*2);ctx.fill();ctx.fillRect(-4,-82,8,42);}}else if(char.shorts){ctx.fillStyle=char.torso;roundRect(-40,-40,34,22,7);ctx.fill();roundRect(6,-40,34,22,7);ctx.fill();ctx.fillStyle=char.legs;roundRect(-36,-20,26,20,6);ctx.fill();roundRect(10,-20,26,20,6);ctx.fill();ctx.fillStyle="#f2f2f2";ctx.fillRect(-36,-6,26,6);ctx.fillRect(10,-6,26,6);}else{ctx.fillStyle=char.legs;roundRect(-40,-40,34,40,8);ctx.fill();roundRect(6,-40,34,40,8);ctx.fill();}
+ctx.fillStyle=char.chest;ctx.beginPath();ctx.moveTo(-16,-150);ctx.lineTo(16,-150);ctx.lineTo(0,-106);ctx.closePath();ctx.fill();if(char.tie){ctx.fillStyle=char.tie;ctx.beginPath();ctx.moveTo(-5,-146);ctx.lineTo(5,-146);ctx.lineTo(3,-118);ctx.lineTo(-3,-118);ctx.closePath();ctx.fill();ctx.beginPath();ctx.moveTo(-7,-118);ctx.lineTo(7,-118);ctx.lineTo(0,-104);ctx.closePath();ctx.fill();}
+drawGuitar(char.guitar);var sw=Math.sin(songTime*9);drawLimb([34,-140],[50,-100+sw*4],[14+sw*3,-56+sw*22],char.sleeve,char.skin,15,12);ctx.save();ctx.translate(14+sw*3,-56+sw*22);ctx.rotate(sw*0.4);ctx.fillStyle="#e8d24a";ctx.beginPath();ctx.moveTo(0,-3);ctx.lineTo(7,4);ctx.lineTo(-2,9);ctx.closePath();ctx.fill();ctx.restore();var vib=Math.sin(songTime*11)*2;drawLimb([-34,-140],[-52,-108],[-54+vib,-150-vib],char.sleeve,char.skin,15,12);var hy=-206;ctx.fillStyle=char.skin;ctx.beginPath();ctx.arc(0,hy,50,0,Math.PI*2);ctx.fill();char.head(hy);}
+var sisFx={thumbs:[],lemons:[],acc:0};function spawnFxEmoji(arr,x,y){arr.push({x:x+(Math.random()*46-23),y:y+(Math.random()*20-10),vy:-(46+Math.random()*40),vx:(Math.random()*24-12),t:0,life:1.5+Math.random()*0.9,rot:(Math.random()*0.7-0.35),spin:(Math.random()*1.4-0.7),s:0.72+Math.random()*0.7});}
+function drawFxEmoji(arr,glyph,dt){for(var i=arr.length-1;i>=0;i--){var p=arr[i];p.t+=dt;p.y+=p.vy*dt;p.x+=p.vx*dt;p.rot+=p.spin*dt;p.vy+=26*dt;if(p.t>=p.life){arr.splice(i,1);continue;}
+var a=p.t<0.25?(p.t/0.25):(p.t>p.life-0.5?(p.life-p.t)/0.5:1);var pop=p.t<0.25?(0.6+0.4*(p.t/0.25)):1;ctx.save();ctx.globalAlpha=Math.max(0,Math.min(1,a));ctx.translate(p.x,p.y);ctx.rotate(p.rot);ctx.scale(p.s*pop,p.s*pop);ctx.font="30px system-ui, 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(glyph,0,0);ctx.restore();}}
+function drawSisters(cx,groundY,hgt,songTime){var dx=hgt*0.30;var sBase=hgt/320*0.82*(1+charPulse*0.07);function paintAt(char,x,phase){var t=songTime+phase;var bob=Math.sin(t*6.3)*4,sway=Math.sin(t*3.1)*0.04;ctx.save();ctx.translate(x,groundY-bob-charPulse*10);ctx.scale(sBase,sBase);ctx.rotate(sway);ctx.globalAlpha=0.97;paintGuitaristBody(char,t);ctx.restore();}
+paintAt(GUITARISTS.zengxuan,cx-dx,0);paintAt(GUITARISTS.lemon,cx+dx,1.4);var dt=1/60,interval=0.09-hypeShown*0.05,headY=groundY-hgt*0.66;sisFx.acc+=dt;while(sisFx.acc>=interval){sisFx.acc-=interval;if(sisFx.thumbs.length<60)spawnFxEmoji(sisFx.thumbs,cx-dx,headY);if(sisFx.lemons.length<60)spawnFxEmoji(sisFx.lemons,cx+dx,headY);}
+drawFxEmoji(sisFx.thumbs,"👍",dt);drawFxEmoji(sisFx.lemons,"🍋",dt);}
+var famFx={ya:[],hearts:[],acc:0};function drawFamily(cx,groundY,hgt,songTime){var dx=hgt*0.26;var sBase=hgt/320*0.86*(1+charPulse*0.07);function paintAt(char,x,phase){var t=songTime+phase;var bob=Math.sin(t*6.3)*4,sway=Math.sin(t*3.1)*0.04;ctx.save();ctx.translate(x,groundY-bob-charPulse*10);ctx.scale(sBase*(char.scale||1),sBase*(char.scale||1));ctx.rotate(sway);ctx.globalAlpha=0.97;paintYaBody(char,t);ctx.restore();}
+paintAt(GUITARISTS.mom,cx-dx,0);paintAt(GUITARISTS.girl,cx+dx,0.9);var dt=1/60,interval=0.13-hypeShown*0.06,headY=groundY-hgt*0.62;famFx.acc+=dt;while(famFx.acc>=interval){famFx.acc-=interval;if(famFx.ya.length<40)spawnFxEmoji(famFx.ya,cx-dx,headY);if(famFx.hearts.length<40)spawnFxEmoji(famFx.hearts,cx+dx,headY-hgt*0.06);}
+drawFxEmoji(famFx.ya,"✌️",dt);drawFxEmoji(famFx.hearts,"💗",dt);}
+var JUDGE_WORD={perfect:["PERFECT!","#ffd93d"],great:["GREAT!","#5ec26a"],good:["GOOD","#5b8def"],miss:["MISS…","#ff5d6c"]};function drawBigJudge(){if(!bigJudge)return;bigJudge.t+=1/60;if(bigJudge.t>0.85){bigJudge=null;return;}
+var p=bigJudge.t/0.85,info=JUDGE_WORD[bigJudge.tier];var scl=p<0.24?(0.5+(p/0.24)*0.78):(1.28-(p-0.24)/0.76*0.28);var alpha=p<0.72?1:(1-(p-0.72)/0.28);var cx=W*0.5,cy=H*0.38-p*20;ctx.save();ctx.globalAlpha=alpha;ctx.translate(cx,cy);ctx.scale(scl,scl);ctx.rotate(-0.05);ctx.font="900 60px system-ui, sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";ctx.lineWidth=9;ctx.strokeStyle="rgba(0,0,0,0.7)";ctx.strokeText(info[0],0,0);ctx.fillStyle=info[1];ctx.fillText(info[0],0,0);ctx.restore();if(bigJudge.tier!=="miss"&&bigJudge.combo>1){var mult=comboMult(bigJudge.combo),by=cy+54;ctx.save();ctx.globalAlpha=alpha;ctx.textAlign="center";ctx.textBaseline="middle";if(mult>=2){var ms=1+(mult-2)*0.09;ctx.save();ctx.translate(cx,by);ctx.scale(ms,ms);ctx.font="900 46px system-ui, sans-serif";ctx.lineWidth=9;ctx.strokeStyle="rgba(0,0,0,0.7)";ctx.strokeText("×"+mult,0,0);ctx.fillStyle="#ffd93d";ctx.fillText("×"+mult,0,0);ctx.restore();by+=40;}
+ctx.font="800 22px system-ui, sans-serif";ctx.lineWidth=5;ctx.strokeStyle="rgba(0,0,0,0.7)";ctx.strokeText(bigJudge.combo+" COMBO",cx,by);ctx.fillStyle="#fff";ctx.fillText(bigJudge.combo+" COMBO",cx,by);ctx.restore();}}
+function render(){ctx.clearRect(0,0,W,H);var playingNow=(state==="playing"||state==="paused");var hypeTarget=(playingNow&&current)?Math.min(current.combo/36,1):0;hypeShown+=(hypeTarget-hypeShown)*0.06;if(comboBurst.t<999)comboBurst.t+=0.016;drawBackground();if(state==="playing"||state==="paused"){var songTime=A.getSongTime();drawGuitarist(songTime);if(stageOn)drawCrowd(hypeShown,songTime,guitaristHeight());if(stageProcedural){ctx.fillStyle="rgba(10,8,16,0.30)";ctx.fillRect(0,0,W,H);}
+renderTab(songTime);drawBigJudge();charPulse=Math.max(0,charPulse-0.05);drawHud(songTime);if(songTime<0){var countIn=4*countBeat;if(songTime>=-countIn)drawCenterText(String(Math.min(4,Math.ceil(-songTime/countBeat))),true);else drawCenterText("準備",true);}
+if(state==="paused")drawCenterText("已暫停　（空白鍵繼續）");}}
+function renderTab(songTime){var view=(els.bottomSelect&&els.bottomSelect.value)||"jianpu";var labelW=54,topPad=40;var bandH=(view==="fretboard")?Math.min(200,Math.round(H*0.4)):(view==="staff"?Math.min(215,Math.round(H*0.40)):92);var bandTop=H-bandH-8;var jY=bandTop+bandH/2;var sBot=bandTop-12;var sc=tabInfo.stringCount,tuning=tabInfo.tuning;var rowGap=(sBot-topPad)/Math.max(1,sc-1);var hitX=labelW+(W-labelW)*0.18;var pxPerSec=(W-hitX)/travel;for(var r=0;r<sc;r++){var y=topPad+r*rowGap;ctx.strokeStyle="rgba(230,235,245,0.34)";ctx.lineWidth=0.8+r*0.7;ctx.beginPath();ctx.moveTo(labelW,y);ctx.lineTo(W,y);ctx.stroke();ctx.fillStyle="rgba(255,255,255,0.5)";ctx.font="13px system-ui, sans-serif";ctx.textAlign="right";ctx.textBaseline="middle";ctx.fillText(NOTE_NAMES[pc(tuning[r])],labelW-8,y);}
+ctx.lineWidth=1;if(view==="jianpu"){var sTop=jY-38,sH=76;ctx.fillStyle="rgba(255,255,255,0.05)";ctx.fillRect(labelW,sTop,W-labelW,sH);for(var bi=0;bi<barStartsScaled.length;bi++){var bx=hitX+(barStartsScaled[bi]-songTime)*pxPerSec;if(bx<labelW-2||bx>W+2)continue;ctx.strokeStyle=(bi%4===0)?"rgba(255,255,255,0.4)":"rgba(255,255,255,0.22)";ctx.lineWidth=(bi%4===0)?2:1;ctx.beginPath();ctx.moveTo(bx,sTop+2);ctx.lineTo(bx,sTop+sH-2);ctx.stroke();ctx.fillStyle="rgba(255,255,255,0.5)";ctx.font="10px system-ui, sans-serif";ctx.textAlign="left";ctx.textBaseline="top";ctx.fillText(String(bi+1),bx+3,sTop+3);}
+ctx.lineWidth=1;ctx.fillStyle="rgba(255,255,255,0.4)";ctx.font="13px system-ui, sans-serif";ctx.textAlign="right";ctx.textBaseline="middle";ctx.fillText("簡譜",labelW-8,jY);}
+var staffGap=Math.round(bandH*0.15);var staffHalf=staffGap*2;if(view==="staff"){ctx.fillStyle="rgba(8,10,16,0.95)";ctx.fillRect(labelW,bandTop+2,W-labelW,bandH-4);ctx.strokeStyle="rgba(255,255,255,0.10)";ctx.lineWidth=1;ctx.strokeRect(labelW,bandTop+2,W-labelW,bandH-4);ctx.strokeStyle="rgba(232,236,244,0.55)";ctx.lineWidth=1.2;for(var ln=0;ln<5;ln++){var ly=jY-staffHalf+ln*staffGap;ctx.beginPath();ctx.moveTo(labelW,ly);ctx.lineTo(W,ly);ctx.stroke();}
+for(var sbi=0;sbi<barStartsScaled.length;sbi++){var sbx=hitX+(barStartsScaled[sbi]-songTime)*pxPerSec;if(sbx<labelW-2||sbx>W+2)continue;ctx.strokeStyle=(sbi%4===0)?"rgba(255,255,255,0.42)":"rgba(255,255,255,0.22)";ctx.lineWidth=(sbi%4===0)?2:1;ctx.beginPath();ctx.moveTo(sbx,jY-staffHalf);ctx.lineTo(sbx,jY+staffHalf);ctx.stroke();}
+ctx.lineWidth=1;ctx.fillStyle="rgba(255,255,255,0.9)";ctx.font=Math.round(staffGap*3.6)+"px system-ui, 'Apple Symbols', sans-serif";ctx.textAlign="left";ctx.textBaseline="middle";ctx.fillText("𝄞",labelW+6,jY-staffGap*0.15);ctx.fillStyle="rgba(255,255,255,0.45)";ctx.font="12px system-ui, sans-serif";ctx.textAlign="right";ctx.textBaseline="top";ctx.fillText("五線譜",labelW-8,bandTop+6);}
+var curJ=-1,curBest=1e9;if(view==="jianpu"||view==="staff"){for(var ci=0;ci<items.length;ci++){var dd=Math.abs(items[ci].time-songTime);if(dd<curBest){curBest=dd;curJ=ci;}}}
+var topY=topPad-16,botY=(view==="jianpu")?(jY+26):(view==="staff"?(jY+staffHalf+10):(sBot+10));ctx.fillStyle="rgba(91,141,239,0.12)";ctx.fillRect(hitX-22,topY,44,botY-topY);ctx.strokeStyle="rgba(255,255,255,0.85)";ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(hitX,topY);ctx.lineTo(hitX,botY);ctx.stroke();ctx.lineWidth=1;var strip=[],staffStrip=[];for(var i=0;i<items.length;i++){var it=items[i];if(it.judged&&(it.hit||songTime-it.time>0.4))continue;var x=hitX+(it.time-songTime)*pxPerSec;if(x<labelW-40||x>W+40)continue;for(var j=0;j<it.notes.length;j++){var nn=it.notes[j];var baseY=topPad+nn.row*rowGap;var defl=0;if(nn.bend>0){var t=1-(x-hitX)/110;t=Math.max(0,Math.min(1,t));var strings=nn.bend/2;var target=strings*rowGap-17;var maxDown=(sBot-baseY)+rowGap*0.4;defl=Math.max(0,Math.min(t*Math.max(0,target),maxDown));if(defl>0.5)drawBendString(x,baseY,defl,nn);}
+var vib=nn.vibrato?Math.sin(x*0.18)*(nn.vibrato>=2?5:3):0;var ny=baseY+defl+vib;if(nn.hammerOrigin&&nn.linkTime!=null){var x2=hitX+(nn.linkTime-songTime)*pxPerSec;drawHammerSlur(x,ny,x2,topPad+nn.linkRow*rowGap,nn);}
+if(nn.slideOut||nn.slideIn)drawSlide(x,ny,nn);drawTabNote(x,ny,nn,it.tier);}
+if(it.chord){var chCol=it.chordColor||"rgba(224,164,75,0.95)";if(it.chordRepeat)drawChordRepeat(x,topPad-12,chCol);else{if(it.chordFrets)drawChordDiagram(x,topPad-46,it.chordFrets,it.chordFirst||0,chCol);drawChordLabel(x,topPad-12,it.chord,chCol);}}
+if(it.deadNotes){for(var dj=0;dj<it.deadNotes.length;dj++)drawDeadNote(x,topPad+it.deadNotes[dj].row*rowGap);}
+if(view==="jianpu"&&it.jianpu)strip.push({x:x,jp:it.jianpu,dur:it.dur,nv:it.nv,dots:it.dots,tuplet:it.tuplet,t:it.time,cur:i===curJ,grace:!!it.grace});if(view==="staff"&&!it.deadOnly){var mids=(it.notes&&it.notes.length)?it.notes.map(function(n){return n.midi;}):(it.midi!=null?[it.midi]:[]);if(mids.length)staffStrip.push({x:x,midis:mids,nv:it.nv,dots:it.dots,cur:i===curJ});}}
+if(view==="jianpu")drawJianpuStrip(strip,jY,sTop,sH,hitX);if(view==="staff")drawStaffStrip(staffStrip,jY,hitX,labelW,staffGap);drawPopupsHorizontal(hitX,topPad);if(view==="fretboard")drawFretboardMeasure(labelW,bandTop,bandH,songTime);}
+function currentBar(t){var idx=0;for(var i=0;i<barStartsScaled.length;i++){if(barStartsScaled[i]<=t+1e-6)idx=i;else break;}
+return idx;}
+function curFretStyle(){var v=(els.fretStyleSelect&&els.fretStyleSelect.value)||"rosewood";return FRETBOARD_STYLES[v]||FRETBOARD_STYLES.rosewood;}
+function dotAt(x,y,r){ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();}
+function sharkFin(x,y,s){ctx.beginPath();ctx.moveTo(x,y-s);ctx.lineTo(x+s*0.8,y+s*0.7);ctx.lineTo(x,y+s*0.15);ctx.lineTo(x-s*0.8,y+s*0.7);ctx.closePath();ctx.fill();}
+function leafShape(x,y,s,tilt){ctx.save();ctx.translate(x,y);ctx.rotate(tilt);ctx.beginPath();ctx.ellipse(0,0,s,s*0.5,0,0,Math.PI*2);ctx.fill();ctx.restore();}
+function drawVine(fbLeft,colW,gridTop,gridBot,maxFret,color){var midY=(gridTop+gridBot)/2,amp=(gridBot-gridTop)*0.3;ctx.save();ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineWidth=2;ctx.globalAlpha=0.85;ctx.beginPath();for(var f=0;f<=maxFret+0.5;f+=0.2){var x=fbLeft+(f+0.5)*colW,y=midY+Math.sin(f*1.15)*amp;if(f===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}
+ctx.stroke();for(var g=1;g<=maxFret;g++){var vx=fbLeft+(g+0.5)*colW,vy=midY+Math.sin(g*1.15)*amp;leafShape(vx,vy,colW*0.17,Math.cos(g*1.15)>=0?-0.6:0.6);}
+ctx.restore();}
+function drawInlays(st,fbLeft,colW,gridTop,gridBot,rowGap,maxFret){if(st.inlay==="vine"){drawVine(fbLeft,colW,gridTop,gridBot,maxFret,st.inlayColor);return;}
+var midY=(gridTop+gridBot)/2;ctx.save();ctx.fillStyle=st.inlayColor;var marks=INLAY_SINGLE.concat(INLAY_DOUBLE);for(var m=0;m<marks.length;m++){var f=marks[m];if(f>maxFret)continue;var cx=fbLeft+(f+0.5)*colW,isDbl=INLAY_DOUBLE.indexOf(f)>=0;if(st.inlay==="block"){var bw=colW*0.5,bh=(gridBot-gridTop)*0.8;ctx.fillRect(cx-bw/2,midY-bh/2,bw,bh);}else if(st.inlay==="shark"){var s=Math.min(colW*0.34,rowGap*1.1);if(isDbl){sharkFin(cx,midY-rowGap*0.9,s);sharkFin(cx,midY+rowGap*0.9,s);}
+else sharkFin(cx,midY,s);}else{if(isDbl){dotAt(cx,midY-rowGap*0.95,4.5);dotAt(cx,midY+rowGap*0.95,4.5);}
+else dotAt(cx,midY,5);}}
+ctx.restore();}
+function drawFretboardMeasure(fbLeft,top,h,songTime){var st=curFretStyle();var sc=tabInfo.stringCount,tuning=tabInfo.tuning;var maxFret=17,nCols=maxFret+1;var fbRight=W-10,gridTop=top+16,gridBot=top+h-22;var rowGap=(gridBot-gridTop)/Math.max(1,sc-1);var colW=(fbRight-fbLeft)/nCols;ctx.save();roundRect(fbLeft,top,fbRight-fbLeft,h,8);ctx.clip();var wood=ctx.createLinearGradient(0,top,0,top+h);wood.addColorStop(0,st.wood[0]);wood.addColorStop(1,st.wood[1]);ctx.fillStyle=wood;ctx.fillRect(fbLeft,top,fbRight-fbLeft,h);drawInlays(st,fbLeft,colW,gridTop,gridBot,rowGap,maxFret);for(var c=1;c<=maxFret;c++){var fx=fbLeft+c*colW;ctx.strokeStyle=st.fretwire;ctx.lineWidth=(c===12||c===24)?2.5:1.4;ctx.beginPath();ctx.moveTo(fx,gridTop-5);ctx.lineTo(fx,gridBot+5);ctx.stroke();}
+ctx.strokeStyle=st.nut;ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(fbLeft,gridTop-5);ctx.lineTo(fbLeft,gridBot+5);ctx.stroke();ctx.lineWidth=1;for(var r=0;r<sc;r++){var y=gridTop+r*rowGap;ctx.strokeStyle=st.string;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(fbLeft,y);ctx.lineTo(fbRight,y);ctx.stroke();ctx.fillStyle="rgba(245,240,228,0.65)";ctx.font="13px system-ui, sans-serif";ctx.textAlign="right";ctx.textBaseline="middle";ctx.fillText(NOTE_NAMES[pc(tuning[r])],fbLeft-4,y);}
+ctx.fillStyle="rgba(245,240,228,0.55)";ctx.font="12px system-ui, sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";for(var f2=1;f2<=maxFret;f2++)ctx.fillText(String(f2),fbLeft+(f2+0.5)*colW,gridBot+12);var win=(els.fretWindowSelect&&els.fretWindowSelect.value)||"4";var useBar=(win==="bar2"),curB=currentBar(songTime),positions={};var secPerBeat=(60/(timeline.tempo||120))/speed;var t0=songTime-0.08,t1=songTime+(parseInt(win,10)||4)*secPerBeat;for(var i=0;i<items.length;i++){var it=items[i],inWin=useBar?(it.bar===curB||it.bar===curB+1):(it.time>=t0&&it.time<=t1);if(!inWin)continue;var cur=Math.abs(it.time-songTime)<0.28;for(var j=0;j<it.notes.length;j++){var nn=it.notes[j];if(nn.fret>maxFret)continue;var key=nn.row+"-"+nn.fret;if(!positions[key])positions[key]={row:nn.row,fret:nn.fret,degree:nn.degree,tech:noteHasTech(nn),cur:false};if(cur)positions[key].cur=true;}}
+var rad=Math.max(10,Math.min(18,colW*0.42,rowGap*0.46));for(var k in positions){var p=positions[k];var dx=fbLeft+(p.fret+0.5)*colW,dy=gridTop+p.row*rowGap;var col=p.tech?LANE_COLORS[p.degree-1]:(p.cur?"#ffffff":st.noteBg);if(p.cur){ctx.save();ctx.shadowColor=col;ctx.shadowBlur=12;}
+ctx.fillStyle=col;dotAt(dx,dy,rad);if(p.cur)ctx.restore();ctx.lineWidth=2;ctx.strokeStyle=p.cur?"#fff":"rgba(0,0,0,0.3)";ctx.beginPath();ctx.arc(dx,dy,rad,0,Math.PI*2);ctx.stroke();ctx.lineWidth=1;ctx.fillStyle=p.tech?"#161616":st.noteFg;ctx.font="bold "+Math.round(rad*0.95)+"px system-ui, sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(String(p.fret),dx,dy+1);}
+ctx.fillStyle="rgba(245,240,228,0.6)";ctx.font="13px system-ui, sans-serif";ctx.textAlign="left";ctx.textBaseline="top";ctx.fillText(useBar?("第 "+(curB+1)+"–"+(curB+2)+" 小節"):("接下來 "+win+" 拍"),fbLeft+4,top+3);ctx.restore();}
+function drawBendString(x,baseY,defl,nn){var col=LANE_COLORS[nn.degree-1];var x0=x-Math.max(34,defl*0.6);ctx.save();ctx.strokeStyle=col;ctx.lineWidth=2.5;ctx.globalAlpha=0.92;ctx.lineJoin="round";ctx.beginPath();ctx.moveTo(x0,baseY);ctx.bezierCurveTo(x,baseY,x,baseY+defl*0.5,x,baseY+defl);ctx.stroke();ctx.restore();ctx.lineWidth=1;}
+function drawHammerSlur(x1,y1,x2,y2,nn){var col=LANE_COLORS[nn.degree-1],rad=15,topy=Math.min(y1,y2)-24,mx=(x1+x2)/2;ctx.save();ctx.strokeStyle=col;ctx.lineWidth=2;ctx.globalAlpha=0.85;ctx.beginPath();ctx.moveTo(x1,y1-rad);ctx.quadraticCurveTo(mx,topy,x2,y2-rad);ctx.stroke();ctx.restore();ctx.fillStyle=col;ctx.font="bold 12px system-ui, sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText((nn.linkFret!=null&&nn.linkFret>nn.fret)?"H":"P",mx,topy-6);ctx.lineWidth=1;}
+function drawSlide(x,y,nn){var col=LANE_COLORS[nn.degree-1],L=22;var down=(nn.slideOut===4||nn.slideOut===5||nn.slideIn===2);ctx.save();ctx.strokeStyle=col;ctx.lineWidth=3;ctx.lineCap="round";ctx.globalAlpha=0.8;ctx.beginPath();if(down){ctx.moveTo(x-L,y-L*0.6);ctx.lineTo(x+L,y+L*0.6);}
+else{ctx.moveTo(x-L,y+L*0.6);ctx.lineTo(x+L,y-L*0.6);}
+ctx.stroke();ctx.restore();ctx.lineWidth=1;ctx.lineCap="butt";}
+function beatSec(){return 60/((timeline&&timeline.tempo)||120)/(speed||1);}
+var RHYTHM_TABLE=[[4,0,3,0],[3,0,2,0],[2,0,1,0],[1.5,0,0,1],[1,0,0,0],[0.75,1,0,1],[0.5,1,0,0],[0.375,2,0,1],[0.25,2,0,0],[0.1875,3,0,1],[0.125,3,0,0]];function rhythmMarks(durSec){var beats=durSec/beatSec();if(!(beats>0))return{u:0,d:0,dot:false};var lb=Math.log(beats),best=RHYTHM_TABLE[4],bd=1e9;for(var i=0;i<RHYTHM_TABLE.length;i++){var e=RHYTHM_TABLE[i],dd=Math.abs(lb-Math.log(e[0]));if(dd<bd){bd=dd;best=e;}}
+return{u:best[1],d:best[2],dot:!!best[3]};}
+function marksOf(o){if(o&&typeof o.nv==="number"&&o.nv>0){var u=0,d=0,nv=o.nv;if(nv>=8)u=Math.round(Math.log(nv/4)/Math.log(2));else if(nv===2)d=1;else if(nv===1)d=3;return{u:u,d:d,dot:(o.dots||0)>0};}
+return rhythmMarks(o&&o.dur!=null?o.dur:0);}
+function drawRhythmMarks(cx,y,hw,m,color,dashes){ctx.strokeStyle=color;ctx.fillStyle=color;ctx.lineCap="butt";for(var i=0;i<m.u;i++){var uy=y+13+i*4;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(cx-hw,uy);ctx.lineTo(cx+hw,uy);ctx.stroke();}
+var rx=cx+hw+5;if(m.dot){ctx.beginPath();ctx.arc(rx,y,2.3,0,Math.PI*2);ctx.fill();rx+=8;}
+if(dashes)for(var d=0;d<m.d;d++){ctx.lineWidth=2.5;ctx.beginPath();ctx.moveTo(rx,y);ctx.lineTo(rx+11,y);ctx.stroke();rx+=16;}}
+function beatIndexOf(t){var idx=0;for(var i=0;i<beatTimes.length;i++){if(beatTimes[i]<=t+1e-6)idx=i;else break;}
+return idx;}
+function drawJianpuStrip(notes,y,sTop,sH,hitX){var hw=15,i,k,L;for(i=0;i<notes.length;i++){var m=marksOf(notes[i]);notes[i].u=m.u;notes[i].d=m.d;notes[i].dot=m.dot;notes[i].beat=beatIndexOf(notes[i].t);}
+ctx.strokeStyle="rgba(232,236,244,0.92)";ctx.lineCap="butt";var gi=0;while(gi<notes.length){var gj=gi;while(gj+1<notes.length&&notes[gj+1].beat===notes[gi].beat)gj++;for(L=1;L<=3;L++){var runStart=-1;for(k=gi;k<=gj+1;k++){var has=(k<=gj)&&notes[k].u>=L;if(has&&runStart<0)runStart=k;if(!has&&runStart>=0){var y2=y+18+(L-1)*5;var x0=notes[runStart].x-hw,x1=(k-1===runStart)?notes[runStart].x+hw:notes[k-1].x+hw;ctx.lineWidth=2.6;ctx.beginPath();ctx.moveTo(x0,y2);ctx.lineTo(x1,y2);ctx.stroke();runStart=-1;}}}
+gi=gj+1;}
+for(i=0;i<notes.length;i++){var n=notes[i],jp=n.jp,x=Math.round(n.x);var col=jp.tech?LANE_COLORS[jp.degree-1]:NEUTRAL_NOTE;if(n.cur){ctx.fillStyle="rgba(255,214,61,0.92)";roundRect(x-20,y-24,40,54,9);ctx.fill();col="#161616";}
+ctx.fillStyle=col;ctx.textAlign="center";ctx.textBaseline="middle";ctx.font=(n.grace?"bold 19px":(n.cur?"bold 34px":"bold 30px"))+" system-ui, sans-serif";ctx.fillText(jp.symbol+String(jp.degree),x,y);if(n.dot){ctx.fillStyle=col;ctx.beginPath();ctx.arc(x+hw+6,y,3,0,Math.PI*2);ctx.fill();}
+for(var dd=0;dd<n.d;dd++){ctx.strokeStyle=col;ctx.lineWidth=3;var rx=x+hw+10+dd*18;ctx.beginPath();ctx.moveTo(rx,y);ctx.lineTo(rx+14,y);ctx.stroke();}
+var off=jp.octaveOffset;if(off){ctx.fillStyle=n.cur?"#161616":col;var cnt=Math.min(Math.abs(off),3),sp=9,r=3,sx=x-(cnt-1)*sp/2,dy=off>0?y-23:y+22+n.u*5;for(var q=0;q<cnt;q++){ctx.beginPath();ctx.arc(sx+q*sp,dy,r,0,Math.PI*2);ctx.fill();}}}
+i=0;while(i<notes.length){var tp=notes[i].tuplet;if(!tp||tp.gid<0){i++;continue;}
+var j=i;while(j+1<notes.length&&notes[j+1].tuplet&&notes[j+1].tuplet.gid===tp.gid)j++;if(j>i){var bx0=notes[i].x-hw,bx1=notes[j].x+hw,by=y-33,mid=(bx0+bx1)/2;ctx.strokeStyle="rgba(180,210,255,0.92)";ctx.fillStyle="rgba(198,220,255,0.98)";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(bx0,by+6);ctx.lineTo(bx0,by);ctx.lineTo(mid-8,by);ctx.moveTo(mid+8,by);ctx.lineTo(bx1,by);ctx.lineTo(bx1,by+6);ctx.stroke();ctx.font="bold 13px system-ui, sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(String(tp.n),mid,by);ctx.lineWidth=1;}
+i=j+1;}
+ctx.strokeStyle="#ffd93d";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(hitX,sTop);ctx.lineTo(hitX,sTop+sH);ctx.stroke();ctx.fillStyle="#ffd93d";ctx.beginPath();ctx.moveTo(hitX-5,sTop);ctx.lineTo(hitX+5,sTop);ctx.lineTo(hitX,sTop+7);ctx.closePath();ctx.fill();ctx.lineWidth=1;}
+var STAFF_STEP_OF_PC=[0,0,1,1,2,3,3,4,4,5,5,6];var STAFF_SHARP_OF_PC=[0,1,0,1,0,0,1,0,1,0,1,0];function drawStaffStrip(notes,jY,hitX,labelW,lineGap){lineGap=lineGap||24;var half=lineGap/2,staffHalf=lineGap*2;var hw=lineGap*0.62,rx=lineGap*0.42,ry=lineGap*0.32,stem=lineGap*1.5;function yOf(step){return jY-(step-34)*half;}
+for(var i=0;i<notes.length;i++){var n=notes[i],x=Math.round(n.x);if(n.cur){ctx.fillStyle="rgba(255,214,61,0.16)";roundRect(x-hw-3,jY-staffHalf-12,hw*2+6,staffHalf*2+24,7);ctx.fill();}
+var col=n.cur?"#ffd93d":"rgba(240,244,252,0.97)";for(var m=0;m<n.midis.length;m++){var midi=n.midis[m]+12,pcc=((midi%12)+12)%12;var step=(Math.floor(midi/12)-1)*7+STAFF_STEP_OF_PC[pcc],y=yOf(step);ctx.strokeStyle="rgba(232,236,244,0.7)";ctx.lineWidth=1.6;var s2;if(step>38){for(s2=40;s2<=step;s2+=2){ctx.beginPath();ctx.moveTo(x-hw,yOf(s2));ctx.lineTo(x+hw,yOf(s2));ctx.stroke();}}
+else if(step<30){for(s2=28;s2>=step;s2-=2){ctx.beginPath();ctx.moveTo(x-hw,yOf(s2));ctx.lineTo(x+hw,yOf(s2));ctx.stroke();}}
+var stemUp=step<34;ctx.strokeStyle=col;ctx.lineWidth=2.2;ctx.beginPath();if(stemUp){ctx.moveTo(x+rx,y);ctx.lineTo(x+rx,y-stem);}else{ctx.moveTo(x-rx,y);ctx.lineTo(x-rx,y+stem);}
+ctx.stroke();ctx.save();ctx.translate(x,y);ctx.rotate(-0.32);ctx.fillStyle=col;ctx.beginPath();ctx.ellipse(0,0,rx,ry,0,0,Math.PI*2);ctx.fill();ctx.restore();if(STAFF_SHARP_OF_PC[pcc]){ctx.fillStyle=col;ctx.font=Math.round(lineGap*0.95)+"px system-ui, 'Apple Symbols', sans-serif";ctx.textAlign="right";ctx.textBaseline="middle";ctx.fillText("♯",x-hw+2,y);}}}
+ctx.strokeStyle="#ffd93d";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(hitX,jY-staffHalf-10);ctx.lineTo(hitX,jY+staffHalf+10);ctx.stroke();ctx.lineWidth=1;}
+function drawDeadNote(x,y){x=Math.round(x);y=Math.round(y);var r=9;ctx.save();ctx.strokeStyle="rgba(210,210,210,0.9)";ctx.lineWidth=3.2;ctx.lineCap="round";ctx.beginPath();ctx.moveTo(x-r,y-r);ctx.lineTo(x+r,y+r);ctx.moveTo(x+r,y-r);ctx.lineTo(x-r,y+r);ctx.stroke();ctx.strokeStyle="rgba(0,0,0,0.35)";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x-r,y-r);ctx.lineTo(x+r,y+r);ctx.moveTo(x+r,y-r);ctx.lineTo(x-r,y+r);ctx.stroke();ctx.restore();}
+function drawTabNote(x,y,n,tier){x=Math.round(x);y=Math.round(y);var rad=n.grace?12:20,tech=noteHasTech(n);if(!n.grace)return drawTabNoteBody(x,y,n,rad,tech);ctx.save();ctx.globalAlpha=0.9;drawTabNoteBody(x,y,n,rad,tech);ctx.restore();}
+function drawChordLabel(x,y,name,color){name=String(name);if(!name)return;color=color||"rgba(224,164,75,0.95)";ctx.save();ctx.font="bold 15px system-ui, sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";var w=ctx.measureText(name).width+14,h=20;ctx.fillStyle=color;roundRect(Math.round(x-w/2),Math.round(y-h),w,h,6);ctx.fill();ctx.fillStyle="#1a1206";ctx.fillText(name,x,y-h/2+1);ctx.restore();}
+function drawChordRepeat(x,y,color){ctx.save();ctx.strokeStyle=color||"#e0a44b";ctx.lineWidth=3;ctx.lineCap="round";ctx.beginPath();ctx.moveTo(x-7,y-3);ctx.lineTo(x+7,y-15);ctx.stroke();ctx.fillStyle=color||"#e0a44b";ctx.beginPath();ctx.arc(x-9,y-14,1.8,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(x+9,y-4,1.8,0,Math.PI*2);ctx.fill();ctx.restore();}
+function drawChordDiagram(x,y,frets,firstFret,color){if(!frets||!frets.length)return;var n=frets.length;var cw=30,rows=4,cellH=8,colW=cw/(n-1>0?n-1:1);var left=Math.round(x-cw/2),top=Math.round(y-rows*cellH);ctx.save();color=color||"#e0a44b";ctx.fillStyle="rgba(20,16,10,0.85)";roundRect(left-4,top-8,cw+8,rows*cellH+12,4);ctx.fill();ctx.strokeStyle="rgba(255,255,255,0.35)";ctx.lineWidth=1;for(var r=0;r<=rows;r++){ctx.beginPath();ctx.moveTo(left,top+r*cellH);ctx.lineTo(left+cw,top+r*cellH);ctx.stroke();}
+if((firstFret||0)<=1){ctx.strokeStyle=color;ctx.lineWidth=2.5;ctx.beginPath();ctx.moveTo(left,top);ctx.lineTo(left+cw,top);ctx.stroke();}
+ctx.strokeStyle="rgba(255,255,255,0.5)";ctx.lineWidth=1;for(var s=0;s<n;s++){var sx=left+s*colW;ctx.beginPath();ctx.moveTo(sx,top);ctx.lineTo(sx,top+rows*cellH);ctx.stroke();}
+for(var i=0;i<n;i++){var f=frets[i],sx2=left+(n-1-i)*colW;if(f<0){ctx.fillStyle="rgba(255,255,255,0.7)";ctx.font="9px system-ui";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("✕",sx2,top-4);}
+else if(f===0){ctx.strokeStyle="rgba(255,255,255,0.7)";ctx.lineWidth=1;ctx.beginPath();ctx.arc(sx2,top-4,2.4,0,Math.PI*2);ctx.stroke();}
+else{var fr=f-(firstFret>1?firstFret-1:0);if(fr<1)fr=1;if(fr>rows)fr=rows;ctx.fillStyle=color;ctx.beginPath();ctx.arc(sx2,top+(fr-0.5)*cellH,3,0,Math.PI*2);ctx.fill();}}
+if(firstFret>1){ctx.fillStyle="rgba(255,255,255,0.8)";ctx.font="8px system-ui";ctx.textAlign="right";ctx.textBaseline="middle";ctx.fillText(firstFret+"fr",left-5,top+cellH*0.5);}
+ctx.restore();}
+function drawTabNoteBody(x,y,n,rad,tech){var col=tech?LANE_COLORS[n.degree-1]:NEUTRAL_NOTE;ctx.save();if(n.palmMute)ctx.globalAlpha=0.55;ctx.fillStyle=col;if(n.harmonic){diamondPath(x,y,rad);ctx.fill();ctx.lineWidth=2;ctx.strokeStyle="rgba(255,255,255,0.85)";diamondPath(x,y,rad);ctx.stroke();}else{ctx.beginPath();ctx.arc(x,y,rad,0,Math.PI*2);ctx.fill();ctx.lineWidth=2;ctx.strokeStyle="rgba(0,0,0,0.28)";ctx.beginPath();ctx.arc(x,y,rad,0,Math.PI*2);ctx.stroke();}
+ctx.restore();ctx.lineWidth=1;if(n.chordNote){ctx.save();ctx.strokeStyle=n.chordColor||"rgba(224,164,75,0.95)";ctx.lineWidth=3;ctx.beginPath();ctx.arc(x,y,rad+4,0,Math.PI*2);ctx.stroke();ctx.restore();}
+ctx.fillStyle="#161616";ctx.textAlign="center";ctx.textBaseline="middle";ctx.font="bold "+(rad>=18?19:Math.max(10,Math.round(rad*1.05)))+"px system-ui, sans-serif";ctx.fillText(String(n.fret),x,y+1);if(n.bend>0){ctx.strokeStyle=col;ctx.lineWidth=2.5;ctx.beginPath();ctx.moveTo(x-6,y+rad+5);ctx.lineTo(x,y+rad+12);ctx.lineTo(x+6,y+rad+5);ctx.stroke();ctx.lineWidth=1;}
+if(n.vibrato){ctx.strokeStyle=col;ctx.lineWidth=2;var wy=y-rad-7;ctx.beginPath();ctx.moveTo(x-9,wy);ctx.quadraticCurveTo(x-4.5,wy-4,x,wy);ctx.quadraticCurveTo(x+4.5,wy+4,x+9,wy);ctx.stroke();ctx.lineWidth=1;}
+if(n.palmMute){ctx.fillStyle=col;ctx.font="bold 10px system-ui, sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("PM",x,y-rad-8);}
+if(n.tap){ctx.fillStyle=col;ctx.font="bold 13px system-ui, sans-serif";ctx.textAlign="right";ctx.textBaseline="middle";ctx.fillText("T",x-rad-2,y-rad+5);}
+if(n.trill){ctx.fillStyle=col;ctx.font="bold italic 13px system-ui, sans-serif";ctx.textAlign="left";ctx.textBaseline="middle";ctx.fillText("tr",x+rad+2,y-rad+5);}
+if(n.tremolo){ctx.strokeStyle=col;ctx.lineWidth=2.2;ctx.lineCap="round";var ty=y-rad-4;for(var s=-1;s<=1;s++){ctx.beginPath();ctx.moveTo(x+s*6-3,ty+3);ctx.lineTo(x+s*6+3,ty-3);ctx.stroke();}
+ctx.lineWidth=1;ctx.lineCap="butt";}
+if(n.staccato){ctx.fillStyle=col;ctx.beginPath();ctx.arc(x,y-rad-6,2.6,0,Math.PI*2);ctx.fill();}
+if(n.letRing){ctx.strokeStyle=col;ctx.lineWidth=2;ctx.setLineDash([3,3]);ctx.beginPath();ctx.moveTo(x+rad+3,y);ctx.lineTo(x+rad+26,y);ctx.stroke();ctx.setLineDash([]);ctx.lineWidth=1;ctx.fillStyle=col;ctx.font="bold 8px system-ui, sans-serif";ctx.textAlign="left";ctx.textBaseline="bottom";ctx.fillText("L.R.",x+rad+3,y-2);}}
+function diamondPath(x,y,r){ctx.beginPath();ctx.moveTo(x,y-r);ctx.lineTo(x+r,y);ctx.lineTo(x,y+r);ctx.lineTo(x-r,y);ctx.closePath();}
+function drawPopupsHorizontal(hitX,topPad){var labels={perfect:["PERFECT","#ffd93d"],great:["GREAT","#5ec26a"],good:["GOOD","#5b8def"],miss:["MISS","#ff5d6c"]};var shown=0;for(var i=popups.length-1;i>=0;i--){var p=popups[i];p.t+=1/60;if(p.t>0.6){popups.splice(i,1);continue;}
+if(shown++>3)continue;var alpha=1-p.t/0.6,info=labels[p.tier];ctx.globalAlpha=alpha;ctx.fillStyle=info[1];ctx.font="bold 22px system-ui, sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(info[0],hitX,topPad-26-p.t*26);ctx.globalAlpha=1;}}
+function drawHud(songTime){els.hudScore.textContent=score.toLocaleString();els.hudCombo.textContent=current.combo>1?((comboMult(current.combo)>=2?"×"+comboMult(current.combo)+"　":"")+current.combo+" combo"):"";var total=stats.perfect+stats.great+stats.good+stats.miss;var accSum=stats.perfect*ACC.perfect+stats.great*ACC.great+stats.good*ACC.good;els.hudAcc.textContent=(total?(accSum/total*100):100).toFixed(1)+"%";els.progressFill.style.width=(Math.max(0,Math.min(1,songTime/(songDuration||1)))*100)+"%";}
+function drawCenterText(text,big){if(!text)return;ctx.fillStyle="rgba(0,0,0,0.35)";ctx.fillRect(0,H/2-60,W,120);ctx.fillStyle="#fff";ctx.textAlign="center";ctx.textBaseline="middle";ctx.font=(big?"bold 72px":"bold 28px")+" system-ui, sans-serif";ctx.fillText(text,W/2,H/2);}
+function roundRect(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
+function escapeHtml(s){return String(s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+function fmtTime(sec){sec=Math.max(0,Math.round(sec));var m=Math.floor(sec/60),s=sec%60;return m+":"+(s<10?"0":"")+s;}
+window.JianpuGame={loadArrayBuffer:loadArrayBuffer,gateOwnUse:gateOwnUse,ownGateBlockedMsg:ownGateBlockedMsg,start:startGame,getState:function(){return state;},getDebug:function(){return{score:score,combo:current&&current.combo,stats:stats,songTime:A.getSongTime(),items:items&&items.length,displayMode:displayMode,inputMode:inputMode};},_micTick:function(){micTick(A.getSongTime());}};document.addEventListener("DOMContentLoaded",init);})();
