@@ -18,7 +18,7 @@ function gateTick(){if(!ctx||!ampNodes||!ampNodes.gate)return;var g=ampNodes.gat
 var rms=gateRms();if(rms>gateThresh){gateOpen=true;gateHoldUntil=Date.now()+GATE_HOLD_MS;}
 else if(gateOpen&&Date.now()>gateHoldUntil){gateOpen=false;}
 g.setTargetAtTime(gateOpen?1:0,now,gateOpen?GATE_ATTACK:GATE_RELEASE);}
-function startGateLoop(){if(gateTimer)clearInterval(gateTimer);gateTimer=setInterval(gateTick,8);}
+function startGateLoop(){if(gateTimer)clearInterval(gateTimer);gateTimer=setInterval(gateTick,16);}
 function stopGateLoop(){if(gateTimer){clearInterval(gateTimer);gateTimer=null;}}
 function autoDetectGate(ms){ms=ms||1200;return new Promise(function(res){if(!active||!gateAnalyser){res(null);return;}
 var peak=0,t0=Date.now();var iv=setInterval(function(){var r=gateRms();if(r>peak)peak=r;if(Date.now()-t0>=ms){clearInterval(iv);var th=Math.max(0.002,Math.min(0.25,peak*2.5));gateThresh=th;res({noise:peak,threshold:th});}},10);});}

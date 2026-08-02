@@ -52,7 +52,7 @@
   }
   </script>
 
-  <link rel="stylesheet" href="css/style.css?v=20260802b" />
+  <link rel="stylesheet" href="css/style.css?v=20260802c" />
 </head>
 <body>
   <!-- 首次進站啟動畫：顯示海報＋讀取動畫，約 2 秒後自動淡出進選單（純 CSS，回選單不重載故不再出現） -->
@@ -63,7 +63,7 @@
     </div>
   </div>
   <div id="menuBg"></div>
-  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260802b" loop preload="none"></audio>
+  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260802c" loop preload="none"></audio>
   <div class="app">
     <header class="topbar">
       <div class="logo">簡譜音遊 <span>Jianpu Rhythm</span></div>
@@ -338,8 +338,12 @@
               <button type="button" id="recBtn" class="btn small">● 開始錄音</button>
               <span class="rec-status" id="recStatus"></span>
             </div>
+            <label class="field checkbox">
+              <input type="checkbox" id="recMuteGame" checked />
+              <span>錄音時靜音遊戲聲音（旋律導引／節拍器／鼓；避免被麥克風收進去）</span>
+            </label>
             <div id="recResult" class="rec-result"></div>
-            <div class="ms-tip">錄「濕訊」會套用上面虛擬音箱的效果（就算沒開喇叭輸出也錄得到，不會嘯叫）。錄的是你的吉他，不含伴奏／節拍器。</div>
+            <div class="ms-tip">⚠️ 麥克風會收到<b>喇叭放出來的聲音</b>——想邊聽伴奏/節拍器邊錄又不錄進去，請<b>戴耳機</b>（就能取消勾選上面那項）。錄「濕訊」會套用虛擬音箱效果（沒開喇叭輸出也錄得到、不嘯叫）；錄的是你的吉他，不含伴奏。</div>
           </div>
 
           <!-- LiteJam LED 吉他：把譜的音符即時亮在真吉他指板上（跟著遊戲播放） -->
@@ -525,17 +529,17 @@
 
   <!-- alphaTab（解析 Guitar Pro 檔，977KB）改為選歌時才動態載入 → 首頁不下載，見 game.js ensureAlphaTab() -->
   <!-- 登入 / 付費驗證（Supabase）。supabase-js（54KB gzip 外部 CDN）改為有 session 或使用者要用時才動態載入 → 匿名首頁不抓，見 auth.js ensureClient() -->
-  <script src="js/supabase-config.js?v=20260802b"></script>
-  <script src="js/auth.js?v=20260802b"></script>
+  <script src="js/supabase-config.js?v=20260802c"></script>
+  <script src="js/auth.js?v=20260802c"></script>
   <!-- 遊戲程式 -->
-  <script src="js/heic.js?v=20260802b"></script>
-  <script src="js/theory.js?v=20260802b"></script>
-  <script src="js/gp-loader.js?v=20260802b"></script>
-  <script src="js/audio.js?v=20260802b"></script>
-  <script src="js/pitch.js?v=20260802b"></script>
-  <script src="js/songs.js?v=20260802b"></script>
-  <script src="js/litejam.js?v=20260802b"></script>
-  <script src="js/game.js?v=20260802b"></script>
-  <script src="js/library.js?v=20260802b"></script>
+  <script src="js/heic.js?v=20260802c"></script>
+  <script src="js/theory.js?v=20260802c"></script>
+  <script src="js/gp-loader.js?v=20260802c"></script>
+  <script src="js/audio.js?v=20260802c"></script>
+  <script src="js/pitch.js?v=20260802c"></script>
+  <script src="js/songs.js?v=20260802c"></script>
+  <script src="js/litejam.js?v=20260802c"></script>
+  <script src="js/game.js?v=20260802c"></script>
+  <script src="js/library.js?v=20260802c"></script>
 </body>
 </html>
