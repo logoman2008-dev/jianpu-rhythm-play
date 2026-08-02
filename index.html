@@ -52,7 +52,7 @@
   }
   </script>
 
-  <link rel="stylesheet" href="css/style.css?v=20260801e" />
+  <link rel="stylesheet" href="css/style.css?v=20260802a" />
 </head>
 <body>
   <!-- 首次進站啟動畫：顯示海報＋讀取動畫，約 2 秒後自動淡出進選單（純 CSS，回選單不重載故不再出現） -->
@@ -63,7 +63,7 @@
     </div>
   </div>
   <div id="menuBg"></div>
-  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260801e" loop preload="none"></audio>
+  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260802a" loop preload="none"></audio>
   <div class="app">
     <header class="topbar">
       <div class="logo">簡譜音遊 <span>Jianpu Rhythm</span></div>
@@ -410,7 +410,7 @@
       <div class="hud">
         <div class="hud-left">
           <div id="hudTitle" class="hud-title"></div>
-          <div class="progress"><div id="progressFill" class="progress-fill"></div></div>
+          <div class="progress"><div id="progressFill" class="progress-fill"></div><div id="loopRegion"></div></div>
           <div id="micHud" class="mic-hud hidden">
             偵測音：<b id="micNote">—</b>
             <span class="mic-level"><i id="micLevel"></i></span>
@@ -440,6 +440,22 @@
             <option value="shark">黑檀·鯊魚鰭</option>
             <option value="vine">生命樹·藤蔓</option>
           </select>
+          <span class="loop-controls" id="loopControls" title="選段循環練習：設起點/終點後開循環，可放慢">
+            <button id="loopABtn" class="btn small ghost" title="把目前小節設為循環起點">⟲ 起</button>
+            <button id="loopBBtn" class="btn small ghost" title="把目前小節設為循環終點">終 ⟳</button>
+            <button id="loopToggle" class="btn small" title="開始/停止循環選段">🔁 循環</button>
+            <button id="loopNextBtn" class="btn small ghost" title="把循環區間往後移一段（長度不變）">下一段 ⏭</button>
+            <select id="loopSpeed" class="hud-select" title="循環時的速度（可放慢練習）">
+              <option value="0.3">0.3×</option>
+              <option value="0.4">0.4×</option>
+              <option value="0.5">0.5×</option>
+              <option value="0.6">0.6×</option>
+              <option value="0.7" selected>0.7×</option>
+              <option value="0.8">0.8×</option>
+              <option value="0.9">0.9×</option>
+              <option value="1">1×</option>
+            </select>
+          </span>
           <button id="pauseBtn" class="btn small">⏸ 暫停</button>
           <button id="restartBtn" class="btn small">↻ 重來</button>
           <button id="backBtn" class="btn small ghost">✕ 選單</button>
@@ -490,17 +506,17 @@
 
   <!-- alphaTab（解析 Guitar Pro 檔，977KB）改為選歌時才動態載入 → 首頁不下載，見 game.js ensureAlphaTab() -->
   <!-- 登入 / 付費驗證（Supabase）。supabase-js（54KB gzip 外部 CDN）改為有 session 或使用者要用時才動態載入 → 匿名首頁不抓，見 auth.js ensureClient() -->
-  <script src="js/supabase-config.js?v=20260801e"></script>
-  <script src="js/auth.js?v=20260801e"></script>
+  <script src="js/supabase-config.js?v=20260802a"></script>
+  <script src="js/auth.js?v=20260802a"></script>
   <!-- 遊戲程式 -->
-  <script src="js/heic.js?v=20260801e"></script>
-  <script src="js/theory.js?v=20260801e"></script>
-  <script src="js/gp-loader.js?v=20260801e"></script>
-  <script src="js/audio.js?v=20260801e"></script>
-  <script src="js/pitch.js?v=20260801e"></script>
-  <script src="js/songs.js?v=20260801e"></script>
-  <script src="js/litejam.js?v=20260801e"></script>
-  <script src="js/game.js?v=20260801e"></script>
-  <script src="js/library.js?v=20260801e"></script>
+  <script src="js/heic.js?v=20260802a"></script>
+  <script src="js/theory.js?v=20260802a"></script>
+  <script src="js/gp-loader.js?v=20260802a"></script>
+  <script src="js/audio.js?v=20260802a"></script>
+  <script src="js/pitch.js?v=20260802a"></script>
+  <script src="js/songs.js?v=20260802a"></script>
+  <script src="js/litejam.js?v=20260802a"></script>
+  <script src="js/game.js?v=20260802a"></script>
+  <script src="js/library.js?v=20260802a"></script>
 </body>
 </html>
