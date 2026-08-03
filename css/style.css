@@ -360,7 +360,7 @@ body:has(#setupPanel:not(.hidden)) #menuBg { opacity: 1; }
 .hud { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .hud-left { flex: 1; min-width: 200px; }
 .hud-title { font-size: 17px; font-weight: 700; margin-bottom: 6px; }
-.progress { height: 9px; background: rgba(255,255,255,.1); border-radius: 4px; overflow: hidden; cursor: pointer; touch-action: none; }
+.progress { height: 6px; background: rgba(255,255,255,.1); border-radius: 4px; overflow: hidden; cursor: pointer; touch-action: none; }
 .progress-fill { height: 100%; width: 0; background: var(--accent); transition: width .1s linear; }
 .hud-right { display: flex; align-items: center; gap: 14px; }
 .hud-stat { text-align: right; }
