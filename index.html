@@ -52,7 +52,7 @@
   }
   </script>
 
-  <link rel="stylesheet" href="css/style.css?v=20260802c" />
+  <link rel="stylesheet" href="css/style.css?v=20260803a" />
 </head>
 <body>
   <!-- 首次進站啟動畫：顯示海報＋讀取動畫，約 2 秒後自動淡出進選單（純 CSS，回選單不重載故不再出現） -->
@@ -63,7 +63,7 @@
     </div>
   </div>
   <div id="menuBg"></div>
-  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260802c" loop preload="none"></audio>
+  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260803a" loop preload="none"></audio>
   <div class="app">
     <header class="topbar">
       <div class="logo">簡譜音遊 <span>Jianpu Rhythm</span></div>
@@ -224,15 +224,32 @@
             <div class="ms-tip">彈一個音，若下方沒反應就把靈敏度調高。自動校正會先播 4 拍預備，再播 8 拍量測；預備拍不用彈，之後跟著彈（<b>請戴耳機</b>，避免節拍聲被收進去）。</div>
           </div>
 
+          <!-- 開始遊戲：放在調音器上方，方便直接開玩（下方的調音器/音箱/錄音/LED 都是選用） -->
+          <button id="startBtn" class="btn primary" disabled>▶ 開始遊戲</button>
+
           <div class="tuner-box">
             <label class="field checkbox">
               <input type="checkbox" id="tunerToggle" />
-              <span>🎯 頻閃式調音器 Strobe Tuner（對麥克風彈單音；條紋停住＝準，往右＝偏高、往左＝偏低）</span>
+              <span>🎯 調音器 Tuner（對麥克風彈單音，顯示音準）</span>
             </label>
             <div id="tunerDisplay" class="hidden">
+              <label class="field">
+                <span>調音器模式</span>
+                <select id="tunerMode" class="hud-select">
+                  <option value="strobe" selected>頻閃式（條紋，超精準）</option>
+                  <option value="needle">指針式（音名＋音分）</option>
+                </select>
+              </label>
               <div class="tuner-note" id="tunerNote">—</div>
-              <div class="tuner-strobe" id="tunerStrobe"></div>
+              <!-- 指針式 -->
+              <div id="tunerNeedleWrap" class="tuner-meter"><div class="tuner-center"></div><div class="tuner-needle" id="tunerNeedle"></div></div>
+              <!-- 頻閃式：上行粗調、下行細調(漂移快 4 倍，更準) -->
+              <div id="tunerStrobeWrap" class="tuner-strobe-wrap">
+                <div class="tuner-strobe" id="tunerStrobe"></div>
+                <div class="tuner-strobe fine" id="tunerStrobe2"></div>
+              </div>
               <div class="tuner-cents" id="tunerCents">—</div>
+              <div class="ms-tip" id="tunerHint">頻閃：條紋停住＝準、往右＝偏高、往左＝偏低；下面那行更靈敏，用來微調到最準。</div>
             </div>
           </div>
 
@@ -391,8 +408,6 @@
               <div class="ms-tip" id="liteTip">需要<b>電腦版 Chrome / Edge</b> 與藍牙（Safari、iPhone 不支援）。先開琴、點「連接吉他」選到你的 LiteJam，再點「測試亮燈」確認弦序對不對（會依序亮第 1～6 弦），之後開始遊戲指板就跟著亮。「提前亮燈」讓燈比該彈的拍點早一點亮，方便手先移過去。</div>
             </div>
           </div>
-
-          <button id="startBtn" class="btn primary" disabled>▶ 開始遊戲</button>
         </div>
       </div>
 
@@ -462,22 +477,34 @@
             <option value="shark">黑檀·鯊魚鰭</option>
             <option value="vine">生命樹·藤蔓</option>
           </select>
-          <span class="loop-controls" id="loopControls" title="選段循環練習：設起點/終點後開循環，可放慢">
-            <button id="loopABtn" class="btn small ghost" title="把目前小節設為循環起點">⟲ 起</button>
-            <button id="loopBBtn" class="btn small ghost" title="把目前小節設為循環終點">終 ⟳</button>
-            <button id="loopToggle" class="btn small" title="開始/停止循環選段">🔁 循環</button>
-            <button id="loopPrevBtn" class="btn small ghost" title="把循環區間往前移一段（長度不變）">⏮ 上一段</button>
-            <button id="loopNextBtn" class="btn small ghost" title="把循環區間往後移一段（長度不變）">下一段 ⏭</button>
-            <select id="loopSpeed" class="hud-select" title="循環時的速度（可放慢練習）">
-              <option value="0.3">0.3×</option>
-              <option value="0.4">0.4×</option>
-              <option value="0.5">0.5×</option>
-              <option value="0.6">0.6×</option>
-              <option value="0.7" selected>0.7×</option>
-              <option value="0.8">0.8×</option>
-              <option value="0.9">0.9×</option>
-              <option value="1">1×</option>
-            </select>
+          <span class="loop-wrap" id="loopControls">
+            <button id="loopMenuBtn" class="btn small" title="選段循環練習（設起點/終點→開始循環，可放慢、上/下一段、或直接拖曳進度條選段）">🔁 循環 ▾</button>
+            <div id="loopPanel" class="loop-panel hidden">
+              <div class="loop-panel-row">
+                <button id="loopABtn" class="btn small ghost" title="把目前小節設為循環起點">⟲ 設起點</button>
+                <button id="loopBBtn" class="btn small ghost" title="把目前小節設為循環終點">設終點 ⟳</button>
+              </div>
+              <div class="loop-panel-row">
+                <button id="loopPrevBtn" class="btn small ghost" title="區間往前移一段（長度不變）">⏮ 上一段</button>
+                <button id="loopNextBtn" class="btn small ghost" title="區間往後移一段（長度不變）">下一段 ⏭</button>
+              </div>
+              <div class="loop-panel-row">
+                <button id="loopToggle" class="btn small" title="開始/停止循環選段">▶ 開始循環</button>
+                <label class="loop-speed-lbl">速度
+                  <select id="loopSpeed" class="hud-select" title="循環時的速度（可放慢練習）">
+                    <option value="0.3">0.3×</option>
+                    <option value="0.4">0.4×</option>
+                    <option value="0.5">0.5×</option>
+                    <option value="0.6">0.6×</option>
+                    <option value="0.7" selected>0.7×</option>
+                    <option value="0.8">0.8×</option>
+                    <option value="0.9">0.9×</option>
+                    <option value="1">1×</option>
+                  </select>
+                </label>
+              </div>
+              <div class="loop-panel-tip">也可以直接在上方進度條<b>拖曳</b>框選段落</div>
+            </div>
           </span>
           <button id="pauseBtn" class="btn small">⏸ 暫停</button>
           <button id="restartBtn" class="btn small">↻ 重來</button>
@@ -529,17 +556,17 @@
 
   <!-- alphaTab（解析 Guitar Pro 檔，977KB）改為選歌時才動態載入 → 首頁不下載，見 game.js ensureAlphaTab() -->
   <!-- 登入 / 付費驗證（Supabase）。supabase-js（54KB gzip 外部 CDN）改為有 session 或使用者要用時才動態載入 → 匿名首頁不抓，見 auth.js ensureClient() -->
-  <script src="js/supabase-config.js?v=20260802c"></script>
-  <script src="js/auth.js?v=20260802c"></script>
+  <script src="js/supabase-config.js?v=20260803a"></script>
+  <script src="js/auth.js?v=20260803a"></script>
   <!-- 遊戲程式 -->
-  <script src="js/heic.js?v=20260802c"></script>
-  <script src="js/theory.js?v=20260802c"></script>
-  <script src="js/gp-loader.js?v=20260802c"></script>
-  <script src="js/audio.js?v=20260802c"></script>
-  <script src="js/pitch.js?v=20260802c"></script>
-  <script src="js/songs.js?v=20260802c"></script>
-  <script src="js/litejam.js?v=20260802c"></script>
-  <script src="js/game.js?v=20260802c"></script>
-  <script src="js/library.js?v=20260802c"></script>
+  <script src="js/heic.js?v=20260803a"></script>
+  <script src="js/theory.js?v=20260803a"></script>
+  <script src="js/gp-loader.js?v=20260803a"></script>
+  <script src="js/audio.js?v=20260803a"></script>
+  <script src="js/pitch.js?v=20260803a"></script>
+  <script src="js/songs.js?v=20260803a"></script>
+  <script src="js/litejam.js?v=20260803a"></script>
+  <script src="js/game.js?v=20260803a"></script>
+  <script src="js/library.js?v=20260803a"></script>
 </body>
 </html>
