@@ -40,7 +40,7 @@ return{id:st.deviceId||"",label:tr.label||"",sampleRate:rate,channels:st.channel
 function onDeviceChange(cb){if(!navigator.mediaDevices)return;try{navigator.mediaDevices.addEventListener?navigator.mediaDevices.addEventListener("devicechange",cb):(navigator.mediaDevices.ondevicechange=cb);}catch(e){}}
 function start(deviceId){if(active)return Promise.resolve();lastDevice=deviceId||"";var ac={echoCancellation:false,noiseSuppression:false,autoGainControl:false};if(deviceId)ac.deviceId={exact:deviceId};return navigator.mediaDevices.getUserMedia({audio:ac}).then(function(s){stream=s;var AC=window.AudioContext||window.webkitAudioContext;try{ctx=bufferFrames?new AC({latencyHint:bufferFrames/48000}):new AC();}
 catch(e){ctx=new AC();}
-rate=ctx.sampleRate;source=ctx.createMediaStreamSource(stream);analyser=ctx.createAnalyser();analyser.fftSize=2048;buf=new Float32Array(analyser.fftSize);source.connect(analyser);buildAmp();if(ctx.state==="suspended"){try{ctx.resume();}catch(e2){}}
+rate=ctx.sampleRate;source=ctx.createMediaStreamSource(stream);analyser=ctx.createAnalyser();analyser.fftSize=4096;buf=new Float32Array(analyser.fftSize);source.connect(analyser);buildAmp();if(ctx.state==="suspended"){try{ctx.resume();}catch(e2){}}
 active=true;});}
 function stop(){if(recording){try{recorder&&recorder.stop();}catch(e){}recording=false;recorder=null;recDest=null;recTap=null;recChunks=[];}
 active=false;ampNodes=null;ampConnected=false;stopGateLoop();gateAnalyser=null;gateBuf=null;try{if(source)source.disconnect();}catch(e){}
@@ -51,11 +51,11 @@ function restart(deviceId){var d=(deviceId===undefined||deviceId===null)?lastDev
 function autoCorrelate(b,sampleRate){var SIZE=b.length;var rms=0;for(var i=0;i<SIZE;i++){rms+=b[i]*b[i];}
 rms=Math.sqrt(rms/SIZE);if(rms<floor)return{freq:-1,rms:rms};var r1=0,r2=SIZE-1,thres=0.2;for(var i=0;i<SIZE/2;i++){if(Math.abs(b[i])<thres){r1=i;break;}}
 for(var j=1;j<SIZE/2;j++){if(Math.abs(b[SIZE-j])<thres){r2=SIZE-j;break;}}
-var slice=b.subarray(r1,r2);var n=slice.length;if(n<128)return{freq:-1,rms:rms};var c=new Float32Array(n);for(var i2=0;i2<n;i2++){var sum=0;for(var j2=0;j2<n-i2;j2++)sum+=slice[j2]*slice[j2+i2];c[i2]=sum;}
-var d=0;while(d<n-1&&c[d]>c[d+1])d++;var maxval=-1,maxpos=-1;for(var i3=d;i3<n;i3++){if(c[i3]>maxval){maxval=c[i3];maxpos=i3;}}
+var slice=b.subarray(r1,r2);var n=slice.length;if(n<128)return{freq:-1,rms:rms};var maxLag=Math.min(n-1,Math.ceil(sampleRate/33));var c=new Float32Array(maxLag+1);for(var i2=0;i2<=maxLag;i2++){var sum=0;for(var j2=0;j2<n-i2;j2++)sum+=slice[j2]*slice[j2+i2];c[i2]=sum;}
+var d=0;while(d<maxLag&&c[d]>c[d+1])d++;var maxval=-1,maxpos=-1;for(var i3=d;i3<=maxLag;i3++){if(c[i3]>maxval){maxval=c[i3];maxpos=i3;}}
 if(maxpos<=0)return{freq:-1,rms:rms};var T0=maxpos;var x1=c[T0-1]||0,x2=c[T0],x3=c[T0+1]||0;var a=(x1+x3-2*x2)/2,bb=(x3-x1)/2;if(a)T0=T0-bb/(2*a);return{freq:sampleRate/T0,rms:rms};}
 function freqToMidi(f){return Math.round(69+12*Math.log2(f/440));}
-function read(){if(!active||!analyser)return{midi:null,pc:null,freq:0,rms:0};analyser.getFloatTimeDomainData(buf);var r=autoCorrelate(buf,rate);if(r.freq<=0)return{midi:null,pc:null,freq:0,rms:r.rms};var midi=freqToMidi(r.freq);if(midi<38||midi>90)return{midi:null,pc:null,freq:r.freq,rms:r.rms};return{midi:midi,pc:((midi%12)+12)%12,freq:r.freq,rms:r.rms};}
+function read(){if(!active||!analyser)return{midi:null,pc:null,freq:0,rms:0};analyser.getFloatTimeDomainData(buf);var r=autoCorrelate(buf,rate);if(r.freq<=0)return{midi:null,pc:null,freq:0,rms:r.rms};var midi=freqToMidi(r.freq);if(midi<28||midi>90)return{midi:null,pc:null,freq:r.freq,rms:r.rms};return{midi:midi,pc:((midi%12)+12)%12,freq:r.freq,rms:r.rms};}
 function setAmp(on){ampOn=!!on;if(ctx&&ctx.state==="suspended"){try{ctx.resume();}catch(e){}}
 connectAmp(ampOn);}
 function setAmpDrive(v){ampDrive=Math.max(0,Math.min(1,v));if(!ampNodes)return;ampNodes.v1.gain.value=2.2+ampDrive*6;ampNodes.v1s.curve=tubeCurve(1.6+ampDrive*2.2,0.18);ampNodes.v2.gain.value=1.3+ampDrive*7;ampNodes.v2s.curve=tubeCurve(2.2+ampDrive*5.5,0.26);}
