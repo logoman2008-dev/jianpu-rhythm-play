@@ -52,7 +52,7 @@
   }
   </script>
 
-  <link rel="stylesheet" href="css/style.css?v=20260806d" />
+  <link rel="stylesheet" href="css/style.css?v=20260806e" />
 </head>
 <body>
   <!-- 首次進站啟動畫：顯示海報＋讀取動畫，約 2 秒後自動淡出進選單（純 CSS，回選單不重載故不再出現） -->
@@ -63,13 +63,26 @@
     </div>
   </div>
   <div id="menuBg"></div>
-  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260806d" loop preload="none"></audio>
+  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260806e" loop preload="none"></audio>
   <div class="app">
     <header class="topbar">
       <div class="logo">簡譜音遊 <span>Jianpu Rhythm</span></div>
       <div class="tagline">匯入 Guitar Pro 樂譜，對麥克風彈真吉他闖關</div>
+      <button type="button" id="catalogBtn" class="bgm-btn" title="曲目與完成度" aria-label="曲目目錄">📋</button>
       <button type="button" id="bgmToggle" class="bgm-btn" title="背景音樂 開/關" aria-label="背景音樂開關">🎵</button>
     </header>
+
+    <!-- 目錄頁：所有曲目一覽＋完成度 -->
+    <section id="catalogPanel" class="panel hidden">
+      <div class="cat-head">
+        <h2>📋 曲目目錄</h2>
+        <button type="button" id="catBackBtn" class="btn small ghost">← 回選單</button>
+      </div>
+      <div id="catSummary" class="cat-summary"></div>
+      <div id="catList" class="cat-list"></div>
+      <div class="cat-note">完成度看的是<b>最佳準確率</b>（跟結算的等級同一套門檻）：練習中 &lt; 78%　·　✅ 完成 ≥ 78%（B 以上）　·　★ 精通 ≥ 95%（S）。
+        紀錄存在這台裝置的瀏覽器裡。</div>
+    </section>
 
     <!-- 設定 / 選曲 -->
     <section id="setupPanel" class="panel">
@@ -194,10 +207,6 @@
           <!-- 帳號（任何人都能用 Email 建立）：只用來跨裝置記住已解鎖角色，不含曲庫權限 -->
           <div id="bgTip" class="ms-tip"></div>
           <div id="accountBox"></div>
-          <label class="slider-field" id="bgOpacityField">
-            <span>背景照透明度<b id="bgOpacityVal">55%</b></span>
-            <input type="range" id="bgOpacityRange" min="10" max="100" step="5" value="55" />
-          </label>
 
           <div id="micSettings" class="mic-settings hidden">
             <div class="ms-head">收音校正</div>
@@ -568,17 +577,17 @@
 
   <!-- alphaTab（解析 Guitar Pro 檔，977KB）改為選歌時才動態載入 → 首頁不下載，見 game.js ensureAlphaTab() -->
   <!-- 登入 / 付費驗證（Supabase）。supabase-js（54KB gzip 外部 CDN）改為有 session 或使用者要用時才動態載入 → 匿名首頁不抓，見 auth.js ensureClient() -->
-  <script src="js/supabase-config.js?v=20260806d"></script>
-  <script src="js/auth.js?v=20260806d"></script>
+  <script src="js/supabase-config.js?v=20260806e"></script>
+  <script src="js/auth.js?v=20260806e"></script>
   <!-- 遊戲程式 -->
-  <script src="js/heic.js?v=20260806d"></script>
-  <script src="js/theory.js?v=20260806d"></script>
-  <script src="js/gp-loader.js?v=20260806d"></script>
-  <script src="js/audio.js?v=20260806d"></script>
-  <script src="js/pitch.js?v=20260806d"></script>
-  <script src="js/songs.js?v=20260806d"></script>
-  <script src="js/litejam.js?v=20260806d"></script>
-  <script src="js/game.js?v=20260806d"></script>
-  <script src="js/library.js?v=20260806d"></script>
+  <script src="js/heic.js?v=20260806e"></script>
+  <script src="js/theory.js?v=20260806e"></script>
+  <script src="js/gp-loader.js?v=20260806e"></script>
+  <script src="js/audio.js?v=20260806e"></script>
+  <script src="js/pitch.js?v=20260806e"></script>
+  <script src="js/songs.js?v=20260806e"></script>
+  <script src="js/litejam.js?v=20260806e"></script>
+  <script src="js/game.js?v=20260806e"></script>
+  <script src="js/library.js?v=20260806e"></script>
 </body>
 </html>
