@@ -52,7 +52,7 @@
   }
   </script>
 
-  <link rel="stylesheet" href="css/style.css?v=20260806a" />
+  <link rel="stylesheet" href="css/style.css?v=20260806b" />
 </head>
 <body>
   <!-- 首次進站啟動畫：顯示海報＋讀取動畫，約 2 秒後自動淡出進選單（純 CSS，回選單不重載故不再出現） -->
@@ -63,7 +63,7 @@
     </div>
   </div>
   <div id="menuBg"></div>
-  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260806a" loop preload="none"></audio>
+  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260806b" loop preload="none"></audio>
   <div class="app">
     <header class="topbar">
       <div class="logo">簡譜音遊 <span>Jianpu Rhythm</span></div>
@@ -264,7 +264,7 @@
               <span>🎸 虛擬音箱（把吉他收音經模擬音色即時輸出，可當監聽音箱）</span>
             </label>
             <div id="ampControls" class="hidden">
-              <div class="fx-chain">訊號鏈：麥克風 → <b>Noise Gate</b> → <b>綠推 Overdrive</b> → <b>英倫疊音</b> → 4×12 音箱 → Delay → 限幅器</div>
+              <div class="fx-chain">訊號鏈：麥克風 → <b>Noise Gate</b> → <b>綠推 Overdrive</b> → <b id="ampChainName">英倫疊音</b> → <span id="ampChainCab">4×12 音箱</span> → Delay → 限幅器</div>
 
               <!-- ① Noise Gate -->
               <div class="fx-unit">
@@ -300,9 +300,16 @@
                 </div>
               </div>
 
-              <!-- ③ 英倫疊音 British Stack（音箱模擬） -->
+              <!-- ③ 音箱模擬（吉他／貝斯兩種型號） -->
               <div class="fx-unit">
-                <div class="fx-head">🎛 音箱模擬：<b>英倫疊音 British Stack</b><span class="fx-sub">（兩段電子管前級＋英式 tone stack＋4×12 音箱）</span></div>
+                <div class="fx-head">🎛 音箱模擬：<b id="ampModelName">英倫疊音 British Stack</b><span class="fx-sub" id="ampModelSub">（兩段電子管前級＋英式 tone stack＋4×12 音箱）</span></div>
+                <label class="field">
+                  <span>音箱型號</span>
+                  <select id="ampModelSelect">
+                    <option value="guitar" selected>🎸 英倫疊音 British Stack（吉他・4×12）</option>
+                    <option value="bass">🎵 低音重砲 Bass Stack（貝斯・8×10）</option>
+                  </select>
+                </label>
                 <label class="slider-field">
                   <span>Preamp Gain（破音）<b id="ampDriveVal">50%</b></span>
                   <input type="range" id="ampDrive" min="0" max="100" value="50" />
@@ -561,17 +568,17 @@
 
   <!-- alphaTab（解析 Guitar Pro 檔，977KB）改為選歌時才動態載入 → 首頁不下載，見 game.js ensureAlphaTab() -->
   <!-- 登入 / 付費驗證（Supabase）。supabase-js（54KB gzip 外部 CDN）改為有 session 或使用者要用時才動態載入 → 匿名首頁不抓，見 auth.js ensureClient() -->
-  <script src="js/supabase-config.js?v=20260806a"></script>
-  <script src="js/auth.js?v=20260806a"></script>
+  <script src="js/supabase-config.js?v=20260806b"></script>
+  <script src="js/auth.js?v=20260806b"></script>
   <!-- 遊戲程式 -->
-  <script src="js/heic.js?v=20260806a"></script>
-  <script src="js/theory.js?v=20260806a"></script>
-  <script src="js/gp-loader.js?v=20260806a"></script>
-  <script src="js/audio.js?v=20260806a"></script>
-  <script src="js/pitch.js?v=20260806a"></script>
-  <script src="js/songs.js?v=20260806a"></script>
-  <script src="js/litejam.js?v=20260806a"></script>
-  <script src="js/game.js?v=20260806a"></script>
-  <script src="js/library.js?v=20260806a"></script>
+  <script src="js/heic.js?v=20260806b"></script>
+  <script src="js/theory.js?v=20260806b"></script>
+  <script src="js/gp-loader.js?v=20260806b"></script>
+  <script src="js/audio.js?v=20260806b"></script>
+  <script src="js/pitch.js?v=20260806b"></script>
+  <script src="js/songs.js?v=20260806b"></script>
+  <script src="js/litejam.js?v=20260806b"></script>
+  <script src="js/game.js?v=20260806b"></script>
+  <script src="js/library.js?v=20260806b"></script>
 </body>
 </html>
