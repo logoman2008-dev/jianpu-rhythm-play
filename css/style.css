@@ -79,8 +79,7 @@ body { background: transparent; }
   background: url(../assets/menu-bg.webp) center top / cover no-repeat; }
 #menuBg::after { content: ""; position: absolute; inset: 0;
   background: linear-gradient(180deg, rgba(11,12,16,0.30) 0%, rgba(11,12,16,0.42) 45%, rgba(11,12,16,0.72) 100%); }
-body:has(#setupPanel:not(.hidden)) #menuBg,
-body:has(#catalogPanel:not(.hidden)) #menuBg { opacity: 1; }
+body:has(#setupPanel:not(.hidden)) #menuBg { opacity: 1; }
 
 /* BGM 開關鈕（topbar 右側） */
 .bgm-btn { margin-left: auto; align-self: center; border: 1px solid var(--line2); background: rgba(20,22,29,0.6);
@@ -88,10 +87,6 @@ body:has(#catalogPanel:not(.hidden)) #menuBg { opacity: 1; }
   display: inline-flex; align-items: center; justify-content: center; transition: background .2s, border-color .2s; }
 .bgm-btn:hover { background: rgba(224,164,75,0.18); border-color: var(--accent); }
 .bgm-btn.off { opacity: 0.55; }
-/* topbar 有兩顆圓鈕：只有第一顆吃 margin-left:auto，第二顆貼著它 */
-.bgm-btn ~ .bgm-btn { margin-left: 8px; }
-/* 遊玩中不顯示目錄鈕（避免蓋掉遊戲畫面） */
-body:has(#gameWrap:not(.hidden)) #catalogBtn { display: none; }
 
 /* Panel / setup（半透明：選單頁看得到背景海報；毛玻璃維持文字可讀） */
 .panel { background: linear-gradient(180deg, rgba(26,29,38,0.80), rgba(18,20,27,0.84)); border: 1px solid var(--line2);
@@ -523,49 +518,17 @@ body:has(#gameWrap:not(.hidden)) #catalogBtn { display: none; }
 .acct-stat { display: flex; flex-direction: column; gap: 3px; font-size: 12px; line-height: 1.65; color: var(--muted); margin: 4px 0; }
 .acct-stat b { color: var(--text); }
 
-/* ═══════════ 目錄頁（曲目一覽＋完成度）═══════════ */
-.cat-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
-.cat-head h2 { font-size: 19px; margin: 0; }
-/* 上方統計：完成 N/總數 ＋ 一條總進度條 */
-.cat-summary { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px;
-  background: rgba(255,255,255,.03); margin-bottom: 14px; }
-.cat-figs { display: flex; flex-wrap: wrap; gap: 18px 26px; margin-bottom: 10px; }
-.cat-fig { min-width: 74px; }
-.cat-fig b { display: block; font-size: 22px; line-height: 1.2; color: var(--text); }
-.cat-fig span { font-size: 11.5px; color: var(--muted); }
-.cat-bar { height: 10px; border-radius: 99px; background: rgba(255,255,255,.08); overflow: hidden; display: flex; }
-.cat-bar i { display: block; height: 100%; }
-.cat-bar i.m { background: #e0a44b; }        /* 精通 */
-.cat-bar i.d { background: #3ea56a; }        /* 完成 */
-.cat-bar i.w { background: #5578bd; }        /* 練習中 */
-.cat-legend { margin-top: 7px; font-size: 11.5px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 12px; }
-.cat-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
-
-.cat-group { border: 1px solid rgba(255,255,255,.07); border-radius: 10px; background: rgba(255,255,255,.02);
-  overflow: hidden; margin-bottom: 8px; }
-.cat-group > summary { list-style: none; cursor: pointer; padding: 9px 12px; font-size: 13.5px; font-weight: 600;
-  display: flex; align-items: center; gap: 8px; user-select: none; }
-.cat-group > summary::-webkit-details-marker { display: none; }
-.cat-group > summary::before { content: "▸"; font-size: 11px; color: var(--muted); transition: transform .15s; }
-.cat-group[open] > summary::before { transform: rotate(90deg); }
-.cat-group > summary:hover { background: rgba(255,255,255,.04); }
-.cat-gcount { margin-left: auto; font-size: 11.5px; color: var(--muted); font-weight: 400; }
-
-.cat-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
-  border-top: 1px solid rgba(255,255,255,.05); font-size: 13.5px; }
-.cat-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cat-meta { flex: 0 0 auto; font-size: 11.5px; color: var(--muted); text-align: right; line-height: 1.5; }
-.cat-st { flex: 0 0 auto; font-size: 11.5px; padding: 2px 9px; border-radius: 99px; border: 1px solid var(--line); }
-.st-none { color: var(--muted); }
-.st-wip { color: #9dbaf0; border-color: #3a4d72; }
-.st-done { color: #7cd6a0; border-color: #2f6b4a; }
-.st-master { color: #ffcf6a; border-color: #7a5f21; }
-.cat-play { flex: 0 0 auto; }
-.cat-empty { padding: 12px; font-size: 13px; color: var(--muted); }
-.cat-note { margin-top: 14px; font-size: 12px; line-height: 1.8; color: var(--muted); }
-.cat-note b { color: var(--text); }
-@media (max-width: 640px) {
-  .cat-row { flex-wrap: wrap; gap: 6px 10px; }
-  .cat-name { flex: 1 1 100%; white-space: normal; }
-  .cat-meta { text-align: left; }
-}
+/* ── 曲目清單的完成度標示（直接標在主頁每一首歌上）── */
+.sample-btn { display: inline-flex; align-items: center; gap: 6px; }
+.sb-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto;
+  background: rgba(255,255,255,.18); box-shadow: none; }
+.sb-wip    .sb-dot { background: #5578bd; }
+.sb-done   .sb-dot { background: #3ea56a; }
+.sb-master .sb-dot { background: var(--accent); box-shadow: 0 0 7px var(--accent); }
+.sb-pct { font-size: 10.5px; color: var(--muted); margin-left: 2px; font-variant-numeric: tabular-nums; }
+.sb-done   { border-color: rgba(62,165,106,.45); }
+.sb-master { border-color: rgba(224,164,75,.55); }
+.sb-master .sb-pct { color: var(--accent); }
+/* 資料夾標題的「N/M 完成」 */
+.sample-done { margin-left: auto; font-size: 11px; font-weight: 500; color: var(--muted); }
+.sample-done + .sample-count { margin-left: 6px; }
