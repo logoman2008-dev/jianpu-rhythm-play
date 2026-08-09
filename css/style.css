@@ -26,7 +26,8 @@ html {
 }
 html, body {
   margin: 0;
-  height: 100%;
+  min-height: 100%;     /* ⚠️ 不可用 height:100%：搭配下面的 overflow-x 會讓 body 變成固定高度的捲動盒，
+                           手機上內容(免費曲/設定/開始鈕)會被裁掉且捲不到 */
   overflow-x: hidden;   /* 防止任何橫向溢出捲動 */
   color: var(--text);
   font-family: system-ui, -apple-system, "PingFang TC", "Microsoft JhengHei", "Segoe UI", sans-serif;
