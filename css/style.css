@@ -525,7 +525,10 @@ body:has(#gameWrap:not(.hidden)) #catalogBtn { display: none; }
 .acct-stat b { color: var(--text); }
 
 /* ── 曲目清單的完成度標示：整顆按鈕就是一條進度條，依完成度填色 ── */
-.sample-btn { position: relative; display: inline-flex; align-items: center; gap: 6px; overflow: hidden; isolation: isolate; }
+.sample-btn { display: inline-flex; align-items: center; gap: 6px; }
+/* 任何顯示完成度的按鈕(網站曲庫 .sample-btn／我的曲庫 .lib-play)都要當定位父層，
+   否則 .sb-fill 會跑去貼在 #setupPanel 上變成一大塊遮罩 */
+.prog-btn { position: relative; overflow: hidden; isolation: isolate; }
 .sb-fill {                                   /* 填色層：寬度＝最佳準確率 */
   position: absolute; left: 0; top: 0; bottom: 0; width: 0; z-index: 0; pointer-events: none;
   border-radius: inherit; background: rgba(255,255,255,.10);
