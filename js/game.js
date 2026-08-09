@@ -77,7 +77,7 @@ function cancelCalib(){if(calib&&calib.raf)cancelAnimationFrame(calib.raf);calib
 var SCORE_KEY="jianpu_scores";function loadAllScores(){try{return JSON.parse(localStorage.getItem(SCORE_KEY)||"{}");}catch(e){return{};}}
 var PROG_KEY="jianpu_progress";var currentSrc="";function loadProgress(){try{return JSON.parse(localStorage.getItem(PROG_KEY)||"{}");}catch(e){return{};}}
 function saveProgress(all){try{localStorage.setItem(PROG_KEY,JSON.stringify(all));}catch(e){}}
-function syncableProgress(){var all=loadProgress(),out={};Object.keys(all).forEach(function(k){if(k.indexOf("db:")===0||k.indexOf("local:")===0)out[k]=all[k];});return out;}
+function syncableProgress(){var all=loadProgress(),out={};Object.keys(all).forEach(function(k){if(k.indexOf("db:")===0||k.indexOf("local:")===0||k.indexOf("lib:")===0||k.indexOf("file:")===0)out[k]=all[k];});return out;}
 function mergeProgress(local,remote){var out={},keys={};Object.keys(local||{}).forEach(function(k){keys[k]=1;});Object.keys(remote||{}).forEach(function(k){keys[k]=1;});Object.keys(keys).forEach(function(k){var a=(local||{})[k],b=(remote||{})[k];if(!a){out[k]=b;return;}
 if(!b){out[k]=a;return;}
 var best=(b.bestAcc>a.bestAcc)?b:a;out[k]={plays:Math.max(a.plays||0,b.plays||0),bestScore:Math.max(a.bestScore||0,b.bestScore||0),bestAcc:Math.max(a.bestAcc||0,b.bestAcc||0),bestGrade:best.bestGrade||a.bestGrade||b.bestGrade||"",bestCombo:Math.max(a.bestCombo||0,b.bestCombo||0),last:Math.max(a.last||0,b.last||0),title:a.title||b.title};});return out;}
@@ -96,8 +96,8 @@ if(st.key==="done"||st.key==="master")done++;var meta=p&&p.plays?(p.bestGrade+"�
 function refreshSongProgressUI(){try{buildSampleList();}catch(e){}
 try{if(window.JianpuLibrary&&window.JianpuLibrary.render)window.JianpuLibrary.render();}catch(e){}
 try{if(els.catalogPanel&&!els.catalogPanel.classList.contains("hidden"))renderCatalog();}catch(e){}}
-function decorateSongBtn(btn,src,label){var p=loadProgress()[src],st=progStatus(p);btn.classList.add("sb-"+st.key);btn.innerHTML='<span class="sb-dot"></span>'+escapeHtml(label)+
-(p&&p.plays?'<span class="sb-pct">'+Math.round(p.bestAcc)+"%</span>":"");btn.title=label+"｜"+st.label+(p&&p.plays?"　最佳 "+p.bestGrade+" "+p.bestAcc.toFixed(1)+"%（"+p.bestScore+" 分）· 彈過 "+p.plays+" 次":"");return st;}
+function decorateSongBtn(btn,src,label){var p=loadProgress()[src],st=progStatus(p);btn.classList.add("sb-"+st.key);var pctv=(p&&p.plays)?Math.max(0,Math.min(100,p.bestAcc)):0;btn.innerHTML='<span class="sb-fill" style="width:'+pctv.toFixed(1)+'%"></span>'+'<span class="sb-label">'+escapeHtml(label)+"</span>"+
+(p&&p.plays?'<span class="sb-pct">'+Math.round(pctv)+"%</span>":"");btn.title=label+"｜"+st.label+(p&&p.plays?"　最佳 "+p.bestGrade+" "+p.bestAcc.toFixed(1)+"%（"+p.bestScore+" 分）· 彈過 "+p.plays+" 次":"");return st;}
 function progStatus(p){if(!p||!p.plays)return{key:"none",label:"未練習",cls:"st-none"};if(p.bestAcc>=95)return{key:"master",label:"★ 精通",cls:"st-master"};if(p.bestAcc>=78)return{key:"done",label:"✅ 完成",cls:"st-done"};return{key:"wip",label:"練習中",cls:"st-wip"};}
 function songKeyOf(){return((timeline&&timeline.title)||"?")+" ｜ "+((timeline&&timeline.trackName)||"?");}
 function modeLabel(){return dispName()+"/"+(inputMode==="mic"?"收音":"鍵盤")+"/"+DIFFICULTY[els.difficultySelect.value].label+(speed!==1?" "+fmtSpeed(speed):"");}

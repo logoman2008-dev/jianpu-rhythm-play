@@ -524,14 +524,19 @@ body:has(#gameWrap:not(.hidden)) #catalogBtn { display: none; }
 .acct-stat { display: flex; flex-direction: column; gap: 3px; font-size: 12px; line-height: 1.65; color: var(--muted); margin: 4px 0; }
 .acct-stat b { color: var(--text); }
 
-/* ── 曲目清單的完成度標示（直接標在主頁每一首歌上）── */
-.sample-btn { display: inline-flex; align-items: center; gap: 6px; }
-.sb-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto;
-  background: rgba(255,255,255,.18); box-shadow: none; }
-.sb-wip    .sb-dot { background: #5578bd; }
-.sb-done   .sb-dot { background: #3ea56a; }
-.sb-master .sb-dot { background: var(--accent); box-shadow: 0 0 7px var(--accent); }
-.sb-pct { font-size: 10.5px; color: var(--muted); margin-left: 2px; font-variant-numeric: tabular-nums; }
+/* ── 曲目清單的完成度標示：整顆按鈕就是一條進度條，依完成度填色 ── */
+.sample-btn { position: relative; display: inline-flex; align-items: center; gap: 6px; overflow: hidden; isolation: isolate; }
+.sb-fill {                                   /* 填色層：寬度＝最佳準確率 */
+  position: absolute; left: 0; top: 0; bottom: 0; width: 0; z-index: 0; pointer-events: none;
+  border-radius: inherit; background: rgba(255,255,255,.10);
+  transition: width .45s cubic-bezier(.4,0,.2,1);
+}
+.sb-label, .sb-pct { position: relative; z-index: 1; }
+.sb-wip    .sb-fill { background: linear-gradient(90deg, rgba(85,120,189,.45), rgba(85,120,189,.28)); }
+.sb-done   .sb-fill { background: linear-gradient(90deg, rgba(62,165,106,.55), rgba(62,165,106,.32)); }
+.sb-master .sb-fill { background: linear-gradient(90deg, rgba(224,164,75,.65), rgba(224,164,75,.38));
+  box-shadow: inset 0 0 12px rgba(224,164,75,.35); }
+.sb-pct { font-size: 10.5px; color: var(--muted); margin-left: auto; padding-left: 6px; font-variant-numeric: tabular-nums; }
 .sb-done   { border-color: rgba(62,165,106,.45); }
 .sb-master { border-color: rgba(224,164,75,.55); }
 .sb-master .sb-pct { color: var(--accent); }
