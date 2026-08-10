@@ -522,6 +522,8 @@ body:has(#gameWrap:not(.hidden)) #catalogBtn { display: none; }
 /* 帳號狀態（樂譜／角色兩行） */
 .acct-stat { display: flex; flex-direction: column; gap: 3px; font-size: 12px; line-height: 1.65; color: var(--muted); margin: 4px 0; }
 .acct-stat b { color: var(--text); }
+/* 帳號欄：只剩一顆同步鈕＋同步結果訊息 */
+.acct-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 /* ── 曲目清單的完成度標示：整顆按鈕就是一條進度條，依完成度填色 ── */
 .sample-btn { display: inline-flex; align-items: center; gap: 6px; }
