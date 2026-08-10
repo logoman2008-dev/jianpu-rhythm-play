@@ -297,7 +297,7 @@ body:has(#gameWrap:not(.hidden)) #catalogBtn { display: none; }
 /* 指針式調音器：準度刻度 ＋ 琴頭弦鈕圖（GuitarTuna 風格） */
 .tuner-head-wrap { width: 100%; max-width: 320px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .tuner-head-wrap.hidden { display: none; }
-.tuner-head { width: 100%; height: 250px; display: block; }
+.tuner-head { width: 100%; height: 285px; display: block; }
 .tuner-verdict { font-size: 13px; font-weight: 700; color: var(--muted); letter-spacing: .5px; }
 .tuner-verdict.flat  { color: #7fb2ff; }
 .tuner-verdict.sharp { color: #ffb454; }
