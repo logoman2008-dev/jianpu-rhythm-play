@@ -221,6 +221,12 @@ body:has(#gameWrap:not(.hidden)) #catalogBtn { display: none; }
 .field-tip { font-size: 12px; font-weight: 400; letter-spacing: 0; color: var(--muted); line-height: 1.6; }
 .field.checkbox { flex-direction: row; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; color: var(--text); }
 .field.checkbox input { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+/* 精簡欄位（樂器軌道／調性／播放旋律導引／原音色伴奏）：欄位與字體都縮小，版面更緊湊 */
+.field.compact { gap: 4px; font-size: 11px; }
+.field.compact select { padding: 6px 30px 6px 10px; font-size: 13px; border-radius: 9px;
+  background-position: right 10px center; background-size: 10px; }
+.field.checkbox.compact { gap: 8px; font-size: 12.5px; }
+.field.checkbox.compact input { width: 15px; height: 15px; }
 
 .btn {
   border: none; border-radius: 12px; padding: 12px 18px;
