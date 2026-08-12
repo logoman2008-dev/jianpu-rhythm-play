@@ -1,0 +1,17 @@
+{
+  "name": "簡譜音遊 Jianpu Rhythm",
+  "short_name": "簡譜音遊",
+  "description": "匯入 Guitar Pro 樂譜自動轉六線譜＋簡譜，對麥克風彈真吉他闖關。內建調音器、虛擬音箱、節拍器。",
+  "lang": "zh-Hant",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#15151a",
+  "theme_color": "#15151a",
+  "icons": [
+    { "src": "assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
