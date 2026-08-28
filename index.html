@@ -19,13 +19,13 @@
 
   <!-- 加到主畫面＝獨立 App（PWA）。有 manifest 才會用固定的 start_url 開啟，
        登入狀態(localStorage)才不會因為每次進入的網址不同而對不上。 -->
-  <link rel="manifest" href="manifest.json?v=20260829a" />
+  <link rel="manifest" href="manifest.json?v=20260829b" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="簡譜音遊" />
-  <link rel="apple-touch-icon" href="assets/icon-192.png?v=20260829a" />
-  <link rel="icon" type="image/png" sizes="512x512" href="assets/icon-512.png?v=20260829a" />
+  <link rel="apple-touch-icon" href="assets/icon-192.png?v=20260829b" />
+  <link rel="icon" type="image/png" sizes="512x512" href="assets/icon-512.png?v=20260829b" />
 
   <!-- Open Graph（分享到 LINE / FB / IG 時的預覽） -->
   <meta property="og:type" content="website" />
@@ -64,7 +64,7 @@
   }
   </script>
 
-  <link rel="stylesheet" href="css/style.css?v=20260829a" />
+  <link rel="stylesheet" href="css/style.css?v=20260829b" />
 </head>
 <body>
   <!-- 首次進站啟動畫：顯示海報＋讀取動畫，約 2 秒後自動淡出進選單（純 CSS，回選單不重載故不再出現） -->
@@ -75,7 +75,7 @@
     </div>
   </div>
   <div id="menuBg"></div>
-  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260829a" loop preload="none"></audio>
+  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260829b" loop preload="none"></audio>
   <div class="app">
     <header class="topbar">
       <div class="logo">簡譜音遊 <span>Jianpu Rhythm</span></div>
@@ -92,8 +92,7 @@
       </div>
       <div id="catSummary" class="cat-summary"></div>
       <div id="catList" class="cat-list"></div>
-      <div class="cat-note">完成度看的是<b>最佳準確率</b>：練習中 &lt; 70%　·　✅ 完成 ≥ 70%　·　★ 精通 ≥ 90%。
-        紀錄存在這台裝置的瀏覽器裡。</div>
+      <div class="cat-note">完成度＝<b>最佳準確率</b>：&lt;70% 練習中　·　✅ 完成 ≥70%　·　★ 精通 ≥90%</div>
     </section>
 
     <!-- 設定 / 選曲 -->
@@ -106,11 +105,7 @@
             <div class="dz-sub">支援 .gp / .gpx / .gp5 / .gp4 / .gp3</div>
           </div>
           <!-- 版權／隱私聲明：本站為解析工具，檔案純前端處理不上傳 -->
-          <div class="legal-note">
-            🔐 <b>檔案不會上傳</b>：樂譜只在你的瀏覽器內解析，本站伺服器<b>不接收、不儲存、不讀取</b>你的檔案。<br />
-            ⚠️ 本站僅提供<b>樂譜解析工具</b>，<b>不提供任何音樂內容</b>。請勿載入侵害他人著作權之樂譜；譜面內容由使用者自行負責。
-            <a href="terms.html" target="_blank" rel="noopener">服務條款與著作權處理 ›</a>
-          </div>
+          <div class="legal-note slim">🔐 樂譜<b>只在你的瀏覽器內解析、不會上傳</b>；本站是<b>樂譜解析工具</b>，不提供任何音樂內容，譜面由使用者自行負責。<a href="terms.html" target="_blank" rel="noopener">詳細條款 ›</a></div>
           <!-- 解鎖控制已移到下方「嚕嚕安教材」欄位上（見 #sampleList，由 renderSampleGroup 動態產生）。購買改用外部 Google 表單。 -->
           <div id="ownGateTip" class="field-tip"></div>
           <div id="myLibraryBox" class="sample-box">
@@ -169,11 +164,11 @@
           </label>
           <label class="field checkbox compact">
             <input type="checkbox" id="melodyToggle" />
-            <span>播放旋律導引（用喇叭時麥克風會收到→建議戴耳機）</span>
+            <span title="用喇叭時麥克風會收到，建議戴耳機">播放旋律導引</span>
           </label>
           <label class="field checkbox compact">
             <input type="checkbox" id="backingToggle" />
-            <span>🎵 原音色伴奏（用 GP 原本的樂器音色播放整份譜；首次開啟會下載音色庫）</span>
+            <span title="用 GP 原本的樂器音色播放整份譜；首次開啟會下載音色庫">🎵 原音色伴奏</span>
           </label>
           <div id="backingStatus" class="field-tip"></div>
           <label class="field">
@@ -247,7 +242,7 @@
               <span class="mt-note">偵測：<b id="testNote">—</b></span>
               <span class="mic-level"><i id="testLevel"></i></span>
             </div>
-            <div class="ms-tip">彈一個音，若下方沒反應就把靈敏度調高。自動校正會先播 4 拍預備，再播 8 拍量測；預備拍不用彈，之後跟著彈（<b>請戴耳機</b>，避免節拍聲被收進去）。</div>
+            <details class="tip"><summary>怎麼校正收音</summary><div class="tip-body">彈一個音，若下方沒反應就把靈敏度調高。自動校正會先播 4 拍預備，再播 8 拍量測；預備拍不用彈，之後跟著彈（<b>請戴耳機</b>，避免節拍聲被收進去）。</div></details>
           </div>
 
           <!-- 開始遊戲：放在調音器上方，方便直接開玩（下方的調音器/音箱/錄音/LED 都是選用） -->
@@ -256,7 +251,7 @@
           <div class="tuner-box">
             <label class="field checkbox">
               <input type="checkbox" id="tunerToggle" />
-              <span>🎯 調音器 Tuner（對麥克風彈單音，顯示音準）</span>
+              <span title="對麥克風彈單音，顯示音準">🎯 調音器</span>
             </label>
             <div id="tunerDisplay" class="hidden">
               <label class="field">
@@ -279,14 +274,14 @@
                 <canvas id="tunerArc" class="tuner-arc"></canvas>
               </div>
               <div class="tuner-cents" id="tunerCents">—</div>
-              <div class="ms-tip" id="tunerHint">頻閃：條紋停住＝準、往右＝偏高、往左＝偏低；下面那行更靈敏，用來微調到最準。</div>
+              <details class="tip"><summary>頻閃怎麼看</summary><div class="tip-body">頻閃：條紋停住＝準、往右＝偏高、往左＝偏低；下面那行更靈敏，用來微調到最準。</div></details>
             </div>
           </div>
 
           <div class="amp-box">
             <label class="field checkbox">
               <input type="checkbox" id="ampToggle" />
-              <span>🎸 虛擬音箱（把吉他收音經模擬音色即時輸出，可當監聽音箱）</span>
+              <span title="把吉他收音經模擬音色即時輸出，可當監聽音箱">🎸 虛擬音箱</span>
             </label>
             <div id="ampControls" class="hidden">
               <div class="fx-chain">訊號鏈：麥克風 → <b>Noise Gate</b> → <b>綠推 Overdrive</b> → <b id="ampChainName">英倫疊音</b> → <span id="ampChainCab">4×12 音箱</span> → Delay → 限幅器</div>
@@ -295,7 +290,7 @@
               <div class="fx-unit">
                 <label class="field checkbox">
                   <input type="checkbox" id="gateToggle" />
-                  <span>🔇 Noise Gate 雜訊閘（切掉沒彈時的底噪／哼聲）</span>
+                  <span title="切掉沒彈時的底噪／哼聲">🔇 Noise Gate 雜訊閘</span>
                 </label>
                 <div id="gateControls" class="hidden">
                   <label class="slider-field">
@@ -307,7 +302,8 @@
                     <span class="fx-meter"><i id="gateMeter"></i></span>
                     <span class="fx-led" id="gateLed" title="閘門狀態">●</span>
                   </div>
-                  <div class="ms-tip" id="gateTip">按「自動偵測底噪」時<b>手離開弦、保持安靜</b> 1.2 秒，會自動抓底噪並把門檻設在它上面 8dB。</div>
+                  <details class="tip"><summary>怎麼用自動偵測</summary><div class="tip-body">按「自動偵測底噪」時<b>手離開弦、保持安靜</b> 1.2 秒，會自動抓底噪並把門檻設在它上面 8dB。</div></details>
+                  <div class="ms-tip" id="gateTip"></div>
                 </div>
               </div>
 
@@ -315,13 +311,13 @@
               <div class="fx-unit">
                 <label class="field checkbox">
                   <input type="checkbox" id="odToggle" />
-                  <span>🟩 綠推 Overdrive（推前級的中頻破音，可開關）</span>
+                  <span title="推前級的中頻破音，可開關">🟩 綠推 Overdrive</span>
                 </label>
                 <div id="odControls" class="hidden">
                   <label class="slider-field"><span>Overdrive<b id="odDriveVal">50%</b></span><input type="range" id="odDrive" min="0" max="100" value="50" /></label>
                   <label class="slider-field"><span>Tone<b id="odToneVal">50%</b></span><input type="range" id="odTone" min="0" max="100" value="50" /></label>
                   <label class="slider-field"><span>Level<b id="odLevelVal">60%</b></span><input type="range" id="odLevel" min="0" max="100" value="60" /></label>
-                  <div class="ms-tip">這顆會<b>先切掉低頻再削波</b>，所以低音不糊、中頻突出——經典用法是 Drive 開小、Level 開大來「推」音箱。</div>
+                  <details class="tip"><summary>這顆在做什麼</summary><div class="tip-body">這顆會<b>先切掉低頻再削波</b>，所以低音不糊、中頻突出——經典用法是 Drive 開小、Level 開大來「推」音箱。</div></details>
                 </div>
               </div>
 
@@ -394,17 +390,17 @@
             </div>
             <label class="field checkbox">
               <input type="checkbox" id="recMuteGame" checked />
-              <span>錄音時靜音遊戲聲音（旋律導引／節拍器／鼓；避免被麥克風收進去）</span>
+              <span title="旋律導引／節拍器／鼓，避免被麥克風收進去">錄音時靜音遊戲聲音</span>
             </label>
             <div id="recResult" class="rec-result"></div>
-            <div class="ms-tip">⚠️ 麥克風會收到<b>喇叭放出來的聲音</b>——想邊聽伴奏/節拍器邊錄又不錄進去，請<b>戴耳機</b>（就能取消勾選上面那項）。錄「濕訊」會套用虛擬音箱效果（沒開喇叭輸出也錄得到、不嘯叫）；錄的是你的吉他，不含伴奏。</div>
+            <details class="tip"><summary>錄音注意事項</summary><div class="tip-body">⚠️ 麥克風會收到<b>喇叭放出來的聲音</b>——想邊聽伴奏/節拍器邊錄又不錄進去，請<b>戴耳機</b>（就能取消勾選上面那項）。錄「濕訊」會套用虛擬音箱效果（沒開喇叭輸出也錄得到、不嘯叫）；錄的是你的吉他，不含伴奏。</div></details>
           </div>
 
           <!-- LiteJam LED 吉他：把譜的音符即時亮在真吉他指板上（跟著遊戲播放） -->
           <div class="litejam-box">
             <label class="field checkbox">
               <input type="checkbox" id="liteToggle" />
-              <span>🎸 連動 LiteJam LED 吉他（把譜亮在真吉他指板上，跟著遊戲播放）</span>
+              <span title="把譜亮在真吉他指板上，跟著遊戲播放">🎸 連動 LiteJam LED 吉他</span>
             </label>
             <div id="liteControls" class="hidden">
               <div class="fx-row">
@@ -417,9 +413,9 @@
                   <span>正在彈的音（顏色）</span>
                   <input type="color" id="liteColorMain" value="#00e0ff" />
                 </label>
-                <div class="ms-tip" style="grid-column:1/-1">🎨 有<b>技巧</b>的音會蓋過這個顏色，直接用畫面上同一套技巧色：
+                <div style="grid-column:1/-1"><details class="tip"><summary>技巧色會蓋過這個顏色</summary><div class="tip-body">🎨 有<b>技巧</b>的音會蓋過這個顏色，直接用畫面上同一套技巧色：
                   <b style="color:#5bd68a">槌音/勾音</b>、<b style="color:#57a6ff">滑音</b>、<b style="color:#ff9d3d">推弦</b>、
-                  <b style="color:#c78bff">泛音</b>、<b style="color:#a7b0c0">悶音</b>。</div>
+                  <b style="color:#c78bff">泛音</b>、<b style="color:#a7b0c0">悶音</b>。</div></details></div>
                 <label class="field checkbox lite-next">
                   <input type="checkbox" id="liteNextToggle" checked />
                   <span>預告下一個音</span>
@@ -439,13 +435,14 @@
               </label>
               <label class="field checkbox">
                 <input type="checkbox" id="liteMarkers" checked />
-                <span>格位記號燈（第 3・5・7・9・12・15・17・19・21・24 格，第 3・4 弦常亮，當把位參考）</span>
+                <span title="第 3・5・7・9・12・15・17・19・21・24 格，第 3・4 弦常亮，當把位參考">格位記號燈</span>
               </label>
               <label class="field checkbox">
                 <input type="checkbox" id="liteReverse" />
-                <span>弦序反轉（若實機亮到的弦上下相反就勾這個）</span>
+                <span title="若實機亮到的弦上下相反就勾這個">弦序反轉</span>
               </label>
-              <div class="ms-tip" id="liteTip">需要<b>電腦版 Chrome / Edge</b> 與藍牙（Safari、iPhone 不支援）。先開琴、點「連接吉他」選到你的 LiteJam，再點「測試亮燈」確認弦序對不對（會依序亮第 1～6 弦），之後開始遊戲指板就跟著亮。「提前亮燈」讓燈比該彈的拍點早一點亮，方便手先移過去。</div>
+              <details class="tip"><summary>連線步驟與注意事項</summary><div class="tip-body">需要<b>電腦版 Chrome / Edge</b> 與藍牙（Safari、iPhone 不支援）。先開琴、點「連接吉他」選到你的 LiteJam，再點「測試亮燈」確認弦序對不對（會依序亮第 1～6 弦），之後開始遊戲指板就跟著亮。「提前亮燈」讓燈比該彈的拍點早一點亮，方便手先移過去。</div></details>
+              <div class="ms-tip" id="liteTip"></div>
             </div>
           </div>
         </div>
@@ -455,16 +452,15 @@
       <div id="leaderboard" class="leaderboard hidden"></div>
       <div id="status" class="status"></div>
 
-      <div class="howto">
-        <h3>玩法</h3>
+      <details class="howto-box"><summary>玩法</summary><div class="howto">
         <ul>
           <li><b>匯入樂譜</b>：拖入 Guitar Pro 檔或從曲庫選曲，自動轉成六線譜＋簡譜。</li>
           <li><b>對著麥克風彈真吉他</b>：音符沿 6 條弦由右往左捲動、顯示弦與格位，到左側判定線時彈出該音；彈對音高（容許小幅走音）就算命中。需用本機伺服器 <b>http://localhost</b> 或 https 才能取用麥克風。</li>
           <li>越準時得分越高：<b>Perfect ＞ Great</b>，漏接為 <b>Miss</b> 並中斷連段；連段越高，台下越嗨、樂手越站上舞台。</li>
           <li><b>空白鍵</b>暫停／繼續，<b>Esc</b> 回到選單。</li>
         </ul>
-        <div class="field-tip" style="margin-top:8px">🥁 鼓音源：Drum samples provided by DrumGizmo.org（MuldjordKit by Lars Muldjord, CC-BY 4.0）。</div>
-      </div>
+        </details>
+          </div>
 
       <!-- 條款／免責／著作權：頁尾 -->
       <footer class="site-foot">
@@ -474,6 +470,7 @@
           <a href="terms.html#privacy" target="_blank" rel="noopener">隱私權與資料處理</a>
         </div>
         <div class="foot-note">
+        <div style="margin-bottom:6px">🥁 鼓音源：Drum samples provided by DrumGizmo.org（MuldjordKit by Lars Muldjord, CC-BY 4.0）。</div>
           本服務為<b>非官方、獨立開發之樂譜解析與練習工具</b>，與 Arobas Music（Guitar Pro）及任何唱片公司、音樂出版商均無關聯。
           本站<b>不提供、不販售、不散布任何音樂內容</b>；所有譜面由使用者自行提供並自負法律責任。
           樂譜檔案<b>純前端處理，伺服器不會儲存</b>。付費項目為<b>工具功能與使用額度</b>之解鎖，不含任何音樂授權。
@@ -596,17 +593,17 @@
 
   <!-- alphaTab（解析 Guitar Pro 檔，977KB）改為選歌時才動態載入 → 首頁不下載，見 game.js ensureAlphaTab() -->
   <!-- 登入 / 付費驗證（Supabase）。supabase-js（54KB gzip 外部 CDN）改為有 session 或使用者要用時才動態載入 → 匿名首頁不抓，見 auth.js ensureClient() -->
-  <script src="js/supabase-config.js?v=20260829a"></script>
-  <script src="js/auth.js?v=20260829a"></script>
+  <script src="js/supabase-config.js?v=20260829b"></script>
+  <script src="js/auth.js?v=20260829b"></script>
   <!-- 遊戲程式 -->
-  <script src="js/heic.js?v=20260829a"></script>
-  <script src="js/theory.js?v=20260829a"></script>
-  <script src="js/gp-loader.js?v=20260829a"></script>
-  <script src="js/audio.js?v=20260829a"></script>
-  <script src="js/pitch.js?v=20260829a"></script>
-  <script src="js/songs.js?v=20260829a"></script>
-  <script src="js/litejam.js?v=20260829a"></script>
-  <script src="js/game.js?v=20260829a"></script>
-  <script src="js/library.js?v=20260829a"></script>
+  <script src="js/heic.js?v=20260829b"></script>
+  <script src="js/theory.js?v=20260829b"></script>
+  <script src="js/gp-loader.js?v=20260829b"></script>
+  <script src="js/audio.js?v=20260829b"></script>
+  <script src="js/pitch.js?v=20260829b"></script>
+  <script src="js/songs.js?v=20260829b"></script>
+  <script src="js/litejam.js?v=20260829b"></script>
+  <script src="js/game.js?v=20260829b"></script>
+  <script src="js/library.js?v=20260829b"></script>
 </body>
 </html>

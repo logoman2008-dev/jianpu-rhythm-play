@@ -600,3 +600,36 @@ body:has(#gameWrap:not(.hidden)) #catalogBtn { display: none; }
   .cat-name { flex: 1 1 100%; white-space: normal; }
   .cat-meta { text-align: left; }
 }
+
+/* ═══════════ 可收合的「？說明」 ═══════════ */
+/*  設定頁原本塞了 20 幾段但書與操作說明，第一眼很難找到真正要按的東西。
+    長說明一律收進這個元件：預設只露出一個小小的「？說明」，需要時才展開。
+    資訊沒有刪掉，只是不再擋在路中間。 */
+details.tip { margin: 4px 0 2px; }
+details.tip > summary {
+  list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--muted); opacity: .7; user-select: none; padding: 2px 0;
+}
+details.tip > summary::-webkit-details-marker { display: none; }
+details.tip > summary::before {
+  content: "?"; display: inline-grid; place-items: center; width: 14px; height: 14px;
+  border: 1px solid currentColor; border-radius: 50%; font-size: 10px; line-height: 1; font-weight: 700;
+}
+details.tip > summary:hover, details.tip[open] > summary { opacity: 1; color: var(--text); }
+details.tip .tip-body {
+  font-size: 12px; line-height: 1.7; color: var(--muted);
+  padding: 4px 0 2px 19px; border-left: 2px solid var(--line); margin-left: 6px;
+}
+details.tip .tip-body b { color: var(--text); }
+/* 玩法：同樣收起來，標題列比照面板小標 */
+details.howto-box { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+details.howto-box > summary {
+  list-style: none; cursor: pointer; font-size: 14px; font-weight: 600; color: var(--text);
+  display: inline-flex; align-items: center; gap: 6px; user-select: none;
+}
+details.howto-box > summary::-webkit-details-marker { display: none; }
+details.howto-box > summary::before { content: "▸"; font-size: 11px; color: var(--muted); transition: transform .15s; }
+details.howto-box[open] > summary::before { transform: rotate(90deg); }
+details.howto-box .howto { margin-top: 10px; padding-top: 0; border-top: 0; }
+/* 版權聲明壓成一行，細節放服務條款 */
+.legal-note.slim { padding: 7px 10px; font-size: 11.5px; line-height: 1.6; }
