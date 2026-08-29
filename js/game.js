@@ -628,7 +628,7 @@ else if(f===0){ctx.strokeStyle="rgba(255,255,255,0.7)";ctx.lineWidth=Math.max(1,
 else{var fr=f-(firstFret>1?firstFret-1:0);if(fr<1)fr=1;if(fr>rows)fr=rows;ctx.fillStyle=color;ctx.beginPath();ctx.arc(sx2,top+(fr-0.5)*cellH,dotR,0,Math.PI*2);ctx.fill();}}
 if(firstFret>1){ctx.fillStyle="rgba(255,255,255,0.8)";ctx.font=Math.round(8*scale)+"px system-ui";ctx.textAlign="right";ctx.textBaseline="middle";ctx.fillText(firstFret+"fr",left-5*scale,top+cellH*0.5);}
 ctx.restore();}
-function chordFretsOf(it){if(it.chordFrets&&it.chordFrets.length)return{frets:it.chordFrets,first:it.chordFirst||0};if(!it.notes||!it.notes.length)return null;var fr=[-1,-1,-1,-1,-1,-1],maxf=0,minf=99,any=false;for(var i=0;i<it.notes.length;i++){var nn=it.notes[i];if(nn.string>=1&&nn.string<=6&&nn.fret!=null&&nn.fret>=0){fr[6-nn.string]=nn.fret;any=true;if(nn.fret>maxf)maxf=nn.fret;if(nn.fret>0&&nn.fret<minf)minf=nn.fret;}}
+function chordFretsOf(it){if(it.chordFrets&&it.chordFrets.length)return{frets:it.chordFrets,first:it.chordFirst||0};if(!it.notes||!it.notes.length)return null;var sc=(tabInfo&&tabInfo.stringCount)||6;var fr=[],maxf=0,minf=99,any=false;for(var z=0;z<sc;z++)fr.push(-1);for(var i=0;i<it.notes.length;i++){var nn=it.notes[i];if(nn.string>=1&&nn.string<=sc&&nn.fret!=null&&nn.fret>=0){fr[sc-nn.string]=nn.fret;any=true;if(nn.fret>maxf)maxf=nn.fret;if(nn.fret>0&&nn.fret<minf)minf=nn.fret;}}
 if(!any)return null;return{frets:fr,first:(maxf>4&&minf<99)?minf:0};}
 function currentChordItem(songTime){var best=null,bd=1e9;for(var i=0;i<items.length;i++){var it=items[i];if(!it.chord)continue;var d=Math.abs(it.time-songTime);if(d<bd){bd=d;best=it;}}
 return(best&&bd<=2.0)?best:null;}
