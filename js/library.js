@@ -16,7 +16,7 @@ return Promise.all(files.map(function(f){return fileToSong(f,folderId||0);})).th
 function addDirectory(fileList){var byDir={};[].forEach.call(fileList,function(f){if(!GP_RE.test(f.name))return;var rel=f.webkitRelativePath||f.name,top=rel.indexOf("/")>=0?rel.split("/")[0]:"匯入";(byDir[top]=byDir[top]||[]).push(f);});var dirs=Object.keys(byDir);if(!dirs.length){setLibTip("該資料夾內沒有 .gp 檔。");return Promise.resolve();}
 var chain=Promise.resolve(),total=0;dirs.forEach(function(dir){chain=chain.then(function(){return ensureFolder(dir);}).then(function(fid){return Promise.all(byDir[dir].map(function(f){total++;return fileToSong(f,fid);}));});});return chain.then(function(){setLibTip("已從 "+dirs.length+" 個資料夾加入 "+total+" 首。");render();});}
 function playSong(id,name){getOne("songs",id).then(function(s){if(!s||!window.JianpuGame||!window.JianpuGame.loadArrayBuffer)return;if(window.JianpuGame.gateOwnUse&&!window.JianpuGame.gateOwnUse()){setLibTip(window.JianpuGame.ownGateBlockedMsg?window.JianpuGame.ownGateBlockedMsg():"今日免費次數已用完，登入開通後可無限使用。");return;}
-window.JianpuGame.loadArrayBuffer(s.data,name+".gp","lib:"+id);});}
+window.JianpuGame.loadArrayBuffer(s.data,name+".gp","lib:"+id,name);});}
 function setLibTip(t){var e=$("libTip");if(e)e.textContent=t||"";}
 function moveSongToFolder(songId,folderId){getOne("songs",songId).then(function(s){if(!s)return;if((s.folderId||0)===folderId)return;s.folderId=folderId;put("songs",s).then(function(){setLibTip("已移動「"+s.name+"」。");render();});});}
 function isFileDrag(dt){return!!(dt&&dt.types&&[].indexOf.call(dt.types,"Files")>=0);}

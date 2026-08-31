@@ -24,11 +24,13 @@ html {
   background-image: var(--bg-glow);
   background-attachment: fixed;
 }
+html { overflow-x: hidden; }   /* 橫向溢出只在 html 擋。
+   ⚠️ 不可以寫在 body 上：body 有 overflow 就變成「捲動盒」，
+      裡面的 position:sticky（開始遊戲鈕）會失效，永遠黏不住。 */
 html, body {
   margin: 0;
-  min-height: 100%;     /* ⚠️ 不可用 height:100%：搭配下面的 overflow-x 會讓 body 變成固定高度的捲動盒，
+  min-height: 100%;     /* ⚠️ 不可用 height:100%：會讓 body 變成固定高度的捲動盒，
                            手機上內容(免費曲/設定/開始鈕)會被裁掉且捲不到 */
-  overflow-x: hidden;   /* 防止任何橫向溢出捲動 */
   color: var(--text);
   font-family: system-ui, -apple-system, "PingFang TC", "Microsoft JhengHei", "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -93,6 +95,9 @@ body:has(#catalogPanel:not(.hidden)) #menuBg { opacity: 1; }
 .bgm-btn ~ .bgm-btn { margin-left: 8px; }
 /* 遊玩中不顯示目錄鈕（避免蓋掉遊戲畫面） */
 body:has(#gameWrap:not(.hidden)) #catalogBtn { display: none; }
+/* 遊玩中把站台標題收起來：手機上這塊佔掉 200px 以上，
+   譜面被擠到螢幕下半部，音符還沒看清楚就到判定線了 */
+body:has(#gameWrap:not(.hidden)) .topbar { display: none; }
 
 /* Panel / setup（半透明：選單頁看得到背景海報；毛玻璃維持文字可讀） */
 .panel { background: linear-gradient(180deg, rgba(26,29,38,0.80), rgba(18,20,27,0.84)); border: 1px solid var(--line2);
@@ -101,16 +106,37 @@ body:has(#gameWrap:not(.hidden)) #catalogBtn { display: none; }
 .panel::before { content: ""; position: absolute; inset: 0 0 auto; height: 1px; border-radius: 18px 18px 0 0;
   background: linear-gradient(90deg, transparent, rgba(255,255,255,0.14), transparent); }
 /* minmax(0,…) 防止 grid track 被子項 min-content 撐爆造成手機版被截掉 */
-.setup-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; }
+/* align-items:start → 左欄比右欄短時不被拉長，不會在歌單下面留一大片空白 */
+.setup-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 760px) { .setup-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* 「開始遊戲」黏在畫面下緣：右欄設定很長(收音校正就 500px)，
+   不黏的話選完歌還要往下滾才找得到開始鍵 */
+#startBtn {
+  position: sticky; bottom: 14px; z-index: 6;
+  /* 同色描邊：黏在畫面上時把底下的設定文字擋掉，不然會透出來很亂。
+     用 !important 是因為 .btn:disabled 會把 box-shadow 清成 none。 */
+  box-shadow: 0 0 0 9px rgba(20,22,29,0.96), 0 10px 26px rgba(0,0,0,.55) !important;
+}
+#startBtn:disabled { opacity: .5; }          /* 預設 .4 太淡，黏著時看不清楚 */
+/* 服務條款橫幅還在時往上讓位，不然開始鍵會被壓在下面 */
+body:has(#tosBar:not(.hidden)) #startBtn { bottom: 76px; }
+
+/* 手機是單欄：開始鍵排在「設定」那一欄，離頂端 1400px 以上，選完歌還要滑很久才找得到。
+   → 已經選好歌(按鈕不再 disabled)就改成固定在畫面下緣，隨時可以開始。 */
 @media (max-width: 760px) {
-  .setup-grid { grid-template-columns: minmax(0, 1fr); }
-  /* 單欄時「我的曲庫」很高(含優惠/登入)，會把「免費範例」推到 1200px 以下＝手機上等於不見了 →
-     把免費範例排到我的曲庫前面，一進站就看得到可以直接玩的曲子 */
-  .dz-col > #dropZone   { order: 0; }
-  .dz-col > .legal-note { order: 1; }
-  .dz-col > #ownGateTip { order: 2; }
-  .dz-col > #sampleBox  { order: 3; }
-  .dz-col > #myLibraryBox { order: 4; }
+  /* ⚠️ .panel 有 backdrop-filter，會變成 position:fixed 子元素的定位基準 →
+     底下的固定按鈕會黏在面板內部而不是畫面上。手機關掉這層模糊(順便省效能)，
+     底色改深一點補回原本的遮蔽感。 */
+  .panel { backdrop-filter: none; -webkit-backdrop-filter: none;
+           background: linear-gradient(180deg, rgba(26,29,38,0.94), rgba(18,20,27,0.96)); }
+  body:has(#setupPanel:not(.hidden)) #startBtn:not(:disabled) {
+    position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom));
+    width: auto; z-index: 60;
+  }
+  /* 固定後會蓋住頁尾 → 補一段留白，最後一段內容才不會被壓住 */
+  body:has(#setupPanel:not(.hidden)) #setupPanel { padding-bottom: 78px; }
+  body:has(#tosBar:not(.hidden)) #startBtn:not(:disabled) { bottom: 76px; }
 }
 
 .dropzone {
