@@ -153,6 +153,27 @@ body:has(#tosBar:not(.hidden)) #startBtn { bottom: 76px; }
 /* 手機是單欄：開始鍵排在「設定」那一欄，離頂端 1400px 以上，選完歌還要滑很久才找得到。
    → 已經選好歌(按鈕不再 disabled)就改成固定在畫面下緣，隨時可以開始。 */
 @media (max-width: 760px) {
+  /* ── 手機版讓水墨吉他手露出來 ──
+     直式螢幕配 16:9 的海報，cover 會把左右各裁掉 1068px（只剩中間 26% 的寬度），
+     而吉他手畫在圖寬的 58%～94% → 剛好整個被裁掉，等於看不到人。
+     所以手機不用 cover：改成「整張圖以 150% 寬度貼齊右上」，讓人物落進看得到的範圍；
+     圖以下用和紙底色續接（#e6dfd5 是取樣圖片底邊的中位色，接縫才看不出來）。 */
+  #menuBg, #splash::before {
+    /* 兩層：上面是把圖的下緣化開的漸層，下面才是海報。
+       沒有這層漸層的話，圖的底邊會和續接的紙色之間出現一條明顯的橫線（啟動畫特別明顯）。
+       84.4vw = 這個構圖下圖片的實際高度（150% 寬 ÷ 16:9），漸層才會剛好蓋在下緣。 */
+    background-image:
+      linear-gradient(180deg, rgba(230,223,213,0) 0%, rgba(230,223,213,0) 74%, #e6dfd5 100%),
+      url(../assets/menu-bg-sumi.webp);
+    background-size: 100% 84.4vw, 150% auto;
+    background-position: left top, 80% top;
+    background-repeat: no-repeat, no-repeat;
+    background-color: #e6dfd5;
+  }
+  /* 頂部原本只露出 124px，人物會被面板切掉 → 把面板往下讓一段當作水墨畫面。
+     多出來的 92px 不會擋到曲目清單（清單仍在第一屏內）。 */
+  #setupPanel, #catalogPanel { margin-top: 92px; }
+
   /* ⚠️ .panel 有 backdrop-filter，會變成 position:fixed 子元素的定位基準 →
      底下的固定按鈕會黏在面板內部而不是畫面上。手機關掉這層模糊(順便省效能)，
      底色改深一點補回原本的遮蔽感。 */
