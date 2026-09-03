@@ -14,9 +14,10 @@
   --accent-ink: #23180a;    /* 金色按鈕上的深色字 */
   --radius: 14px;
   --shadow: 0 16px 44px rgba(0,0,0,0.5);
-  /* 選單／啟動畫的背景海報一律走黑白灰。要改回彩色把這行設成 none 即可，
-     不必改圖檔（原圖仍是彩色的，只是顯示時去色）。 */
-  --bg-mono: grayscale(1) contrast(1.06) brightness(0.96);
+  /* 背景海報的濾鏡。現在這張「水墨吉他手」本身就是黑白灰(實測彩度中位數 13/255)，
+     和紙那點微暖是茶道質感、要留著 → 不再程式去色。
+     若之後換成彩色圖又想要黑白，把這行改成 grayscale(1) 即可。 */
+  --bg-mono: none;
 }
 
 * { box-sizing: border-box; }
@@ -70,28 +71,47 @@ body { background: transparent; }
 
 /* 首次進站啟動畫（splash）：滿版海報＋讀取轉圈，約 2 秒後自動淡出。純 CSS 自動隱藏(不依賴 JS) */
 #splash { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: flex-end; justify-content: center;
-  background: #0b0c10;
+  background: #f2f0ea;                 /* 紙白：海報還沒載入時不會先閃一下黑 */
   animation: splashOut 0.7s ease 1.9s forwards; }
 /* 海報放 ::before：filter 只吃這一層，金色的轉圈與文字維持原色 */
 #splash::before { content: ""; position: absolute; inset: 0;
-  background: url(../assets/menu-bg.webp) center top / cover no-repeat;
+  background: url(../assets/menu-bg-sumi.webp) center top / cover no-repeat;
   filter: var(--bg-mono); }
 #splash::after { content: ""; position: absolute; inset: 0;
-  background: linear-gradient(180deg, rgba(11,12,16,0.12) 0%, rgba(11,12,16,0.5) 68%, rgba(11,12,16,0.92) 100%); }
+  background: linear-gradient(180deg, rgba(248,246,241,0) 0%, rgba(248,246,241,0.18) 66%, rgba(248,246,241,0.62) 100%); }
 .splash-inner { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 14px; margin-bottom: 12vh; }
-.splash-spinner { width: 46px; height: 46px; border-radius: 50%; border: 4px solid rgba(255,255,255,0.16); border-top-color: var(--accent); animation: splashSpin 0.9s linear infinite; }
-.splash-text { color: #e9d9b6; font-size: 14px; letter-spacing: 2.5px; font-weight: 600; text-shadow: 0 2px 10px rgba(0,0,0,0.65); }
+.splash-spinner { width: 46px; height: 46px; border-radius: 50%; border: 4px solid rgba(40,42,48,0.14); border-top-color: var(--accent); animation: splashSpin 0.9s linear infinite; }
+.splash-text { color: #3a3d44; font-size: 14px; letter-spacing: 2.5px; font-weight: 600; text-shadow: 0 1px 10px rgba(255,255,255,0.9); }
 @keyframes splashSpin { to { transform: rotate(360deg); } }
 @keyframes splashOut { to { opacity: 0; visibility: hidden; } }
 
 /* 選單背景海報：只在設定頁(選單)顯示，蓋一層暗幕維持可讀性 */
 #menuBg { position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: 0; transition: opacity .5s ease;
-  background: url(../assets/menu-bg.webp) center top / cover no-repeat;
+  background: url(../assets/menu-bg-sumi.webp) center top / cover no-repeat;
   filter: var(--bg-mono); }
+/* 這層原本是壓在深色搖滾海報上的濃黑幕。換成偏白的和紙海報後，
+   同一層會把整張紙壓成灰的 → 改成很淡的一層，只在下緣稍微收一點，維持「偏白」。 */
 #menuBg::after { content: ""; position: absolute; inset: 0;
-  background: linear-gradient(180deg, rgba(11,12,16,0.30) 0%, rgba(11,12,16,0.42) 45%, rgba(11,12,16,0.72) 100%); }
+  background: linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0.04) 45%, rgba(20,22,28,0.10) 100%); }
 body:has(#setupPanel:not(.hidden)) #menuBg,
 body:has(#catalogPanel:not(.hidden)) #menuBg { opacity: 1; }
+
+/* 和紙海報是「偏白」的，但站台標題原本是淺色字 → 在白紙上幾乎看不見。
+   只在「有露出海報」的頁面(選單/目錄)把標題改成墨色，並加一點白色暈開
+   以免壓到水墨較深的地方。遊玩中 topbar 本來就隱藏，不受影響。 */
+body:has(#setupPanel:not(.hidden)) .logo,
+body:has(#catalogPanel:not(.hidden)) .logo {
+  color: #1b1d22; text-shadow: 0 1px 10px rgba(255,255,255,0.85);
+}
+body:has(#setupPanel:not(.hidden)) .logo span,
+body:has(#catalogPanel:not(.hidden)) .logo span,
+body:has(#setupPanel:not(.hidden)) .tagline,
+body:has(#catalogPanel:not(.hidden)) .tagline {
+  color: #55585f; text-shadow: 0 1px 8px rgba(255,255,255,0.8);
+}
+/* 分隔線原本是白色的細線，在白紙上看不到 → 改成淡墨線 */
+body:has(#setupPanel:not(.hidden)) .topbar,
+body:has(#catalogPanel:not(.hidden)) .topbar { border-bottom-color: rgba(30,32,38,0.16); }
 
 /* BGM 開關鈕（topbar 右側） */
 .bgm-btn { margin-left: auto; align-self: center; border: 1px solid var(--line2); background: rgba(20,22,29,0.6);
