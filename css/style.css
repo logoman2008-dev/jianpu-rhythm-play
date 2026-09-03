@@ -351,14 +351,14 @@ body:has(#tosBar:not(.hidden)) #startBtn { bottom: 76px; }
 .lite-status { font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 999px; background: rgba(var(--ink),.06); color: var(--muted); }
 .lite-status.connected { color: #f2f7f5; background: #17836f; }
 .lite-status.connecting { color: #2b2410; background: #d9ab27; }
-.lite-status.error { color: #fff; background: #ff5d6c; }
+.lite-status.error { color: #fff; background: #a33540; }
 @media (max-width: 640px) { .lite-grid { grid-template-columns: 1fr; } }
 
 /* 內錄 */
 .rec-box { margin-top: 10px; padding: 11px 13px; border: 1px solid rgba(255,93,108,0.4); border-radius: 11px;
   background: linear-gradient(180deg, rgba(255,93,108,0.07), rgba(255,93,108,0.03)); display: flex; flex-direction: column; gap: 10px; }
 .rec-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-#recBtn.recording { background: #ff5d6c; color: #fff; border-color: #ff5d6c; }
+#recBtn.recording { background: #a33540; color: #fff; border-color: #a33540; }
 .rec-status { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .rec-result { display: flex; flex-direction: column; gap: 6px; }
 .rec-result audio { width: 100%; }
@@ -636,7 +636,7 @@ body:has(#tosBar:not(.hidden)) #startBtn { bottom: 76px; }
   box-shadow: inset 0 0 12px rgba(224,164,75,.35); }
 .sb-pct { font-size: 10.5px; color: var(--muted); margin-left: auto; padding-left: 6px; font-variant-numeric: tabular-nums; }
 .sb-done   { border-color: rgba(62,165,106,.45); }
-.sb-master { border-color: rgba(224,164,75,.55); }
+.sb-master { border-color: rgba(138,106,18,.55); }
 .sb-master .sb-pct { color: var(--accent); }
 /* 資料夾標題的「N/M 完成」 */
 .sample-done { margin-left: auto; font-size: 11px; font-weight: 500; color: var(--muted); }
