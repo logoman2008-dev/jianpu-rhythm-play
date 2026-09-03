@@ -14,6 +14,9 @@
   --accent-ink: #23180a;    /* 金色按鈕上的深色字 */
   --radius: 14px;
   --shadow: 0 16px 44px rgba(0,0,0,0.5);
+  /* 選單／啟動畫的背景海報一律走黑白灰。要改回彩色把這行設成 none 即可，
+     不必改圖檔（原圖仍是彩色的，只是顯示時去色）。 */
+  --bg-mono: grayscale(1) contrast(1.06) brightness(0.96);
 }
 
 * { box-sizing: border-box; }
@@ -67,8 +70,12 @@ body { background: transparent; }
 
 /* 首次進站啟動畫（splash）：滿版海報＋讀取轉圈，約 2 秒後自動淡出。純 CSS 自動隱藏(不依賴 JS) */
 #splash { position: fixed; inset: 0; z-index: 9999; display: flex; align-items: flex-end; justify-content: center;
-  background: #0b0c10 url(../assets/menu-bg.webp) center top / cover no-repeat;
+  background: #0b0c10;
   animation: splashOut 0.7s ease 1.9s forwards; }
+/* 海報放 ::before：filter 只吃這一層，金色的轉圈與文字維持原色 */
+#splash::before { content: ""; position: absolute; inset: 0;
+  background: url(../assets/menu-bg.webp) center top / cover no-repeat;
+  filter: var(--bg-mono); }
 #splash::after { content: ""; position: absolute; inset: 0;
   background: linear-gradient(180deg, rgba(11,12,16,0.12) 0%, rgba(11,12,16,0.5) 68%, rgba(11,12,16,0.92) 100%); }
 .splash-inner { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 14px; margin-bottom: 12vh; }
@@ -79,7 +86,8 @@ body { background: transparent; }
 
 /* 選單背景海報：只在設定頁(選單)顯示，蓋一層暗幕維持可讀性 */
 #menuBg { position: fixed; inset: 0; z-index: -1; pointer-events: none; opacity: 0; transition: opacity .5s ease;
-  background: url(../assets/menu-bg.webp) center top / cover no-repeat; }
+  background: url(../assets/menu-bg.webp) center top / cover no-repeat;
+  filter: var(--bg-mono); }
 #menuBg::after { content: ""; position: absolute; inset: 0;
   background: linear-gradient(180deg, rgba(11,12,16,0.30) 0%, rgba(11,12,16,0.42) 45%, rgba(11,12,16,0.72) 100%); }
 body:has(#setupPanel:not(.hidden)) #menuBg,
