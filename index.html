@@ -19,13 +19,13 @@
 
   <!-- 加到主畫面＝獨立 App（PWA）。有 manifest 才會用固定的 start_url 開啟，
        登入狀態(localStorage)才不會因為每次進入的網址不同而對不上。 -->
-  <link rel="manifest" href="manifest.json?v=20260904m" />
+  <link rel="manifest" href="manifest.json?v=20260904n" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="簡譜音遊" />
-  <link rel="apple-touch-icon" href="assets/icon-192.png?v=20260904m" />
-  <link rel="icon" type="image/png" sizes="512x512" href="assets/icon-512.png?v=20260904m" />
+  <link rel="apple-touch-icon" href="assets/icon-192.png?v=20260904n" />
+  <link rel="icon" type="image/png" sizes="512x512" href="assets/icon-512.png?v=20260904n" />
 
   <!-- Open Graph（分享到 LINE / FB / IG 時的預覽） -->
   <meta property="og:type" content="website" />
@@ -64,7 +64,7 @@
   }
   </script>
 
-  <link rel="stylesheet" href="css/style.css?v=20260904m" />
+  <link rel="stylesheet" href="css/style.css?v=20260904n" />
 </head>
 <body>
   <!-- 首次進站啟動畫：顯示海報＋讀取動畫，約 2 秒後自動淡出進選單（純 CSS，回選單不重載故不再出現） -->
@@ -75,7 +75,7 @@
     </div>
   </div>
   <div id="menuBg"></div>
-  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260904m" loop preload="none"></audio>
+  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260904n" loop preload="none"></audio>
   <div class="app">
     <header class="topbar">
       <div class="logo">簡譜音遊 <span>Jianpu Rhythm</span></div>
@@ -417,7 +417,6 @@
           </div>
           <!-- 帳號（任何人都能用 Email 建立）：只用來跨裝置記住已解鎖角色，不含曲庫權限 -->
           <div id="bgTip" class="ms-tip"></div>
-          <div id="accountBox"></div>
 
 
           <!-- 開始遊戲：放在調音器上方，方便直接開玩（下方的調音器/音箱/錄音/LED 都是選用） -->
@@ -604,17 +603,17 @@
 
   <!-- alphaTab（解析 Guitar Pro 檔，977KB）改為選歌時才動態載入 → 首頁不下載，見 game.js ensureAlphaTab() -->
   <!-- 登入 / 付費驗證（Supabase）。supabase-js（54KB gzip 外部 CDN）改為有 session 或使用者要用時才動態載入 → 匿名首頁不抓，見 auth.js ensureClient() -->
-  <script src="js/supabase-config.js?v=20260904m"></script>
-  <script src="js/auth.js?v=20260904m"></script>
+  <script src="js/supabase-config.js?v=20260904n"></script>
+  <script src="js/auth.js?v=20260904n"></script>
   <!-- 遊戲程式 -->
-  <script src="js/heic.js?v=20260904m"></script>
-  <script src="js/theory.js?v=20260904m"></script>
-  <script src="js/gp-loader.js?v=20260904m"></script>
-  <script src="js/audio.js?v=20260904m"></script>
-  <script src="js/pitch.js?v=20260904m"></script>
-  <script src="js/songs.js?v=20260904m"></script>
-  <script src="js/litejam.js?v=20260904m"></script>
-  <script src="js/game.js?v=20260904m"></script>
-  <script src="js/library.js?v=20260904m"></script>
+  <script src="js/heic.js?v=20260904n"></script>
+  <script src="js/theory.js?v=20260904n"></script>
+  <script src="js/gp-loader.js?v=20260904n"></script>
+  <script src="js/audio.js?v=20260904n"></script>
+  <script src="js/pitch.js?v=20260904n"></script>
+  <script src="js/songs.js?v=20260904n"></script>
+  <script src="js/litejam.js?v=20260904n"></script>
+  <script src="js/game.js?v=20260904n"></script>
+  <script src="js/library.js?v=20260904n"></script>
 </body>
 </html>
