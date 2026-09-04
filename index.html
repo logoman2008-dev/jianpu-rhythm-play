@@ -19,13 +19,13 @@
 
   <!-- 加到主畫面＝獨立 App（PWA）。有 manifest 才會用固定的 start_url 開啟，
        登入狀態(localStorage)才不會因為每次進入的網址不同而對不上。 -->
-  <link rel="manifest" href="manifest.json?v=20260904k" />
+  <link rel="manifest" href="manifest.json?v=20260904m" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="簡譜音遊" />
-  <link rel="apple-touch-icon" href="assets/icon-192.png?v=20260904k" />
-  <link rel="icon" type="image/png" sizes="512x512" href="assets/icon-512.png?v=20260904k" />
+  <link rel="apple-touch-icon" href="assets/icon-192.png?v=20260904m" />
+  <link rel="icon" type="image/png" sizes="512x512" href="assets/icon-512.png?v=20260904m" />
 
   <!-- Open Graph（分享到 LINE / FB / IG 時的預覽） -->
   <meta property="og:type" content="website" />
@@ -64,7 +64,7 @@
   }
   </script>
 
-  <link rel="stylesheet" href="css/style.css?v=20260904k" />
+  <link rel="stylesheet" href="css/style.css?v=20260904m" />
 </head>
 <body>
   <!-- 首次進站啟動畫：顯示海報＋讀取動畫，約 2 秒後自動淡出進選單（純 CSS，回選單不重載故不再出現） -->
@@ -75,7 +75,7 @@
     </div>
   </div>
   <div id="menuBg"></div>
-  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260904k" loop preload="none"></audio>
+  <audio id="menuBgm" src="assets/menu-bgm.m4a?v=20260904m" loop preload="none"></audio>
   <div class="app">
     <header class="topbar">
       <div class="logo">簡譜音遊 <span>Jianpu Rhythm</span></div>
@@ -103,6 +103,160 @@
         <option value="stage">舞台（深底）</option>
         </select>
         </label>
+        <div id="micSettings" class="mic-settings hidden">
+        <div class="ms-head">收音校正</div>
+        <label class="field">
+        <span>輸入裝置<b id="audioInCount" class="dev-count"></b></span>
+        <select id="audioInSelect"><option value="">預設輸入裝置</option></select>
+        </label>
+        <div class="dev-row">
+        <button type="button" id="audioInRescan" class="btn small ghost">🔄 重新掃描</button>
+        <button type="button" id="audioInUnlock" class="btn small ghost">🔓 顯示裝置名稱</button>
+        </div>
+        <div class="dev-list" id="audioInList"></div>
+        <div class="ms-tip" id="audioInNow"></div>
+        <div class="ms-tip" id="audioInTip"></div>
+        <label class="slider-field">
+        <span>靈敏度<b id="sensVal">中</b></span>
+        <input type="range" id="sensRange" min="0" max="100" value="65" />
+        </label>
+        <label class="slider-field">
+        <span>延遲校正<b id="latVal">50 ms</b></span>
+        <input type="range" id="latRange" min="0" max="200" step="5" value="50" />
+        </label>
+        <div class="mic-test">
+        <button type="button" id="micTestBtn" class="btn small ghost">▶ 測試麥克風</button>
+        <button type="button" id="autoCalBtn" class="btn small ghost">🎯 自動校正延遲</button>
+        <span class="mt-note">偵測：<b id="testNote">—</b></span>
+        <span class="mic-level"><i id="testLevel"></i></span>
+        </div>
+        <details class="tip"><summary>怎麼校正收音</summary><div class="tip-body">彈一個音，若下方沒反應就把靈敏度調高。自動校正會先播 4 拍預備，再播 8 拍量測；預備拍不用彈，之後跟著彈（<b>請戴耳機</b>，避免節拍聲被收進去）。</div></details>
+        </div>
+        <label class="field">
+        <span>曲風鼓組</span>
+        <select id="genreSelect">
+        <option value="none" selected>無</option>
+        <option value="rock">搖滾 Rock</option>
+        <option value="metal">金屬 Metal</option>
+        <option value="folk">民謠／流行 Folk-Pop</option>
+        <option value="funk">放克／拉丁 Funk-Latin</option>
+        </select>
+        </label>
+        <div class="amp-box">
+        <label class="field checkbox">
+        <input type="checkbox" id="ampToggle" />
+        <span title="把吉他收音經模擬音色即時輸出，可當監聽音箱">🎸 虛擬音箱</span>
+        </label>
+        <div id="ampControls" class="hidden">
+        <div class="fx-chain">訊號鏈：麥克風 → <b>Noise Gate</b> → <b>綠推 Overdrive</b> → <b id="ampChainName">英倫疊音</b> → <span id="ampChainCab">4×12 音箱</span> → Delay → 限幅器</div>
+
+        <!-- ① Noise Gate -->
+        <div class="fx-unit">
+        <label class="field checkbox">
+        <input type="checkbox" id="gateToggle" />
+        <span title="切掉沒彈時的底噪／哼聲">🔇 Noise Gate 雜訊閘</span>
+        </label>
+        <div id="gateControls" class="hidden">
+        <label class="slider-field">
+        <span>門檻 Threshold<b id="gateThreshVal">-38 dB</b></span>
+        <input type="range" id="gateThresh" min="-70" max="-15" step="1" value="-38" />
+        </label>
+        <div class="fx-row">
+        <button type="button" id="gateAutoBtn" class="btn small ghost">🎯 自動偵測底噪</button>
+        <span class="fx-meter"><i id="gateMeter"></i></span>
+        <span class="fx-led" id="gateLed" title="閘門狀態">●</span>
+        </div>
+        <details class="tip"><summary>怎麼用自動偵測</summary><div class="tip-body">按「自動偵測底噪」時<b>手離開弦、保持安靜</b> 1.2 秒，會自動抓底噪並把門檻設在它上面 8dB。</div></details>
+        <div class="ms-tip" id="gateTip"></div>
+        </div>
+        </div>
+
+        <!-- ② 綠推 Overdrive（中頻推進破音） -->
+        <div class="fx-unit">
+        <label class="field checkbox">
+        <input type="checkbox" id="odToggle" />
+        <span title="推前級的中頻破音，可開關">🟩 綠推 Overdrive</span>
+        </label>
+        <div id="odControls" class="hidden">
+        <label class="slider-field"><span>Overdrive<b id="odDriveVal">50%</b></span><input type="range" id="odDrive" min="0" max="100" value="50" /></label>
+        <label class="slider-field"><span>Tone<b id="odToneVal">50%</b></span><input type="range" id="odTone" min="0" max="100" value="50" /></label>
+        <label class="slider-field"><span>Level<b id="odLevelVal">60%</b></span><input type="range" id="odLevel" min="0" max="100" value="60" /></label>
+        <details class="tip"><summary>這顆在做什麼</summary><div class="tip-body">這顆會<b>先切掉低頻再削波</b>，所以低音不糊、中頻突出——經典用法是 Drive 開小、Level 開大來「推」音箱。</div></details>
+        </div>
+        </div>
+
+        <!-- ③ 音箱模擬（吉他／貝斯兩種型號） -->
+        <div class="fx-unit">
+        <div class="fx-head">🎛 音箱模擬：<b id="ampModelName">英倫疊音 British Stack</b><span class="fx-sub" id="ampModelSub">（兩段電子管前級＋英式 tone stack＋4×12 音箱）</span></div>
+        <label class="field">
+        <span>音箱型號</span>
+        <select id="ampModelSelect">
+        <option value="guitar" selected>🎸 英倫疊音 British Stack（吉他・4×12）</option>
+        <option value="bass">🎵 低音重砲 Bass Stack（貝斯・8×10）</option>
+        </select>
+        </label>
+        <label class="slider-field">
+        <span>Preamp Gain（破音）<b id="ampDriveVal">50%</b></span>
+        <input type="range" id="ampDrive" min="0" max="100" value="50" />
+        </label>
+        <div class="fx-grid">
+        <label class="slider-field"><span>低音 Bass<b id="toneBassVal">50%</b></span><input type="range" id="toneBass" min="0" max="100" value="50" /></label>
+        <label class="slider-field"><span>中音 Middle<b id="toneMidVal">50%</b></span><input type="range" id="toneMid" min="0" max="100" value="50" /></label>
+        <label class="slider-field"><span>高音 Treble<b id="toneTrebleVal">60%</b></span><input type="range" id="toneTreble" min="0" max="100" value="60" /></label>
+        <label class="slider-field"><span>臨場感 Presence<b id="tonePresenceVal">50%</b></span><input type="range" id="tonePresence" min="0" max="100" value="50" /></label>
+        </div>
+        <label class="slider-field">
+        <span>音量 Master<b id="ampLevelVal">60%</b></span>
+        <input type="range" id="ampLevel" min="0" max="100" value="60" />
+        </label>
+        </div>
+
+        <div class="ms-tip">🛡 <b>限幅器 Limiter</b>：輸出上限固定 <b>-3 dB</b>（防爆音・護耳）</div>
+        <label class="field checkbox">
+        <input type="checkbox" id="dlyToggle" />
+        <span>🌀 Delay 延遲效果器</span>
+        </label>
+        <div id="dlyControls" class="hidden">
+        <label class="slider-field"><span>時間 Time<b id="dlyTimeVal">280 ms</b></span><input type="range" id="dlyTime" min="0" max="800" step="10" value="280" /></label>
+        <label class="slider-field"><span>回饋 Feedback<b id="dlyFbVal">30%</b></span><input type="range" id="dlyFb" min="0" max="90" value="30" /></label>
+        <label class="slider-field"><span>混音 Mix<b id="dlyMixVal">35%</b></span><input type="range" id="dlyMix" min="0" max="100" value="35" /></label>
+        </div>
+        <label class="field">
+        <span>I/O 緩衝 Buffer size</span>
+        <select id="ampBuffer">
+        <option value="0" selected>預設（自動）</option>
+        <option value="32">32</option>
+        <option value="64">64</option>
+        <option value="128">128</option>
+        <option value="256">256</option>
+        <option value="512">512</option>
+        <option value="1024">1024</option>
+        </select>
+        </label>
+        <div class="ms-tip" id="ampLatNow">目前延遲：—</div>
+        <div class="ms-tip">⚠️ 用喇叭外放會<b>回授嘯叫</b>——請<b>戴耳機</b>，或用<b>錄音介面 line-in</b> 監聽。</div>
+        </div>
+        </div>
+        <div class="rec-box">
+        <div class="ms-head">🔴 內錄（錄下你彈的）</div>
+        <div class="rec-row">
+        <label class="field">
+        <span>訊號</span>
+        <select id="recMode" class="hud-select">
+        <option value="dry" selected>乾訊（原始吉他）</option>
+        <option value="wet">濕訊（過音箱效果）</option>
+        </select>
+        </label>
+        <button type="button" id="recBtn" class="btn small">● 開始錄音</button>
+        <span class="rec-status" id="recStatus"></span>
+        </div>
+        <label class="field checkbox">
+        <input type="checkbox" id="recMuteGame" checked />
+        <span title="旋律導引／節拍器／鼓，避免被麥克風收進去">錄音時靜音遊戲聲音</span>
+        </label>
+        <div id="recResult" class="rec-result"></div>
+        <details class="tip"><summary>錄音注意事項</summary><div class="tip-body">⚠️ 麥克風會收到<b>喇叭放出來的聲音</b>——想邊聽伴奏/節拍器邊錄又不錄進去，請<b>戴耳機</b>（就能取消勾選上面那項）。錄「濕訊」會套用虛擬音箱效果（沒開喇叭輸出也錄得到、不嘯叫）；錄的是你的吉他，不含伴奏。</div></details>
+        </div>
         <div class="litejam-box">
         <label class="field checkbox">
         <input type="checkbox" id="liteToggle" />
@@ -181,23 +335,23 @@
           <div id="sampleBox" class="sample-box">
             <div id="sampleList" class="sample-list"></div>
           </div>
-          <div id="myLibraryBox" class="sample-box">
-            <div class="sample-title">我的曲庫</div>
-            <div id="libUnlock"></div>
-            <div class="lib-toolbar">
-              <button type="button" id="libAddFiles" class="btn small">＋ 加入檔案</button>
-              <button type="button" id="libAddFolder" class="btn small">＋ 加入整個資料夾</button>
-              <button type="button" id="libNewFolder" class="btn small ghost">＋ 新資料夾</button>
-              <input type="file" id="libFileInput" accept=".gp,.gpx,.gp5,.gp4,.gp3,.gpif" multiple hidden />
-              <input type="file" id="libDirInput" webkitdirectory hidden />
-            </div>
-            <div class="field-tip">💡 也可以直接把 <b>.gp 檔或整個資料夾</b> 拖進這個框裡加入。</div>
-            <div id="libTip" class="field-tip"></div>
-            <div id="myLibrary" class="sample-list"></div>
-          </div>
         </div>
 
         <div class="controls">
+          <div id="myLibraryBox" class="sample-box">
+          <div class="sample-title">我的曲庫</div>
+          <div id="libUnlock"></div>
+          <div class="lib-toolbar">
+          <button type="button" id="libAddFiles" class="btn small">＋ 加入檔案</button>
+          <button type="button" id="libAddFolder" class="btn small">＋ 加入整個資料夾</button>
+          <button type="button" id="libNewFolder" class="btn small ghost">＋ 新資料夾</button>
+          <input type="file" id="libFileInput" accept=".gp,.gpx,.gp5,.gp4,.gp3,.gpif" multiple hidden />
+          <input type="file" id="libDirInput" webkitdirectory hidden />
+          </div>
+          <div class="field-tip">💡 也可以直接把 <b>.gp 檔或整個資料夾</b> 拖進這個框裡加入。</div>
+          <div id="libTip" class="field-tip"></div>
+          <div id="myLibrary" class="sample-list"></div>
+          </div>
           <!-- 顯示=六線譜、輸入=吉他收音、難度=普通，皆為固定值，隱藏但保留供程式讀取(欄位已移除) -->
           <div class="field-row" style="display:none">
             <label class="field">
@@ -231,16 +385,6 @@
             <span title="用 GP 原本的樂器音色播放整份譜；首次開啟會下載音色庫">🎵 原音色伴奏</span>
           </label>
           <div id="backingStatus" class="field-tip"></div>
-          <label class="field">
-            <span>曲風鼓組</span>
-            <select id="genreSelect">
-              <option value="none" selected>無</option>
-              <option value="rock">搖滾 Rock</option>
-              <option value="metal">金屬 Metal</option>
-              <option value="folk">民謠／流行 Folk-Pop</option>
-              <option value="funk">放克／拉丁 Funk-Latin</option>
-            </select>
-          </label>
           <div class="field-row">
             <label class="field">
               <span>吉他手</span>
@@ -275,35 +419,6 @@
           <div id="bgTip" class="ms-tip"></div>
           <div id="accountBox"></div>
 
-          <div id="micSettings" class="mic-settings hidden">
-            <div class="ms-head">收音校正</div>
-            <label class="field">
-              <span>輸入裝置<b id="audioInCount" class="dev-count"></b></span>
-              <select id="audioInSelect"><option value="">預設輸入裝置</option></select>
-            </label>
-            <div class="dev-row">
-              <button type="button" id="audioInRescan" class="btn small ghost">🔄 重新掃描</button>
-              <button type="button" id="audioInUnlock" class="btn small ghost">🔓 顯示裝置名稱</button>
-            </div>
-            <div class="dev-list" id="audioInList"></div>
-            <div class="ms-tip" id="audioInNow"></div>
-            <div class="ms-tip" id="audioInTip"></div>
-            <label class="slider-field">
-              <span>靈敏度<b id="sensVal">中</b></span>
-              <input type="range" id="sensRange" min="0" max="100" value="65" />
-            </label>
-            <label class="slider-field">
-              <span>延遲校正<b id="latVal">50 ms</b></span>
-              <input type="range" id="latRange" min="0" max="200" step="5" value="50" />
-            </label>
-            <div class="mic-test">
-              <button type="button" id="micTestBtn" class="btn small ghost">▶ 測試麥克風</button>
-              <button type="button" id="autoCalBtn" class="btn small ghost">🎯 自動校正延遲</button>
-              <span class="mt-note">偵測：<b id="testNote">—</b></span>
-              <span class="mic-level"><i id="testLevel"></i></span>
-            </div>
-            <details class="tip"><summary>怎麼校正收音</summary><div class="tip-body">彈一個音，若下方沒反應就把靈敏度調高。自動校正會先播 4 拍預備，再播 8 拍量測；預備拍不用彈，之後跟著彈（<b>請戴耳機</b>，避免節拍聲被收進去）。</div></details>
-          </div>
 
           <!-- 開始遊戲：放在調音器上方，方便直接開玩（下方的調音器/音箱/錄音/LED 都是選用） -->
           <button id="startBtn" class="btn primary" disabled>▶ 開始遊戲</button>
@@ -338,123 +453,8 @@
             </div>
           </div>
 
-          <div class="amp-box">
-            <label class="field checkbox">
-              <input type="checkbox" id="ampToggle" />
-              <span title="把吉他收音經模擬音色即時輸出，可當監聽音箱">🎸 虛擬音箱</span>
-            </label>
-            <div id="ampControls" class="hidden">
-              <div class="fx-chain">訊號鏈：麥克風 → <b>Noise Gate</b> → <b>綠推 Overdrive</b> → <b id="ampChainName">英倫疊音</b> → <span id="ampChainCab">4×12 音箱</span> → Delay → 限幅器</div>
-
-              <!-- ① Noise Gate -->
-              <div class="fx-unit">
-                <label class="field checkbox">
-                  <input type="checkbox" id="gateToggle" />
-                  <span title="切掉沒彈時的底噪／哼聲">🔇 Noise Gate 雜訊閘</span>
-                </label>
-                <div id="gateControls" class="hidden">
-                  <label class="slider-field">
-                    <span>門檻 Threshold<b id="gateThreshVal">-38 dB</b></span>
-                    <input type="range" id="gateThresh" min="-70" max="-15" step="1" value="-38" />
-                  </label>
-                  <div class="fx-row">
-                    <button type="button" id="gateAutoBtn" class="btn small ghost">🎯 自動偵測底噪</button>
-                    <span class="fx-meter"><i id="gateMeter"></i></span>
-                    <span class="fx-led" id="gateLed" title="閘門狀態">●</span>
-                  </div>
-                  <details class="tip"><summary>怎麼用自動偵測</summary><div class="tip-body">按「自動偵測底噪」時<b>手離開弦、保持安靜</b> 1.2 秒，會自動抓底噪並把門檻設在它上面 8dB。</div></details>
-                  <div class="ms-tip" id="gateTip"></div>
-                </div>
-              </div>
-
-              <!-- ② 綠推 Overdrive（中頻推進破音） -->
-              <div class="fx-unit">
-                <label class="field checkbox">
-                  <input type="checkbox" id="odToggle" />
-                  <span title="推前級的中頻破音，可開關">🟩 綠推 Overdrive</span>
-                </label>
-                <div id="odControls" class="hidden">
-                  <label class="slider-field"><span>Overdrive<b id="odDriveVal">50%</b></span><input type="range" id="odDrive" min="0" max="100" value="50" /></label>
-                  <label class="slider-field"><span>Tone<b id="odToneVal">50%</b></span><input type="range" id="odTone" min="0" max="100" value="50" /></label>
-                  <label class="slider-field"><span>Level<b id="odLevelVal">60%</b></span><input type="range" id="odLevel" min="0" max="100" value="60" /></label>
-                  <details class="tip"><summary>這顆在做什麼</summary><div class="tip-body">這顆會<b>先切掉低頻再削波</b>，所以低音不糊、中頻突出——經典用法是 Drive 開小、Level 開大來「推」音箱。</div></details>
-                </div>
-              </div>
-
-              <!-- ③ 音箱模擬（吉他／貝斯兩種型號） -->
-              <div class="fx-unit">
-                <div class="fx-head">🎛 音箱模擬：<b id="ampModelName">英倫疊音 British Stack</b><span class="fx-sub" id="ampModelSub">（兩段電子管前級＋英式 tone stack＋4×12 音箱）</span></div>
-                <label class="field">
-                  <span>音箱型號</span>
-                  <select id="ampModelSelect">
-                    <option value="guitar" selected>🎸 英倫疊音 British Stack（吉他・4×12）</option>
-                    <option value="bass">🎵 低音重砲 Bass Stack（貝斯・8×10）</option>
-                  </select>
-                </label>
-                <label class="slider-field">
-                  <span>Preamp Gain（破音）<b id="ampDriveVal">50%</b></span>
-                  <input type="range" id="ampDrive" min="0" max="100" value="50" />
-                </label>
-                <div class="fx-grid">
-                  <label class="slider-field"><span>低音 Bass<b id="toneBassVal">50%</b></span><input type="range" id="toneBass" min="0" max="100" value="50" /></label>
-                  <label class="slider-field"><span>中音 Middle<b id="toneMidVal">50%</b></span><input type="range" id="toneMid" min="0" max="100" value="50" /></label>
-                  <label class="slider-field"><span>高音 Treble<b id="toneTrebleVal">60%</b></span><input type="range" id="toneTreble" min="0" max="100" value="60" /></label>
-                  <label class="slider-field"><span>臨場感 Presence<b id="tonePresenceVal">50%</b></span><input type="range" id="tonePresence" min="0" max="100" value="50" /></label>
-                </div>
-                <label class="slider-field">
-                  <span>音量 Master<b id="ampLevelVal">60%</b></span>
-                  <input type="range" id="ampLevel" min="0" max="100" value="60" />
-                </label>
-              </div>
-
-              <div class="ms-tip">🛡 <b>限幅器 Limiter</b>：輸出上限固定 <b>-3 dB</b>（防爆音・護耳）</div>
-              <label class="field checkbox">
-                <input type="checkbox" id="dlyToggle" />
-                <span>🌀 Delay 延遲效果器</span>
-              </label>
-              <div id="dlyControls" class="hidden">
-                <label class="slider-field"><span>時間 Time<b id="dlyTimeVal">280 ms</b></span><input type="range" id="dlyTime" min="0" max="800" step="10" value="280" /></label>
-                <label class="slider-field"><span>回饋 Feedback<b id="dlyFbVal">30%</b></span><input type="range" id="dlyFb" min="0" max="90" value="30" /></label>
-                <label class="slider-field"><span>混音 Mix<b id="dlyMixVal">35%</b></span><input type="range" id="dlyMix" min="0" max="100" value="35" /></label>
-              </div>
-              <label class="field">
-                <span>I/O 緩衝 Buffer size</span>
-                <select id="ampBuffer">
-                  <option value="0" selected>預設（自動）</option>
-                  <option value="32">32</option>
-                  <option value="64">64</option>
-                  <option value="128">128</option>
-                  <option value="256">256</option>
-                  <option value="512">512</option>
-                  <option value="1024">1024</option>
-                </select>
-              </label>
-              <div class="ms-tip" id="ampLatNow">目前延遲：—</div>
-              <div class="ms-tip">⚠️ 用喇叭外放會<b>回授嘯叫</b>——請<b>戴耳機</b>，或用<b>錄音介面 line-in</b> 監聽。</div>
-            </div>
-          </div>
 
           <!-- 內錄：錄下自己彈的（乾訊＝原始吉他 / 濕訊＝過音箱效果） -->
-          <div class="rec-box">
-            <div class="ms-head">🔴 內錄（錄下你彈的）</div>
-            <div class="rec-row">
-              <label class="field">
-                <span>訊號</span>
-                <select id="recMode" class="hud-select">
-                  <option value="dry" selected>乾訊（原始吉他）</option>
-                  <option value="wet">濕訊（過音箱效果）</option>
-                </select>
-              </label>
-              <button type="button" id="recBtn" class="btn small">● 開始錄音</button>
-              <span class="rec-status" id="recStatus"></span>
-            </div>
-            <label class="field checkbox">
-              <input type="checkbox" id="recMuteGame" checked />
-              <span title="旋律導引／節拍器／鼓，避免被麥克風收進去">錄音時靜音遊戲聲音</span>
-            </label>
-            <div id="recResult" class="rec-result"></div>
-            <details class="tip"><summary>錄音注意事項</summary><div class="tip-body">⚠️ 麥克風會收到<b>喇叭放出來的聲音</b>——想邊聽伴奏/節拍器邊錄又不錄進去，請<b>戴耳機</b>（就能取消勾選上面那項）。錄「濕訊」會套用虛擬音箱效果（沒開喇叭輸出也錄得到、不嘯叫）；錄的是你的吉他，不含伴奏。</div></details>
-          </div>
 
           <!-- LiteJam LED 吉他：把譜的音符即時亮在真吉他指板上（跟著遊戲播放） -->
         </div>
@@ -604,17 +604,17 @@
 
   <!-- alphaTab（解析 Guitar Pro 檔，977KB）改為選歌時才動態載入 → 首頁不下載，見 game.js ensureAlphaTab() -->
   <!-- 登入 / 付費驗證（Supabase）。supabase-js（54KB gzip 外部 CDN）改為有 session 或使用者要用時才動態載入 → 匿名首頁不抓，見 auth.js ensureClient() -->
-  <script src="js/supabase-config.js?v=20260904k"></script>
-  <script src="js/auth.js?v=20260904k"></script>
+  <script src="js/supabase-config.js?v=20260904m"></script>
+  <script src="js/auth.js?v=20260904m"></script>
   <!-- 遊戲程式 -->
-  <script src="js/heic.js?v=20260904k"></script>
-  <script src="js/theory.js?v=20260904k"></script>
-  <script src="js/gp-loader.js?v=20260904k"></script>
-  <script src="js/audio.js?v=20260904k"></script>
-  <script src="js/pitch.js?v=20260904k"></script>
-  <script src="js/songs.js?v=20260904k"></script>
-  <script src="js/litejam.js?v=20260904k"></script>
-  <script src="js/game.js?v=20260904k"></script>
-  <script src="js/library.js?v=20260904k"></script>
+  <script src="js/heic.js?v=20260904m"></script>
+  <script src="js/theory.js?v=20260904m"></script>
+  <script src="js/gp-loader.js?v=20260904m"></script>
+  <script src="js/audio.js?v=20260904m"></script>
+  <script src="js/pitch.js?v=20260904m"></script>
+  <script src="js/songs.js?v=20260904m"></script>
+  <script src="js/litejam.js?v=20260904m"></script>
+  <script src="js/game.js?v=20260904m"></script>
+  <script src="js/library.js?v=20260904m"></script>
 </body>
 </html>

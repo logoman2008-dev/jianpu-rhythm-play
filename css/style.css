@@ -294,16 +294,14 @@ body:has(#tosBar:not(.hidden)) #startBtn { bottom: 76px; }
 .sample-group > summary .lib-act { margin-left: 4px; width: 24px; height: 24px; }
 
 .controls { display: flex; flex-direction: column; gap: 15px; justify-content: center; }
-/* 右欄順序：收音校正 → 開始遊戲 → 樂曲設定（樂器軌道/調性/倍速/伴奏/鼓組/吉他手/登入提示）→ 工具。
-   要先能開始玩，樂曲設定是「玩過之後才會回來調」的東西，不該擋在開始鍵前面。
-   用 flex order 而不是改 DOM：省得把十一個相鄰欄位包成一層新容器，破壞既有間距。 */
-.controls > *              { order: 3; }   /* 圈起來的那一整段樂曲設定 */
-.controls > #micSettings   { order: 1; }
-.controls > #startBtn      { order: 2; }
+/* 右欄順序：開始遊戲 → 我的曲庫 → 樂曲設定 → 調音器。
+   收音校正／曲風鼓組／虛擬音箱／內錄／LiteJam 已移到右上角的 ⚙ 進階設定。
+   用 flex order 而不是改 DOM：手機是單欄，DOM 順序會直接變成閱讀順序，
+   靠 order 才能讓兩種版面各自合理。 */
+.controls > *              { order: 3; }   /* 樂曲設定那一段 */
+.controls > #startBtn      { order: 1; }
+.controls > #myLibraryBox  { order: 2; }
 .controls > .tuner-box     { order: 4; }
-.controls > .amp-box       { order: 5; }
-.controls > .rec-box       { order: 6; }
-.controls > .litejam-box   { order: 7; }
 .field-row { display: flex; gap: 12px; }
 .field-row .field { flex: 1; min-width: 0; }
 .field { display: flex; flex-direction: column; gap: 7px; font-size: 12px; font-weight: 600; letter-spacing: .4px;
