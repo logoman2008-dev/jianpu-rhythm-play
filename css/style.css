@@ -155,7 +155,30 @@ body:has(#gameWrap:not(.hidden)) .topbar { display: none; }
 /* minmax(0,…) 防止 grid track 被子項 min-content 撐爆造成手機版被截掉 */
 /* align-items:start → 左欄比右欄短時不被拉長，不會在歌單下面留一大片空白 */
 .setup-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
-@media (max-width: 760px) { .setup-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 760px) {
+  /* 手機是單欄。桌機是「我的曲庫在左、免費範例在右」，手機要上下對調成
+     「免費範例在上、我的曲庫在下」——但兩者分屬不同欄位(.dz-col / .controls)，
+     同欄內的 order 排不動。用 display:contents 把兩欄攤平成同一層 flex，
+     才能跨欄重排。 */
+  .setup-grid { display: flex; flex-direction: column; gap: 12px; }
+  /* ⚠️ 選擇器要夠specific：.dz-col{display:flex} 與 .controls{display:flex}
+     定義在這個 media query 之後，同權重會後者勝、把 contents 蓋掉。 */
+  .setup-grid > .dz-col, .setup-grid > .controls { display: contents; }
+  /* catch-all 用 :where() 降權（:where 不計權重），否則它會反過來蓋掉下面
+     那些用 class 指定的 order（.legal-note / .tuner-box）。 */
+  .setup-grid > :where(.dz-col, .controls) > * { order: 50; }   /* 沒指定的(樂曲設定那段)排後面 */
+  #dropZone     { order: 1; }
+  .legal-note   { order: 2; }
+  #ownGateTip   { order: 3; }
+  #sampleBox    { order: 4; }   /* 免費範例：上 */
+  #startBtn     { order: 5; }
+  #myLibraryBox { order: 6; }   /* 我的曲庫：下 */
+  /* 還沒選歌時不要黏：兩欄攤平後 sticky 的容器變成整個 .setup-grid，
+     半透明的停用按鈕會浮在歌單中間，看起來像畫面壞掉。
+     （選好歌後另一條規則會讓它變成畫面下緣的固定列，那才是要的行為。）*/
+  #startBtn:disabled { position: static; box-shadow: none !important; }
+  .tuner-box    { order: 60; }
+}
 
 /* 「開始遊戲」黏在畫面下緣：右欄設定很長(收音校正就 500px)，
    不黏的話選完歌還要往下滾才找得到開始鍵 */
@@ -294,14 +317,16 @@ body:has(#tosBar:not(.hidden)) #startBtn { bottom: 76px; }
 .sample-group > summary .lib-act { margin-left: 4px; width: 24px; height: 24px; }
 
 .controls { display: flex; flex-direction: column; gap: 15px; justify-content: center; }
-/* 右欄順序：開始遊戲 → 我的曲庫 → 樂曲設定 → 調音器。
-   收音校正／曲風鼓組／虛擬音箱／內錄／LiteJam 已移到右上角的 ⚙ 進階設定。
-   用 flex order 而不是改 DOM：手機是單欄，DOM 順序會直接變成閱讀順序，
-   靠 order 才能讓兩種版面各自合理。 */
-.controls > *              { order: 3; }   /* 樂曲設定那一段 */
-.controls > #startBtn      { order: 1; }
-.controls > #myLibraryBox  { order: 2; }
-.controls > .tuner-box     { order: 4; }
+/* 右欄順序：開始遊戲 → 免費範例 → 樂曲設定 → 調音器。
+   （左欄＝拖曳區＋聲明＋我的曲庫；收音校正等已移到右上角 ⚙ 進階設定。）
+   ⚠️ 只在雙欄(桌機)套用：手機是把兩欄攤平成一欄另外排，
+      這組 .controls > … 的權重比手機那組高，不限定的話會滲透過去把順序打亂。 */
+@media (min-width: 761px) {
+  .controls > *              { order: 3; }   /* 樂曲設定那一段 */
+  .controls > #startBtn      { order: 1; }
+  .controls > #sampleBox     { order: 2; }
+  .controls > .tuner-box     { order: 4; }
+}
 .field-row { display: flex; gap: 12px; }
 .field-row .field { flex: 1; min-width: 0; }
 .field { display: flex; flex-direction: column; gap: 7px; font-size: 12px; font-weight: 600; letter-spacing: .4px;
