@@ -124,6 +124,22 @@ body:has(#catalogPanel:not(.hidden)) .topbar { border-bottom-color: rgba(30,32,3
 .bgm-btn.off { opacity: 0.55; }
 /* topbar 有兩顆圓鈕：只有第一顆吃 margin-left:auto，第二顆貼著它 */
 .bgm-btn ~ .bgm-btn { margin-left: 8px; }
+/* ── 右上角「進階設定」浮出面板 ── */
+.topbar { position: relative; }
+.settings-pop {
+  /* 貼著 topbar 底部：手機上 topbar 會換行變高，寫死 56px 會蓋住 ⚙ 鈕本身 */
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 80;
+  width: min(380px, calc(100vw - 24px)); max-height: min(70vh, 620px); overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--line2); border-radius: 14px;
+  padding: 14px; box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 14px;
+}
+.settings-pop .sp-head { font-weight: 800; font-size: 13px; letter-spacing: .5px; color: #6f5316; }
+.settings-pop .litejam-box { margin: 0; }
+/* 遊玩中連同目錄鈕一起收起來 */
+body:has(#gameWrap:not(.hidden)) #settingsBtn,
+body:has(#gameWrap:not(.hidden)) .settings-pop { display: none; }
+
 /* 遊玩中不顯示目錄鈕（避免蓋掉遊戲畫面） */
 body:has(#gameWrap:not(.hidden)) #catalogBtn { display: none; }
 /* 遊玩中把站台標題收起來：手機上這塊佔掉 200px 以上，
@@ -630,14 +646,14 @@ body:has(#tosBar:not(.hidden)) #startBtn { bottom: 76px; }
   transition: width .45s cubic-bezier(.4,0,.2,1);
 }
 .sb-label, .sb-pct { position: relative; z-index: 1; }
-.sb-wip    .sb-fill { background: linear-gradient(90deg, rgba(85,120,189,.45), rgba(85,120,189,.28)); }
-.sb-done   .sb-fill { background: linear-gradient(90deg, rgba(62,165,106,.55), rgba(62,165,106,.32)); }
-.sb-master .sb-fill { background: linear-gradient(90deg, rgba(224,164,75,.65), rgba(224,164,75,.38));
+.sb-wip    .sb-fill { background: linear-gradient(90deg, rgba(96,112,140,.42), rgba(96,112,140,.24)); }   /* 練習中：低飽和靛灰 */
+.sb-done   .sb-fill { background: linear-gradient(90deg, rgba(96,134,110,.52), rgba(96,134,110,.30)); }   /* 完成：低飽和苔綠 */
+.sb-master .sb-fill { background: linear-gradient(90deg, rgba(158,134,86,.62), rgba(158,134,86,.36));     /* 精通：低飽和墨金 */
   box-shadow: inset 0 0 12px rgba(224,164,75,.35); }
 .sb-pct { font-size: 10.5px; color: var(--muted); margin-left: auto; padding-left: 6px; font-variant-numeric: tabular-nums; }
-.sb-done   { border-color: rgba(62,165,106,.45); }
+.sb-done   { border-color: rgba(96,134,110,.5); }
 .sb-master { border-color: rgba(138,106,18,.55); }
-.sb-master .sb-pct { color: var(--accent); }
+.sb-master .sb-pct { color: #6f5316; }
 /* 資料夾標題的「N/M 完成」 */
 .sample-done { margin-left: auto; font-size: 11px; font-weight: 500; color: var(--muted); }
 .sample-done + .sample-count { margin-left: 6px; }
@@ -654,9 +670,9 @@ body:has(#tosBar:not(.hidden)) #startBtn { bottom: 76px; }
 .cat-fig span { font-size: 11.5px; color: var(--muted); }
 .cat-bar { height: 10px; border-radius: 99px; background: rgba(var(--ink),.08); overflow: hidden; display: flex; }
 .cat-bar i { display: block; height: 100%; }
-.cat-bar i.m { background: #e0a44b; }        /* 精通 */
-.cat-bar i.d { background: #3ea56a; }        /* 完成 */
-.cat-bar i.w { background: #5578bd; }        /* 練習中 */
+.cat-bar i.m { background: #9e8656; }        /* 精通(低飽和墨金) */
+.cat-bar i.d { background: #60866e; }        /* 完成(低飽和苔綠) */
+.cat-bar i.w { background: #60708c; }        /* 練習中(低飽和靛灰) */
 .cat-legend { margin-top: 7px; font-size: 11.5px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 12px; }
 .cat-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
 
@@ -676,9 +692,9 @@ body:has(#tosBar:not(.hidden)) #startBtn { bottom: 76px; }
 .cat-meta { flex: 0 0 auto; font-size: 11.5px; color: var(--muted); text-align: right; line-height: 1.5; }
 .cat-st { flex: 0 0 auto; font-size: 11.5px; padding: 2px 9px; border-radius: 99px; border: 1px solid var(--line); }
 .st-none { color: var(--muted); }
-.st-wip { color: #2f5aa0; border-color: rgba(47,90,160,.45); }
-.st-done { color: #2f6b45; border-color: rgba(47,107,69,.45); }
-.st-master { color: #8a6626; border-color: rgba(138,102,38,.5); }
+.st-wip { color: #4c5b73; border-color: rgba(76,91,115,.45); }
+.st-done { color: #4a6b56; border-color: rgba(74,107,86,.45); }
+.st-master { color: #7a6634; border-color: rgba(122,102,52,.5); }
 .cat-play { flex: 0 0 auto; }
 .cat-empty { padding: 12px; font-size: 13px; color: var(--muted); }
 .cat-note { margin-top: 14px; font-size: 12px; line-height: 1.8; color: var(--muted); }
