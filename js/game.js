@@ -260,11 +260,13 @@ els.backingToggle.addEventListener("change",function(){backingOn=els.backingTogg
 function backingStop(){_backingStarted=false;if(backingApi){try{backingApi.stop();}catch(e){}}}
 function backingPause(){if(backingApi&&_backingStarted){try{backingApi.pause();}catch(e){}}}
 function backingResume(){if(backingApi&&_backingStarted&&backingOn){try{backingApi.play();}catch(e){}}}
+var _drMin=1e9,_drAt=0,_seekCool=0;var DRIFT_TOL=220;var DRIFT_WIN=500;var SEEK_COOL=600;function backingSeek(rawMs){try{backingApi.timePosition=rawMs;}catch(e){}
+_seekCool=performance.now()+SEEK_COOL;_drMin=1e9;_drAt=0;}
 function backingSync(songTime){if(!backingOn||!backingReady||!backingApi)return;if(_backingSpeed!==speed){_backingSpeed=speed;try{backingApi.playbackSpeed=speed;}catch(e){}}
 if(songTime<0){if(_backingStarted)backingPause();return;}
-var rawMs=songTime*speed*1000;if(!_backingStarted){try{backingApi.timePosition=rawMs;backingApi.play();}catch(e){}_backingStarted=true;return;}
-var cur=0;try{cur=backingApi.timePosition||0;}catch(e){}
-if(Math.abs(cur-rawMs)>130){try{backingApi.timePosition=rawMs;}catch(e){}}}
+var rawMs=songTime*1000;if(!_backingStarted){try{backingApi.timePosition=rawMs;backingApi.play();}catch(e){}_backingStarted=true;_seekCool=performance.now()+SEEK_COOL;return;}
+var now=performance.now();if(now<_seekCool)return;var cur=0;try{cur=backingApi.timePosition||0;}catch(e){}
+var diff=Math.abs(cur-rawMs);if(diff<_drMin)_drMin=diff;if(!_drAt)_drAt=now;if(now-_drAt<DRIFT_WIN)return;var floorDiff=_drMin;_drMin=1e9;_drAt=now;if(floorDiff>DRIFT_TOL)backingSeek(rawMs);}
 function loadArrayBuffer(arrayBuffer,name,srcId,label){currentSrc=srcId||("file:"+(name||"?"));currentLabel=String(label||"").trim();setStatus("載入樂譜解析引擎中…");ensureAlphaTab().then(function(){parseLoadedBuffer(arrayBuffer,name);}).catch(function(err){setStatus("解析失敗："+(err&&err.message?err.message:err),true);els.startBtn.disabled=true;});}
 function parseLoadedBuffer(arrayBuffer,name){try{var scoreObj=GP.parseBytes(arrayBuffer);window._score=scoreObj;var tracks=GP.listTracks(scoreObj);var best=-1,bestCount=-1,html="";tracks.forEach(function(tr){var tag=tr.isPercussion?"（打擊）":"";html+='<option value="'+tr.index+'">'+escapeHtml(tr.name)+tag+'｜'+tr.noteCount+' 音</option>';if(!tr.isPercussion&&tr.noteCount>bestCount){bestCount=tr.noteCount;best=tr.index;}});els.trackSelect.innerHTML=html;if(best>=0)els.trackSelect.value=String(best);els.keySelect.value="auto";rebuildTimeline();if(backingOn)loadBackingScore();setStatus("已載入「"+(currentLabel||scoreObj.title||name||"")+"」，可調整設定後開始。");els.startBtn.disabled=false;state="ready";}catch(err){console.error(err);setStatus("解析失敗："+(err&&err.message?err.message:err),true);els.startBtn.disabled=true;}}
 function rebuildTimeline(){if(!window._score)return;displayMode=els.displaySelect.value;var ti=parseInt(els.trackSelect.value,10)||0;timeline=GP.buildTimeline(window._score,ti);if(currentLabel)timeline.title=currentLabel;tabTL=GP.buildTabTimeline(window._score,ti);if(tabTL)tabInfo={tuning:tabTL.tuning,stringCount:tabTL.stringCount};if(tabInfo&&tabInfo.tuning&&tabInfo.tuning.length){var lowMidi=Math.min.apply(null,tabInfo.tuning);playLowHz=440*Math.pow(2,(lowMidi-69)/12);}
@@ -306,7 +308,7 @@ function resyncSchedIdx(t){_metroIdx=0;while(_metroIdx<beatTimes.length&&beatTim
 function markBefore(t){for(var i=0;i<items.length;i++){var it=items[i];if(it.time<t-1e-3)it.judged=true;else{it.hit=false;it.missed=false;it.tier=null;it.judged=!!(it.deadOnly||it.grace);}}}
 function loopApplyRegionJudged(){var r=loopRegionTimes();if(!r)return;for(var i=0;i<items.length;i++){var it=items[i];if(it.time>=r[0]-1e-3&&it.time<r[1]){it.hit=false;it.missed=false;it.tier=null;it.judged=!!(it.deadOnly||it.grace);}
 else it.judged=true;}}
-function loopSeekToStart(){var r=loopRegionTimes();if(!r)return;loopApplyRegionJudged();A.seek(r[0]);resyncSchedIdx(r[0]);}
+function loopSeekToStart(){var r=loopRegionTimes();if(!r)return;loopApplyRegionJudged();A.seek(r[0]);resyncSchedIdx(r[0]);if(backingOn&&backingReady&&backingApi&&_backingStarted)backingSeek(r[0]*1000);}
 function rebuildAtSpeed(newSpeed,targetBar){speed=newSpeed;buildItems();A.setNotes(melodyNotes);if(targetBar!=null){var t=barStartsScaled[Math.min(targetBar,barStartsScaled.length-1)]||0;A.seek(t);markBefore(t);resyncSchedIdx(t);}}
 function setLoopA(){if(state!=="playing"&&state!=="paused")return;loopBarA=currentBarNow();if(loopBarB!=null&&loopBarB<loopBarA)loopBarB=null;if(loopOn)loopSeekToStart();updateLoopUI();}
 function setLoopB(){if(state!=="playing"&&state!=="paused")return;loopBarB=currentBarNow();if(loopBarA!=null&&loopBarB<loopBarA)loopBarA=loopBarB;if(loopOn)loopSeekToStart();updateLoopUI();}
