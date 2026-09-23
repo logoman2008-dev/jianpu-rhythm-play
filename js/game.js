@@ -63,7 +63,7 @@ function liteTest(){if(!lite||lite.status!=="connected"||_liteTesting)return;_li
 var hw=(els.liteReverse&&els.liteReverse.checked)?(7-k):k;lite.sendNotes([{string:hw,fret:3}],col);liteSetStatus("測試亮燈：第 "+k+" 弦（1=最細高音弦）· 第 3 格","connected");k++;setTimeout(step,480);})();}
 function liteClear(){_liteCurIdx=-1;if(lite&&lite.status==="connected")lite.ledOff();}
 function liteRest(){_liteCurIdx=-1;liteIdleShow();}
-function applySens(){var s=+els.sensRange.value;micGate=0.03-(s/100)*0.026;P.setFloor(Math.min(micGate,0.006));els.sensVal.textContent=s<34?"低":s<67?"中":"高";}
+function applySens(){var s=+els.sensRange.value;micGate=0.03-(s/100)*0.0288;P.setFloor(Math.min(micGate,0.006));els.sensVal.textContent=s<34?"低":s<67?"中":"高";}
 function applyLatency(){micLatencyMs=+els.latRange.value;els.latVal.textContent=micLatencyMs+" ms";}
 var _testRAF=0;function toggleMicTest(){if(micTesting){micTesting=false;els.micTestBtn.textContent="▶ 測試麥克風";if(_testRAF)cancelAnimationFrame(_testRAF);stopMicIfIdle();els.testNote.textContent="—";els.testLevel.style.width="0%";return;}
 if(!P.isSupported()){setStatus("此環境無法取用麥克風（需 https 或 http://localhost）。",true);return;}
