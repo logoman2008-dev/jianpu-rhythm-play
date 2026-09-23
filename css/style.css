@@ -509,8 +509,17 @@ body:has(#tosBar:not(.hidden)) #startBtn { bottom: 76px; }
 
 .mic-hud { margin-top: 8px; font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 10px; }
 .mic-hud b { color: var(--text); font-size: 15px; min-width: 44px; display: inline-block; }
-.mic-level { width: 120px; height: 8px; background: rgba(var(--ink),.1); border-radius: 4px; overflow: hidden; }
+/* 音量表上要看得到「判定門檻」在哪 ——
+   原本只畫一條會動的條，使用者無從判斷「是聲音太小還是根本壞了」。
+   --gate 由 JS 依目前靈敏度設定，畫成一條直立刻度線。 */
+.mic-level { position: relative; width: 120px; height: 10px; background: rgba(var(--ink),.1); border-radius: 4px; overflow: hidden; }
 .mic-level i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #5ec26a, #ffd93d, #ff5d6c); transition: width .05s linear; }
+.mic-level::after { content: ""; position: absolute; top: -2px; bottom: -2px; left: var(--gate, 9%);
+  width: 2px; background: rgba(var(--ink),.62); border-radius: 1px; }
+.mic-verdict { font-size: 12px; font-weight: 600; margin-left: 6px; white-space: nowrap; }
+.mic-verdict.ok   { color: #2f6b45; }
+.mic-verdict.weak { color: #a0631a; }
+.mic-verdict.none { color: #a33540; }
 
 #gameCanvas {
   flex: 1 1 0;
